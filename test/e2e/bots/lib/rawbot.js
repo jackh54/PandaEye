@@ -61,6 +61,14 @@ class RawBot extends EventEmitter {
     this.mover = null
     this.velocityLog = []
     this.teleports = 0
+    this.lastChunkBatchAt = 0
+  }
+
+  /** Resolve once no chunk batch arrived for quietMs (chunk streaming after join/teleport done), max maxMs. */
+  async settleChunks (quietMs = 700, maxMs = 6000) {
+    const end = Date.now() + maxMs
+    await sleep(150)
+    while (Date.now() < end && Date.now() - this.lastChunkBatchAt < quietMs) await sleep(100)
   }
 
   get pos () { return this.mover ? { x: this.mover.x, y: this.mover.y, z: this.mover.z } : null }
@@ -113,7 +121,7 @@ class RawBot extends EventEmitter {
         if (this.pongDelayMs > 0) setTimeout(reply, this.pongDelayMs)
         else reply()
       })
-      client.on('chunk_batch_finished', () => this._write('chunk_batch_received', { chunksPerTick: 9.0 }))
+      client.on('chunk_batch_finished', () => { this.lastChunkBatchAt = Date.now(); this._write('chunk_batch_received', { chunksPerTick: 9.0 }) })
       client.on('entity_velocity', (p) => {
         if (p.entityId !== this.entityId) return
         const v = p.velocity

@@ -25,6 +25,8 @@ async function createMf ({ username, host = '127.0.0.1', port, log = () => {}, t
     if (tickEnd && !first && bot._client.state === 'play') bot._client.write('tick_end', {})
     first = false
   })
+  bot.lastChunkBatchAt = 0
+  bot._client.on('chunk_batch_finished', () => { bot.lastChunkBatchAt = Date.now() })
   bot.on('kicked', (r) => { bot.kickedReason = typeof r === 'string' ? r : JSON.stringify(r); log(`${username} kicked: ${bot.kickedReason}`) })
   bot.on('error', (e) => log(`${username} error: ${e.message}`))
   await new Promise((resolve, reject) => {

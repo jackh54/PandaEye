@@ -76,6 +76,7 @@ class Context {
     this.bots.push(b)
     await b.connect()
     b.start()
+    await b.settleChunks() // let the spawn chunks finish streaming: fewer timing-dependent chunk packets
     if (opts.prepare !== false) await this.prepare(username, opts)
     return b
   }
@@ -83,6 +84,7 @@ class Context {
   async mf (username, opts = {}) {
     const bot = await createMf({ username, port: this.server.port, host: this.server.host, log: this.log, version: opts.version })
     this.mfBots.push(bot)
+    await this.settle(bot)
     if (opts.prepare !== false) await this.prepare(username, opts)
     return bot
   }
@@ -102,9 +104,19 @@ class Context {
     if (who instanceof RawBot) {
       for (let i = 0; i < 100 && who.teleports === before; i++) await sleep(20)
       await sleep(120)
+      await who.settleChunks()
     } else {
       await sleep(400)
+      const mfb = this.mfBots.find((b) => b.username === name)
+      if (mfb) await this.settle(mfb)
     }
+  }
+
+  /** mineflayer: wait until chunk batches stopped arriving (700 ms quiet, max 6 s). */
+  async settle (bot, quietMs = 700, maxMs = 6000) {
+    const end = Date.now() + maxMs
+    await sleep(150)
+    while (Date.now() < end && Date.now() - (bot.lastChunkBatchAt || 0) < quietMs) await sleep(100)
   }
 
   give (name, material, n = 1, slot) { return this.server.probe(`give ${name} ${material} ${n}${slot !== undefined ? ' ' + slot : ''}`) }

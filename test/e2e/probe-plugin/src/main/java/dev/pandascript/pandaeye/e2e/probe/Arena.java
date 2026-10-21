@@ -129,7 +129,8 @@ final class Arena {
         o.add("entry", v(-15.5, Y0, 13.5));
         o.add("boat", v(-20.5, Y0, 13.5));
         fixture("pool", o);
-        spawns.add(new Spawn(-20.5, Y0 - 0.4, 13.5, EntityType.OAK_BOAT));
+        // no boat is spawned here: a bobbing boat adds entity-movement noise to every nearby scenario;
+        // legit/mf-vehicle spawns (and removes) its own boat with "probe mount"
 
         // chest with items
         set(4, Y0, -6, "minecraft:chest[facing=south]");

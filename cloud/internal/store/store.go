@@ -42,6 +42,7 @@ type Store interface {
 	AuditStore
 	ErasureStore
 	MetaStore
+	APIStore
 
 	// Ping checks the database connection.
 	Ping(ctx context.Context) error

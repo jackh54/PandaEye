@@ -400,6 +400,7 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
                             }
                             o.add("watched", arr);
                             o.add("threads", threadsJson());
+                            o.add("pe_listeners", peListeners());
                             Files.createDirectories(p.toAbsolutePath().getParent());
                             Files.writeString(p, new GsonBuilder().setPrettyPrinting().create().toJson(o), StandardCharsets.UTF_8);
                             ok(line);
@@ -520,6 +521,33 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
         return o;
     }
 
+    /** Class names of every registered PacketEvents listener (unwrapping PacketListener.asAbstract wrappers). */
+    static JsonArray peListeners() {
+        JsonArray a = new JsonArray();
+        try {
+            Object em = PacketEvents.getAPI().getEventManager();
+            java.lang.reflect.Field f = em.getClass().getDeclaredField("listeners");
+            f.setAccessible(true);
+            Object[] ls = (Object[]) f.get(em);
+            for (Object l : ls) {
+                String n = l.getClass().getName();
+                for (java.lang.reflect.Field inner : l.getClass().getDeclaredFields()) {
+                    if (inner.getName().startsWith("this$")) {
+                        inner.setAccessible(true);
+                        Object o = inner.get(l);
+                        if (o != null) n = o.getClass().getName() + " (via asAbstract)";
+                    }
+                }
+                String prio = "?";
+                try { prio = String.valueOf(((com.github.retrooper.packetevents.event.PacketListenerCommon) l).getPriority()); } catch (Throwable ignored) { }
+                a.add(prio + " " + n);
+            }
+        } catch (Throwable t) {
+            a.add("error: " + t);
+        }
+        return a;
+    }
+
     private JsonObject dump() {
         JsonObject root = new JsonObject();
         JsonObject meta = new JsonObject();
@@ -577,6 +605,7 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
         root.add("inflight_pending", pend);
         root.add("traces", pe.tracesJson());
         root.add("threads", threadsJson());
+        root.add("pe_listeners", peListeners());
         return root;
     }
 
