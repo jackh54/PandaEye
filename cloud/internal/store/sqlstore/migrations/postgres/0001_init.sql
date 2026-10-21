@@ -69,6 +69,7 @@ CREATE TABLE players (
 	last_server_id TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (tenant_id, uuid)
 );
+CREATE INDEX players_seen ON players (tenant_id, last_seen_at);
 
 CREATE TABLE player_names (
 	tenant_id TEXT NOT NULL REFERENCES tenants (id),
@@ -124,13 +125,14 @@ CREATE TABLE verdict_clips (
 CREATE INDEX verdict_clips_clip ON verdict_clips (tenant_id, clip_id);
 
 CREATE TABLE bans (
-	verdict_id       TEXT PRIMARY KEY REFERENCES verdicts (id) ON DELETE CASCADE,
+	verdict_id       TEXT PRIMARY KEY,
 	tenant_id        TEXT NOT NULL REFERENCES tenants (id),
 	server_id        TEXT NOT NULL,
 	player_uuid      TEXT NOT NULL,
 	active           BOOLEAN NOT NULL DEFAULT TRUE,
 	reason           TEXT NOT NULL DEFAULT '',
 	created_at       BIGINT NOT NULL,
+	ends_at          BIGINT,
 	overturned_at    BIGINT,
 	overturned_by    TEXT NOT NULL DEFAULT '',
 	overturn_note    TEXT NOT NULL DEFAULT '',
@@ -138,6 +140,7 @@ CREATE TABLE bans (
 	unban_state      TEXT NOT NULL DEFAULT 'none'
 );
 CREATE INDEX bans_tenant ON bans (tenant_id, created_at);
+CREATE INDEX bans_unban ON bans (tenant_id, unban_verdict_id);
 CREATE INDEX bans_player ON bans (tenant_id, player_uuid);
 
 CREATE TABLE appeals (
@@ -216,6 +219,7 @@ CREATE TABLE reputation_contrib (
 );
 CREATE INDEX reputation_player ON reputation_contrib (player_uuid);
 CREATE INDEX reputation_verdict ON reputation_contrib (tenant_id, verdict_id);
+CREATE INDEX reputation_created ON reputation_contrib (tenant_id, created_at);
 
 CREATE TABLE usage_daily (
 	tenant_id    TEXT NOT NULL REFERENCES tenants (id),
@@ -228,14 +232,13 @@ CREATE TABLE probe_stats (
 	tenant_id TEXT NOT NULL REFERENCES tenants (id),
 	server_id TEXT NOT NULL,
 	minute    BIGINT NOT NULL,
+	source    TEXT NOT NULL,
 	count     BIGINT NOT NULL,
-	p50_us    BIGINT NOT NULL,
-	p95_us    BIGINT NOT NULL,
-	p99_us    BIGINT NOT NULL,
+	buckets   JSONB NOT NULL,
 	max_us    BIGINT NOT NULL,
-	PRIMARY KEY (tenant_id, server_id, minute)
+	PRIMARY KEY (tenant_id, server_id, minute, source)
 );
-CREATE INDEX probe_stats_minute ON probe_stats (minute);
+CREATE INDEX probe_stats_minute ON probe_stats (source, minute);
 
 CREATE TABLE audit_log (
 	id         TEXT PRIMARY KEY,

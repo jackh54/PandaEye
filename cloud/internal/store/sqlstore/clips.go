@@ -81,10 +81,10 @@ func (s *Store) PurgeClips(ctx context.Context, tenantID string, before time.Tim
 		var err error
 		n, err = s.deleteClips(ctx, tx, tenantID, `created_at < ? AND id NOT IN (
 			SELECT vc.clip_id FROM verdict_clips vc WHERE vc.tenant_id = ? AND (
-				EXISTS (SELECT 1 FROM bans b WHERE b.tenant_id = vc.tenant_id AND b.verdict_id = vc.verdict_id AND b.active = ?)
+				EXISTS (SELECT 1 FROM bans b WHERE b.tenant_id = vc.tenant_id AND b.verdict_id = vc.verdict_id AND `+banOngoing("b")+`)
 				OR EXISTS (SELECT 1 FROM appeals a WHERE a.tenant_id = vc.tenant_id AND a.verdict_id = vc.verdict_id AND a.status = ?)
 				OR EXISTS (SELECT 1 FROM labels l WHERE l.tenant_id = vc.tenant_id AND l.verdict_id = vc.verdict_id)))`,
-			before.UnixMicro(), tenantID, true, store.AppealOpen)
+			before.UnixMicro(), tenantID, true, before.UnixMicro(), store.AppealOpen)
 		return err
 	})
 	return n, err

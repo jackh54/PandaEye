@@ -57,10 +57,13 @@ type Config struct {
 
 	NATS NATS
 
-	// OutboundKey signs SignedOutbound (PE_OUTBOUND_KEY). Empty only in `all`, where the app
-	// generates one and persists it in the database.
+	// OutboundKey signs SignedOutbound and roots the webhook-encryption and appeal-code keys
+	// (PE_OUTBOUND_KEY). Empty in `all` (the app generates one and persists it in the database) and in
+	// roles that do not use it (worker, migrate, replay).
 	OutboundKey identity.Secret
-	Partitions  int // PE_PARTITIONS
+	// OutboundKeyNext is also accepted when verifying during a key rotation (PE_OUTBOUND_KEY_NEXT).
+	OutboundKeyNext identity.Secret
+	Partitions      int // PE_PARTITIONS
 
 	DB            DB
 	ClickHouseDSN identity.Secret // PE_CLICKHOUSE_DSN; empty disables telemetry
@@ -69,6 +72,7 @@ type Config struct {
 	ServiceToken     identity.Secret // PE_SERVICE_TOKEN; empty disables dashboard access
 	ServiceTokenNext identity.Secret // PE_SERVICE_TOKEN_NEXT
 	AssertionKey     identity.Secret // PE_ASSERTION_KEY
+	AssertionKeyNext identity.Secret // PE_ASSERTION_KEY_NEXT, also accepted during rotation
 
 	EventsMaxAge    time.Duration // PE_EVENTS_MAX_AGE
 	EventsMaxBytes  int64         // PE_EVENTS_MAX_BYTES

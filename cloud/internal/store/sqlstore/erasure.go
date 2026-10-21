@@ -107,3 +107,7 @@ func (s *Store) ListErasures(ctx context.Context, tenantID string, since time.Ti
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) PurgeErasures(ctx context.Context, tenantID string, before time.Time) (int64, error) {
+	return s.deleteCount(ctx, `DELETE FROM erasures WHERE tenant_id = ? AND requested_at < ?`, tenantID, before.UnixMicro())
+}

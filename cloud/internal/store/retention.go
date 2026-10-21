@@ -11,10 +11,14 @@ const day = 24 * time.Hour
 // Retention is how long the janitor keeps each kind of row (ARCHITECTURE 5.7).
 type Retention struct {
 	Clips         time.Duration // unless referenced by an active ban, open appeal or label
-	Verdicts      time.Duration // bans kept while active
+	Verdicts      time.Duration // verdicts of active bans are kept
+	Bans          time.Duration // after the ban ends (overturned or timed out)
 	Appeals       time.Duration
 	AppealContact time.Duration // after the decision
 	Labels        time.Duration
+	Players       time.Duration // after last seen (players and player_names)
+	Reputation    time.Duration
+	Erasures      time.Duration // erasure records (proof of erasure)
 	Usage         time.Duration
 	ProbeStats    time.Duration
 	Audit         time.Duration
@@ -24,9 +28,13 @@ type Retention struct {
 var DefaultRetention = Retention{
 	Clips:         90 * day,
 	Verdicts:      180 * day,
+	Bans:          365 * day,
 	Appeals:       365 * day,
 	AppealContact: 30 * day,
 	Labels:        730 * day,
+	Players:       730 * day,
+	Reputation:    730 * day,
+	Erasures:      3 * 365 * day,
 	Usage:         730 * day,
 	ProbeStats:    30 * day,
 	Audit:         365 * day,
@@ -42,10 +50,18 @@ func Purge(ctx context.Context, s Store, tenantID string, now time.Time, r Reten
 	}{
 		{"clips", func() (int64, error) { return s.PurgeClips(ctx, tenantID, now.Add(-r.Clips)) }},
 		{"verdicts", func() (int64, error) { return s.PurgeVerdicts(ctx, tenantID, now.Add(-r.Verdicts)) }},
+		{"bans", func() (int64, error) { return s.PurgeBans(ctx, tenantID, now.Add(-r.Bans)) }},
 		{"appeals", func() (int64, error) {
 			return s.PurgeAppeals(ctx, tenantID, now.Add(-r.Appeals), now.Add(-r.AppealContact))
 		}},
 		{"labels", func() (int64, error) { return s.PurgeLabels(ctx, tenantID, now.Add(-r.Labels)) }},
+		{"players", func() (int64, error) {
+			p, n, err := s.PurgePlayers(ctx, tenantID, now.Add(-r.Players))
+			counts["player_names"] = n
+			return p, err
+		}},
+		{"reputation_contrib", func() (int64, error) { return s.PurgeReputation(ctx, tenantID, now.Add(-r.Reputation)) }},
+		{"erasures", func() (int64, error) { return s.PurgeErasures(ctx, tenantID, now.Add(-r.Erasures)) }},
 		{"usage_daily", func() (int64, error) { return s.PurgeUsage(ctx, tenantID, now.Add(-r.Usage)) }},
 		{"probe_stats", func() (int64, error) { return s.PurgeProbeStats(ctx, tenantID, now.Add(-r.ProbeStats)) }},
 		{"audit_log", func() (int64, error) { return s.PurgeAudit(ctx, tenantID, now.Add(-r.Audit)) }},

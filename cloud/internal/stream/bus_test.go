@@ -123,6 +123,9 @@ func TestSubjects(t *testing.T) {
 	if SignalMsgID(tenant, server, 42, 3, 5, "reach.distance", 1) != tenant+":"+server+":42:03:5:reach.distance:1" {
 		t.Error("signal msg id")
 	}
+	if SessionMarkerMsgID(tenant, server, 42, 3, 5) != tenant+":"+server+":42:03:5:session" || VerdictRecordMsgID("v") != "v" || AckRecordMsgID("v") != "ack:v" {
+		t.Error("marker/record msg ids")
+	}
 	if p, err := PartitionOf("pe.signals.11"); err != nil || p != 11 {
 		t.Error("PartitionOf")
 	}
@@ -189,19 +192,23 @@ func TestOutbound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := OutboundFor(key, m.Data, tenant, server)
+	got, err := OutboundFor(m.Data, tenant, server, key)
 	if err != nil || got.GetVerdict().GetVerdictId() != "v1" {
 		t.Fatalf("decode: %v %v", got, err)
 	}
-	if _, err := OutboundFor(key, m.Data, tenant, identity.NewUUID().String()); !errors.Is(err, ErrBadSignature) {
+	if _, err := OutboundFor(m.Data, tenant, identity.NewUUID().String(), key); !errors.Is(err, ErrBadSignature) {
 		t.Fatal("wrong server accepted")
 	}
-	if _, err := DecodeOutbound(bytes.Repeat([]byte("x"), 32), m.Data); !errors.Is(err, ErrBadSignature) {
+	other := bytes.Repeat([]byte("x"), 32)
+	if _, err := DecodeOutbound(m.Data, other); !errors.Is(err, ErrBadSignature) {
 		t.Fatal("wrong key accepted")
+	}
+	if _, err := DecodeOutbound(m.Data, other, key); err != nil {
+		t.Fatal("rotation: a message signed with the other accepted key must verify")
 	}
 	tampered := bytes.Clone(m.Data)
 	tampered[len(tampered)/2] ^= 0xff
-	if _, err := DecodeOutbound(key, tampered); err == nil {
+	if _, err := DecodeOutbound(tampered, key); err == nil {
 		t.Fatal("tampered message accepted")
 	}
 	if err := b.PublishOutbound(key, &pb.Outbound{TenantId: "*", ServerId: server}); !errors.Is(err, ErrBadToken) {
@@ -312,5 +319,17 @@ func TestKVHelpers(t *testing.T) {
 	}
 	if _, ok := er.Erased(other, player); ok {
 		t.Fatal("tombstone leaked across tenants")
+	}
+	recent := identity.NewUUID()
+	if err := b.PutErasure(ctx, tenant, recent, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	n, err := b.PurgeErasureTombstones(ctx, time.Now().Add(-ErasureTombstoneAge))
+	if err != nil || n != 1 {
+		t.Fatalf("purged %d tombstones: %v", n, err)
+	}
+	eventually(t, 5*time.Second, "old tombstone gone", func() bool { _, ok := er.Erased(tenant, player); return !ok })
+	if _, ok := er.Erased(tenant, recent); !ok {
+		t.Fatal("recent tombstone purged")
 	}
 }

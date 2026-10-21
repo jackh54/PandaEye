@@ -85,3 +85,22 @@ func (s *Store) FindPlayersByName(ctx context.Context, tenantID, prefix string, 
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) PurgePlayers(ctx context.Context, tenantID string, before time.Time) (players, names int64, err error) {
+	c := before.UnixMicro()
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		res, err := s.exec(ctx, tx, `DELETE FROM player_names WHERE tenant_id = ? AND seen_at < ?`, tenantID, c)
+		if err != nil {
+			return err
+		}
+		if names, err = res.RowsAffected(); err != nil {
+			return err
+		}
+		if res, err = s.exec(ctx, tx, `DELETE FROM players WHERE tenant_id = ? AND last_seen_at < ?`, tenantID, c); err != nil {
+			return err
+		}
+		players, err = res.RowsAffected()
+		return err
+	})
+	return players, names, err
+}

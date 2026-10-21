@@ -14,7 +14,7 @@ type ClipStore interface {
 	GetClip(ctx context.Context, tenantID, id string) (*Clip, error)
 	// DeleteClip deletes a clip (ErrNotFound when missing).
 	DeleteClip(ctx context.Context, tenantID, id string) error
-	// PurgeClips deletes clips created before `before` unless a verdict that references them has an
-	// active ban, an open appeal or a label.
+	// PurgeClips deletes clips created before `before` unless a verdict that references them has a
+	// ban still active at `before`, an open appeal or a label.
 	PurgeClips(ctx context.Context, tenantID string, before time.Time) (int64, error)
 }

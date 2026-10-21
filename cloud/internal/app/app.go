@@ -37,6 +37,8 @@ type Secrets struct {
 	// PE_OUTBOUND_KEY it is generated once and kept in the database (meta), so stored webhooks stay
 	// readable across restarts.
 	OutboundKey identity.Secret
+	// OutboundKeyNext is the rotation key accepted when verifying (PE_OUTBOUND_KEY_NEXT); may be empty.
+	OutboundKeyNext identity.Secret
 	// LicensePepper keys licence lookups (identity.LicenseKeyHMAC); generated and kept in the database
 	// in `all` without PE_LICENSE_PEPPER. Empty in roles that do not need it.
 	LicensePepper identity.Secret
@@ -56,6 +58,26 @@ type Deps struct {
 	sharedMu sync.Mutex
 	shared   map[string]any
 	closers  []func() error
+	stopping chan struct{}
+	stopOnce sync.Once
+}
+
+// Stopping is closed when shutdown begins, before services are cancelled (e.g. /healthz answers 503
+// from then on).
+func (d *Deps) Stopping() <-chan struct{} { return d.stoppingChan() }
+
+func (d *Deps) stoppingChan() chan struct{} {
+	d.sharedMu.Lock()
+	defer d.sharedMu.Unlock()
+	if d.stopping == nil {
+		d.stopping = make(chan struct{})
+	}
+	return d.stopping
+}
+
+func (d *Deps) markStopping() {
+	ch := d.stoppingChan()
+	d.stopOnce.Do(func() { close(ch) })
 }
 
 // Options tunes New.
@@ -120,6 +142,11 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (*Deps, error) {
 		}
 		d.Bus = bus
 		d.closers = append(d.closers, bus.Close)
+		if n, err := SyncTenants(ctx, st, bus); err != nil {
+			return nil, fmt.Errorf("app: rebuild PE_TENANTS: %w", err)
+		} else if n > 0 {
+			log.Info("rebuilt tenant settings cache", "tenants", n)
+		}
 	}
 	ok = true
 	return d, nil
@@ -140,7 +167,7 @@ func refreshCloudflare(ctx context.Context, cfg *config.Config, client *http.Cli
 
 // resolveSecrets takes the configured secrets, generating and persisting missing ones in `all`.
 func resolveSecrets(ctx context.Context, cfg *config.Config, st store.MetaStore) (Secrets, error) {
-	s := Secrets{OutboundKey: cfg.OutboundKey, LicensePepper: cfg.License.Pepper}
+	s := Secrets{OutboundKey: cfg.OutboundKey, OutboundKeyNext: cfg.OutboundKeyNext, LicensePepper: cfg.License.Pepper}
 	if cfg.Role != config.RoleAll {
 		return s, nil
 	}
@@ -159,6 +186,16 @@ func resolveSecrets(ctx context.Context, cfg *config.Config, st store.MetaStore)
 		return s, err
 	}
 	return s, fill(&s.LicensePepper, store.MetaLicensePepper)
+}
+
+// OutboundKeys returns the keys accepted when verifying SignedOutbound messages (and when opening
+// data sealed under a key derived from them): the current key first, then the rotation key.
+func (s Secrets) OutboundKeys() [][]byte {
+	keys := [][]byte{s.OutboundKey.Bytes()}
+	if !s.OutboundKeyNext.IsZero() {
+		keys = append(keys, s.OutboundKeyNext.Bytes())
+	}
+	return keys
 }
 
 // Shared returns the value build produced for key, building it once per Deps. Components that

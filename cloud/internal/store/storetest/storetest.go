@@ -731,36 +731,49 @@ func testUsage(t *testing.T, s store.Store) {
 	}
 }
 
+func hist(us ...int64) store.ProbeHistogram {
+	var h store.ProbeHistogram
+	for _, v := range us {
+		h.Observe(v)
+	}
+	return h
+}
+
 func testProbeStats(t *testing.T, s store.Store) {
 	a, b := newTenant(t, s, "A"), newTenant(t, s, "B")
 	srv := uuid()
-	check(t, s.RecordProbeStats(ctx, a, srv, t0.Add(10*time.Second), store.ProbeBucket{Count: 3, P50: 30_000, P95: 60_000, P99: 90_000, Max: 95_000}))
-	check(t, s.RecordProbeStats(ctx, a, srv, t0.Add(50*time.Second), store.ProbeBucket{Count: 1, P50: 70_000, P95: 100_000, P99: 130_000, Max: 140_000}))
-	check(t, s.RecordProbeStats(ctx, a, uuid(), t0.Add(time.Minute), store.ProbeBucket{Count: 4, P50: 10_000, P95: 20_000, P99: 30_000, Max: 40_000}))
-	check(t, s.RecordProbeStats(ctx, b, srv, t0, store.ProbeBucket{Count: 8, P50: 1_000, P95: 2_000, P99: 3_000, Max: 4_000}))
-	check(t, s.RecordProbeStats(ctx, a, srv, t0, store.ProbeBucket{}))
-	rows, err := s.ListProbeStats(ctx, a, srv, t0)
+	plugin, cloud := store.ProbeSourcePlugin, store.ProbeSourceCloud
+	check(t, s.RecordProbeStats(ctx, a, srv, plugin, t0.Add(10*time.Second), hist(30_000, 40_000, 50_000), 50_000))
+	check(t, s.RecordProbeStats(ctx, a, srv, plugin, t0.Add(50*time.Second), hist(200_000), 200_000))
+	check(t, s.RecordProbeStats(ctx, a, srv, cloud, t0, hist(5_000), 5_000))
+	check(t, s.RecordProbeStats(ctx, a, uuid(), plugin, t0.Add(time.Minute), hist(10_000, 10_000, 10_000, 10_000), 10_000))
+	check(t, s.RecordProbeStats(ctx, b, srv, plugin, t0, hist(1_000, 1_000), 1_000))
+	check(t, s.RecordProbeStats(ctx, a, srv, plugin, t0, store.ProbeHistogram{}, 0))
+	rows, err := s.ListProbeStats(ctx, a, srv, plugin, t0)
 	check(t, err)
-	if len(rows) != 1 || rows[0].Count != 4 || rows[0].P50 != 40_000 || rows[0].P95 != 70_000 || rows[0].Max != 140_000 || !rows[0].Minute.Equal(t0) {
-		t.Fatalf("merged bucket %+v", rows)
+	if len(rows) != 1 || rows[0].Histogram.Count() != 4 || rows[0].MaxUs != 200_000 || !rows[0].Minute.Equal(t0) || rows[0].Source != plugin {
+		t.Fatalf("merged minute %+v", rows)
 	}
-	if all, _ := s.ListProbeStats(ctx, a, "", t0); len(all) != 2 {
+	if all, _ := s.ListProbeStats(ctx, a, "", plugin, t0); len(all) != 2 {
 		t.Fatal("all servers")
 	}
-	sum, err := s.ProbeSummary(ctx, a, t0)
+	if c, _ := s.ListProbeStats(ctx, a, srv, cloud, t0); len(c) != 1 || c[0].Histogram.Count() != 1 {
+		t.Fatal("sources must be stored separately")
+	}
+	sum, err := s.ProbeSummary(ctx, a, plugin, t0)
 	check(t, err)
-	if sum.Count != 8 || sum.P50 != 25_000 || sum.Max != 140_000 {
+	if sum.Count != 8 || sum.MaxUs != 200_000 || sum.P50 < 10_000 || sum.P50 > 13_000 || sum.P99 != 200_000 {
 		t.Fatalf("summary %+v", sum)
 	}
-	g, err := s.GlobalProbeSummary(ctx, t0)
+	g, err := s.GlobalProbeSummary(ctx, plugin, t0)
 	check(t, err)
-	if g.Count != 16 || g.Max != 140_000 {
+	if g.Count != 10 || g.MaxUs != 200_000 {
 		t.Fatalf("global %+v", g)
 	}
-	if empty, _ := s.ProbeSummary(ctx, a, t0.Add(time.Hour)); empty.Count != 0 {
+	if empty, _ := s.ProbeSummary(ctx, a, plugin, t0.Add(time.Hour)); empty.Count != 0 || empty.P95 != 0 {
 		t.Fatal("empty summary")
 	}
-	if n, _ := s.PurgeProbeStats(ctx, a, t0.Add(time.Minute)); n != 1 {
+	if n, _ := s.PurgeProbeStats(ctx, a, t0.Add(time.Minute)); n != 2 {
 		t.Fatal("purge probe stats")
 	}
 }
@@ -888,20 +901,70 @@ func testMeta(t *testing.T, s store.Store) {
 func testRetention(t *testing.T, s store.Store) {
 	a := newTenant(t, s, "A")
 	player := uuid()
-	old := t0.Add(-800 * 24 * time.Hour)
+	day := 24 * time.Hour
+	old := t0.Add(-800 * day)
 	v := verdict(a, "s", player, pb.Action_ACTION_ALERT, old)
 	_, _ = s.UpsertVerdict(ctx, v)
 	check(t, s.InsertAudit(ctx, &store.AuditEntry{TenantID: a, Principal: "system", Action: "x", CreatedAt: old}))
 	check(t, s.RecordPeakPlayers(ctx, a, old, 5))
-	check(t, s.RecordProbeStats(ctx, a, "s", old, store.ProbeBucket{Count: 1}))
+	check(t, s.RecordProbeStats(ctx, a, "s", store.ProbeSourcePlugin, old, hist(1), 1))
 	check(t, s.InsertLabel(ctx, &store.Label{TenantID: a, PlayerUUID: player, Label: store.LabelLegit, Source: store.SourceManual, WindowStart: old, WindowEnd: old, CreatedAt: old}))
 	check(t, s.SaveClip(ctx, &store.Clip{ID: uuid(), TenantID: a, ServerID: "s", PlayerUUID: player, Codec: 1, Data: []byte{1}, CreatedAt: old}))
+	check(t, s.UpsertPlayer(ctx, a, player, "OldName", "s", old))
+	check(t, s.UpsertPlayer(ctx, a, uuid(), "Recent", "s", t0))
+	check(t, s.AddReputationContrib(ctx, store.ReputationContrib{TenantID: a, PlayerUUID: player, VerdictID: "v", Weight: 1, CreatedAt: old}))
+	check(t, s.BeginErasure(ctx, a, uuid(), t0.Add(-4*365*day)))
+	check(t, s.BeginErasure(ctx, a, uuid(), t0.Add(-day)))
+
+	// Bans outlive their verdicts: an active ban keeps its verdict, an overturned one is kept for a
+	// year after the overturn, a timed one for a year after it ends.
+	activeV := verdict(a, "s", player, pb.Action_ACTION_BAN, old)
+	endedV := verdict(a, "s", player, pb.Action_ACTION_BAN, old)
+	recentV := verdict(a, "s", player, pb.Action_ACTION_BAN, old)
+	timedV := verdict(a, "s", player, pb.Action_ACTION_BAN, old)
+	timedV.BanDurationS = 7 * 24 * 3600
+	for _, x := range []*store.Verdict{activeV, endedV, recentV, timedV} {
+		_, err := s.UpsertVerdict(ctx, x)
+		check(t, err)
+		_, err = s.ApplyAck(ctx, store.Ack{TenantID: a, ServerID: "s", VerdictID: x.ID, Executed: true, At: old})
+		check(t, err)
+	}
+	check(t, s.OverturnBan(ctx, a, endedV.ID, store.BanOverturn{By: "user:x", At: t0.Add(-400 * day)}))
+	check(t, s.OverturnBan(ctx, a, recentV.ID, store.BanOverturn{By: "user:x", At: t0.Add(-30 * day)}))
+	tb, _ := s.GetBan(ctx, a, timedV.ID)
+	if !tb.EndsAt.Equal(old.Add(7*day)) || !tb.Ongoing(old.Add(day)) || tb.Ongoing(t0) {
+		t.Fatalf("timed ban end %v", tb.EndsAt)
+	}
+	yes, no := true, false
+	if list, _, _ := s.ListBans(ctx, a, store.BanFilter{Active: &yes, At: t0}, store.Page{}); len(list) != 1 || list[0].VerdictID != activeV.ID {
+		t.Fatalf("ongoing bans %+v", list)
+	}
+	if list, _, _ := s.ListBans(ctx, a, store.BanFilter{Active: &no, At: t0}, store.Page{}); len(list) != 3 {
+		t.Fatalf("ended bans %d", len(list))
+	}
+
 	counts, err := store.Purge(ctx, s, a, t0, store.DefaultRetention)
 	check(t, err)
-	for _, table := range []string{"clips", "verdicts", "labels", "usage_daily", "probe_stats", "audit_log"} {
-		if counts[table] != 1 {
-			t.Errorf("%s purged %d", table, counts[table])
+	want := map[string]int64{"clips": 1, "verdicts": 4, "bans": 2, "labels": 1, "usage_daily": 1, "probe_stats": 1, "audit_log": 1,
+		"players": 1, "player_names": 1, "reputation_contrib": 1, "erasures": 1}
+	for table, n := range want {
+		if counts[table] != n {
+			t.Errorf("%s purged %d, want %d", table, counts[table], n)
 		}
+	}
+	if _, err := s.GetVerdict(ctx, a, activeV.ID); err != nil {
+		t.Error("verdict of an active ban purged")
+	}
+	if _, err := s.GetBan(ctx, a, recentV.ID); err != nil {
+		t.Error("recently overturned ban purged with its verdict")
+	}
+	for _, id := range []string{endedV.ID, timedV.ID} {
+		if _, err := s.GetBan(ctx, a, id); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ban ended over a year ago kept: %v", err)
+		}
+	}
+	if _, err := s.GetPlayer(ctx, a, player); !errors.Is(err, store.ErrNotFound) {
+		t.Error("player unseen for 2 years kept")
 	}
 }
 

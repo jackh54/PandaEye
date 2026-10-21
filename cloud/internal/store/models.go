@@ -203,7 +203,8 @@ const (
 	UnbanDone    = "done"
 )
 
-// Ban is an executed, non-shadow BAN.
+// Ban is an executed, non-shadow BAN. The row outlives the verdict's retention: it is kept while
+// active and for a year after it ends.
 type Ban struct {
 	VerdictID      string
 	TenantID       string
@@ -212,6 +213,7 @@ type Ban struct {
 	Active         bool
 	Reason         string
 	CreatedAt      time.Time
+	EndsAt         time.Time // timed bans (Verdict.BanDurationS): when it ends; zero = permanent
 	OverturnedAt   time.Time
 	OverturnedBy   string
 	OverturnNote   string
@@ -219,9 +221,15 @@ type Ban struct {
 	UnbanState     string
 }
 
+// Ongoing reports whether the ban is in force at t: active (not overturned) and not past EndsAt.
+func (b *Ban) Ongoing(t time.Time) bool {
+	return b.Active && (b.EndsAt.IsZero() || b.EndsAt.After(t))
+}
+
 // BanFilter narrows ListBans.
 type BanFilter struct {
-	Active     *bool
+	Active     *bool     // true: ongoing at At; false: overturned or ended at At
+	At         time.Time // zero = now
 	PlayerUUID string
 }
 
@@ -386,28 +394,6 @@ type UsageDay struct {
 	Day         time.Time // 00:00 UTC
 	PeakPlayers int
 }
-
-// ProbeBucket is one minute of plugin-measured probe RTTs (microseconds).
-type ProbeBucket struct {
-	Count int64
-	P50   int64
-	P95   int64
-	P99   int64
-	Max   int64
-}
-
-// ProbeStat is a stored probe bucket.
-type ProbeStat struct {
-	TenantID string
-	ServerID string
-	Minute   time.Time
-	ProbeBucket
-}
-
-// ProbeSummary aggregates buckets: Count is the sum, Max the maximum, the percentiles are the
-// count-weighted means of the bucket percentiles (an approximation; exact percentiles need raw
-// samples).
-type ProbeSummary = ProbeBucket
 
 // AuditEntry is one mutating action.
 type AuditEntry struct {

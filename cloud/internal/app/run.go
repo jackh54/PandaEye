@@ -69,6 +69,7 @@ func Run(ctx context.Context, d *Deps, services ...Named) error {
 		}
 	}
 	started := time.Now()
+	d.markStopping()
 	cancel()
 	timeout := time.After(ServiceStopTimeout)
 	for pending > 0 {

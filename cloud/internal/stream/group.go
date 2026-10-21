@@ -136,10 +136,9 @@ func (m *LeaseManager) fairShare(ctx context.Context, group, member string, n in
 		return n
 	}
 	members := 0
-	for range lister.Keys() {
+	for range lister.Keys() { // the channel closes when the listing is complete
 		members++
 	}
-	_ = lister.Stop()
 	if members < 1 {
 		members = 1
 	}

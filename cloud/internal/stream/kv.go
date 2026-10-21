@@ -211,7 +211,7 @@ func (b *Bus) AdvanceServerSeq(ctx context.Context, tenantID, serverID string, s
 	}
 }
 
-// PutErasure publishes the erasure tombstone of a player (TTL ErasureTTL).
+// PutErasure publishes the erasure tombstone of a player.
 func (b *Bus) PutErasure(ctx context.Context, tenantID string, player identity.UUID, at time.Time) error {
 	k, err := ErasureKey(tenantID, player)
 	if err != nil {
@@ -219,6 +219,37 @@ func (b *Bus) PutErasure(ctx context.Context, tenantID string, player identity.U
 	}
 	_, err = b.Erasures.Put(ctx, k, []byte(fmt.Sprint(at.UnixMilli())))
 	return err
+}
+
+// PurgeErasureTombstones deletes tombstones of erasures before `before` (now - ErasureTombstoneAge)
+// and returns how many it deleted.
+func (b *Bus) PurgeErasureTombstones(ctx context.Context, before time.Time) (int, error) {
+	w, err := b.Erasures.WatchAll(ctx, jetstream.IgnoreDeletes())
+	if err != nil {
+		return 0, err
+	}
+	var old []jetstream.KeyValueEntry
+	for e := range w.Updates() {
+		if e == nil {
+			break
+		}
+		var ms int64
+		if _, err := fmt.Sscan(string(e.Value()), &ms); err == nil && ms < before.UnixMilli() {
+			old = append(old, e)
+		}
+	}
+	_ = w.Stop() // initial values are read; the watch itself is no longer needed
+	n := 0
+	for _, e := range old {
+		err := b.Erasures.Delete(ctx, e.Key(), jetstream.LastRevision(e.Revision()))
+		if err != nil && !errors.Is(err, ErrRevisionMismatch) {
+			return n, err
+		}
+		if err == nil {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func createJSON(ctx context.Context, kv jetstream.KeyValue, tenantID, serverID string, v any) (uint64, error) {

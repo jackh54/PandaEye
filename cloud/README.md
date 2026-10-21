@@ -75,9 +75,10 @@ Two keys beyond the 5.1 table: `PE_OWNER_ID` (stable owner id in lease tokens, d
 `<role>-<hostname>`) and `PE_LEASES` (`auto` = fair share of the partitions, the default outside `all`;
 `all` = every partition, the default in `all`; or a list such as `0-7,12`).
 
-Other roles need PostgreSQL (`PE_DB_DRIVER=postgres`, run `pandaeye migrate` first), an external NATS
-(`PE_NATS_URL`, with credentials and TLS unless loopback), `PE_OUTBOUND_KEY` and, for gateway and API,
-`PE_LICENSE_PEPPER`.
+Other roles need PostgreSQL (`PE_DB_DRIVER=postgres`, run `pandaeye migrate` first) and an external NATS
+(`PE_NATS_URL`, with credentials and TLS unless loopback); gateway, verdict and API also need
+`PE_OUTBOUND_KEY` (rotate with `PE_OUTBOUND_KEY_NEXT`), gateway and API `PE_LICENSE_PEPPER`. Every
+process recreates missing `PE_TENANTS` entries from the database at start.
 
 Status: the foundation (config, codec, identity, geom, metrics, store, stream, app, testkit, check
 catalog) is implemented; `gateway`, `worker`, `verdict`, `api`, `license`, `telemetry` and `ml` are

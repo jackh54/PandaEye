@@ -221,9 +221,13 @@ func (s *Store) ApplyAck(ctx context.Context, a store.Ack) (store.AckResult, err
 		}
 		switch {
 		case v.Action == pb.Action_ACTION_BAN && !v.Shadow:
-			r, err := s.exec(ctx, tx, `INSERT INTO bans (verdict_id, tenant_id, server_id, player_uuid, active, reason, created_at, unban_state)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (verdict_id) DO NOTHING`,
-				v.ID, v.TenantID, a.ServerID, v.PlayerUUID, true, v.Reason, at, store.UnbanNone)
+			var ends any
+			if v.BanDurationS > 0 {
+				ends = at + int64(v.BanDurationS)*1_000_000
+			}
+			r, err := s.exec(ctx, tx, `INSERT INTO bans (verdict_id, tenant_id, server_id, player_uuid, active, reason, created_at, ends_at, unban_state)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (verdict_id) DO NOTHING`,
+				v.ID, v.TenantID, a.ServerID, v.PlayerUUID, true, v.Reason, at, ends, store.UnbanNone)
 			if err != nil {
 				return err
 			}
@@ -285,9 +289,10 @@ func (s *Store) VerdictCounts(ctx context.Context, tenantID string, since time.T
 }
 
 func (s *Store) PurgeVerdicts(ctx context.Context, tenantID string, before time.Time) (int64, error) {
+	c := before.UnixMicro()
 	res, err := s.exec(ctx, s.w, `DELETE FROM verdicts WHERE tenant_id = ? AND created_at < ? AND NOT EXISTS (
-		SELECT 1 FROM bans b WHERE b.verdict_id = verdicts.id AND b.tenant_id = verdicts.tenant_id AND b.active = ?)`,
-		tenantID, before.UnixMicro(), true)
+		SELECT 1 FROM bans b WHERE b.verdict_id = verdicts.id AND b.tenant_id = verdicts.tenant_id AND `+banOngoing("b")+`)`,
+		tenantID, c, true, c)
 	if err != nil {
 		return 0, err
 	}

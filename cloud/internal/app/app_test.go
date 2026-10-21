@@ -14,7 +14,9 @@ import (
 	"github.com/jackh54/PandaEye/cloud/internal/config"
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
 	"github.com/jackh54/PandaEye/cloud/internal/metrics"
+	"github.com/jackh54/PandaEye/cloud/internal/store"
 	"github.com/jackh54/PandaEye/cloud/internal/store/sqlstore"
+	"github.com/jackh54/PandaEye/cloud/internal/stream"
 )
 
 func TestRedactingLogger(t *testing.T) {
@@ -130,6 +132,53 @@ func TestNewChecksSchemaOutsideAll(t *testing.T) {
 	}
 }
 
+func TestTenantSettingsCacheRebuild(t *testing.T) {
+	cfg := allConfig(t)
+	ctx := context.Background()
+	d, err := New(ctx, cfg, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ten := store.NewTenant(identity.NewTenantID(), "Net", "net", time.Now())
+	ten.Enforcement, ten.Leniency = true, 2
+	if err := d.Store.CreateTenant(ctx, ten); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Store.ReplaceTenantChecks(ctx, ten.ID, []store.TenantCheck{{CheckID: "aim.gcd", Enabled: false}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := d.Bus.GetTenant(ctx, ten.ID); !errors.Is(err, stream.ErrKeyNotFound) {
+		t.Fatalf("unexpected cache entry: %v", err)
+	}
+	d.Close()
+
+	d, err = New(ctx, cfg, quiet()) // the restart rebuilds the missing entry
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s, _, err := d.Bus.GetTenant(ctx, ten.ID)
+	if err != nil || !s.Enforcement || s.Leniency != 2 || s.CheckEnabled("aim.gcd", true) || s.Plan != store.PlanFree {
+		t.Fatalf("rebuilt settings %+v %v", s, err)
+	}
+	s.Leniency = 5
+	if _, err := d.Bus.PutTenant(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := SyncTenants(ctx, d.Store, d.Bus); err != nil || n != 0 {
+		t.Fatalf("sync must not overwrite: %d %v", n, err)
+	}
+	if got, _, _ := d.Bus.GetTenant(ctx, ten.ID); got.Leniency != 5 {
+		t.Fatal("existing entry overwritten")
+	}
+	if err := PublishTenant(ctx, d.Store, d.Bus, ten.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := d.Bus.GetTenant(ctx, ten.ID); got.Leniency != 2 {
+		t.Fatal("PublishTenant must write the database state")
+	}
+}
+
 func TestShared(t *testing.T) {
 	d := &Deps{shared: map[string]any{}}
 	calls := 0
@@ -165,6 +214,11 @@ func TestRunGracefulShutdown(t *testing.T) {
 	done := make(chan error)
 	go func() { done <- Run(ctx, d, Named{"a", svc}, Named{"b", svc}) }()
 	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-d.Stopping():
+		t.Fatal("stopping before shutdown")
+	default:
+	}
 	start := time.Now()
 	cancel()
 	select {
@@ -174,6 +228,11 @@ func TestRunGracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(ShutdownTimeout):
 		t.Fatal("shutdown overran")
+	}
+	select {
+	case <-d.Stopping():
+	default:
+		t.Fatal("Stopping not closed")
 	}
 	if stopped.Load() != 2 || !closed.Load() || time.Since(start) > time.Second {
 		t.Fatalf("stopped %d closed %v in %v", stopped.Load(), closed.Load(), time.Since(start))

@@ -31,6 +31,7 @@ type VerdictStore interface {
 	SetVerdictStatus(ctx context.Context, tenantID, id, to string, from ...string) error
 	// VerdictCounts counts verdicts created since `since` by action and category.
 	VerdictCounts(ctx context.Context, tenantID string, since time.Time) ([]VerdictCount, error)
-	// PurgeVerdicts deletes verdicts created before `before`, except those whose ban is active.
+	// PurgeVerdicts deletes verdicts created before `before`, except those whose ban is still active
+	// at `before` (ban rows themselves are purged by BanStore.PurgeBans).
 	PurgeVerdicts(ctx context.Context, tenantID string, before time.Time) (int64, error)
 }

@@ -21,4 +21,6 @@ type ErasureStore interface {
 	GetErasure(ctx context.Context, tenantID, player string) (*Erasure, error)
 	// ListErasures returns jobs requested at or after since, oldest first (tombstone republishing).
 	ListErasures(ctx context.Context, tenantID string, since time.Time) ([]Erasure, error)
+	// PurgeErasures deletes erasure records requested before `before` (kept 3 y as proof).
+	PurgeErasures(ctx context.Context, tenantID string, before time.Time) (int64, error)
 }

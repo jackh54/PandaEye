@@ -11,9 +11,10 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-// ErasureTTL bounds how long erasure tombstones live: longer than the longest stream retention
-// (30 d verdict records), after which no late data can arrive.
-const ErasureTTL = 31 * 24 * time.Hour
+// ErasureTombstoneAge is how long erasure tombstones are kept (ARCHITECTURE 5.4): past the 7 d of the
+// longest stream workers and verdict services read from, so no late data can arrive afterwards. The
+// janitor deletes older ones with PurgeErasureTombstones.
+const ErasureTombstoneAge = 8 * 24 * time.Hour
 
 // provision creates or updates every stream and KV bucket of ARCHITECTURE 5.4.
 func (b *Bus) provision(ctx context.Context) error {
@@ -46,7 +47,7 @@ func (b *Bus) provision(ctx context.Context) error {
 		{Bucket: BucketServers, History: 1},
 		{Bucket: BucketTenants, History: 1},
 		{Bucket: BucketMeta, History: 1},
-		{Bucket: BucketErasures, TTL: ErasureTTL, History: 1},
+		{Bucket: BucketErasures, History: 1},
 	}
 	kvs := make([]jetstream.KeyValue, len(buckets))
 	for i, kc := range buckets {

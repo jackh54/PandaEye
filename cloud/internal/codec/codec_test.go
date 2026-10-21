@@ -334,7 +334,7 @@ func TestFieldLimitsAndSanitising(t *testing.T) {
 	flag := &pb.LocalFlag{CheckId: "movement.speed", Info: strings.Repeat("é", 400), Data: map[string]float64{strings.Repeat("k", 300): 1}}
 	f := &pb.ClientFrame{Kind: &pb.ClientFrame_Batch{Batch: &pb.Batch{Events: []*pb.Event{
 		{Player: player, Kind: &pb.Event_Flag{Flag: flag}},
-		{Player: player, Kind: &pb.Event_Join{Join: &pb.PlayerJoin{Name: strings.Repeat("a", 1000), IpHash: make([]byte, 64)}}},
+		{Player: player, Kind: &pb.Event_Join{Join: &pb.PlayerJoin{Name: strings.Repeat("a", 1000)}}},
 	}}}}
 	msg, _ := EncodeClientFrame(f, Raw)
 	out, err := d.Decode(ctx, msg)
@@ -351,8 +351,8 @@ func TestFieldLimitsAndSanitising(t *testing.T) {
 		}
 	}
 	join := out.GetBatch().Events[1].GetJoin()
-	if len(join.Name) != MaxStringBytes || len(join.IpHash) != 32 {
-		t.Fatalf("join limits: %d %d", len(join.Name), len(join.IpHash))
+	if len(join.Name) != MaxStringBytes {
+		t.Fatalf("join name truncated to %d", len(join.Name))
 	}
 
 	for name, ev := range map[string]*pb.Event{

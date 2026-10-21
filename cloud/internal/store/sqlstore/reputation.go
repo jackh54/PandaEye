@@ -51,3 +51,7 @@ func (s *Store) TrustInputs(ctx context.Context, tenantID string) (store.TrustIn
 	ti.CreatedAt = time.UnixMicro(created).UTC()
 	return ti, nil
 }
+
+func (s *Store) PurgeReputation(ctx context.Context, tenantID string, before time.Time) (int64, error) {
+	return s.deleteCount(ctx, `DELETE FROM reputation_contrib WHERE tenant_id = ? AND created_at < ?`, tenantID, before.UnixMicro())
+}

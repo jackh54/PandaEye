@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+
+	"github.com/jackh54/PandaEye/cloud/internal/identity"
 )
 
 // MinKeyBytes is the minimum length of tokens and HMAC keys.
@@ -49,11 +51,19 @@ func (c *Config) Validate() error {
 
 	errs = append(errs, c.validateNATS()...)
 
-	if !c.OutboundKey.IsZero() && c.OutboundKey.Len() < MinKeyBytes {
-		bad("PE_OUTBOUND_KEY must be at least %d bytes", MinKeyBytes)
+	for _, k := range []struct {
+		name string
+		v    identity.Secret
+	}{{"PE_OUTBOUND_KEY", c.OutboundKey}, {"PE_OUTBOUND_KEY_NEXT", c.OutboundKeyNext}} {
+		if !k.v.IsZero() && k.v.Len() < MinKeyBytes {
+			bad("%s must be at least %d bytes", k.name, MinKeyBytes)
+		}
 	}
-	if c.OutboundKey.IsZero() && !all && c.Role != RoleMigrate && c.Role != RoleReplay {
-		bad("PE_OUTBOUND_KEY is required outside `all` (at least %d bytes)", MinKeyBytes)
+	if c.OutboundKey.IsZero() && (c.Role == RoleGateway || c.Role == RoleVerdict || c.Role == RoleAPI) {
+		bad("PE_OUTBOUND_KEY is required for %s (at least %d bytes)", c.Role, MinKeyBytes)
+	}
+	if c.OutboundKey.IsZero() && !c.OutboundKeyNext.IsZero() && !all {
+		bad("PE_OUTBOUND_KEY_NEXT requires PE_OUTBOUND_KEY")
 	}
 	if c.Partitions < 1 || c.Partitions > MaxPartitions {
 		bad("PE_PARTITIONS must be 1..%d", MaxPartitions)
@@ -77,13 +87,17 @@ func (c *Config) Validate() error {
 	for _, t := range []struct {
 		name string
 		n    int
-	}{{"PE_SERVICE_TOKEN", c.ServiceToken.Len()}, {"PE_SERVICE_TOKEN_NEXT", c.ServiceTokenNext.Len()}, {"PE_ASSERTION_KEY", c.AssertionKey.Len()}} {
+	}{{"PE_SERVICE_TOKEN", c.ServiceToken.Len()}, {"PE_SERVICE_TOKEN_NEXT", c.ServiceTokenNext.Len()},
+		{"PE_ASSERTION_KEY", c.AssertionKey.Len()}, {"PE_ASSERTION_KEY_NEXT", c.AssertionKeyNext.Len()}} {
 		if t.n != 0 && t.n < MinKeyBytes {
 			bad("%s must be empty or at least %d bytes", t.name, MinKeyBytes)
 		}
 	}
 	if c.ServiceToken.IsZero() && !c.ServiceTokenNext.IsZero() {
 		bad("PE_SERVICE_TOKEN_NEXT requires PE_SERVICE_TOKEN")
+	}
+	if c.AssertionKey.IsZero() && !c.AssertionKeyNext.IsZero() {
+		bad("PE_ASSERTION_KEY_NEXT requires PE_ASSERTION_KEY")
 	}
 	if !c.ServiceToken.IsZero() && c.AssertionKey.IsZero() && (all || c.Role == RoleAPI) {
 		bad("PE_ASSERTION_KEY is required when PE_SERVICE_TOKEN is set")

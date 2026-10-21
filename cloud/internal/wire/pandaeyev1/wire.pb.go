@@ -1539,6 +1539,7 @@ func (x *RemoteConfig) GetEnforcement() bool {
 	return false
 }
 
+// Sent by the plugin right before it closes the connection on a graceful stop (disable/shutdown).
 type Goodbye struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
@@ -1789,9 +1790,9 @@ func (x *Pong) GetConfig() *RemoteConfig {
 
 type Batch struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Seq   uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"` // starts at 1, +1 per batch, never reused within one server_id
-	// (the plugin persists the next seq in its data folder on shutdown
-	// and adds 1_000_000 to it on an unclean start)
+	Seq   uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"` // +1 per batch, assigned when the batch is first sent, never reused within
+	// one server_id: the plugin reserves blocks of 100 000 seqs in its data
+	// folder, so a restart (clean or not) always resumes above anything used
 	SentUnixMs    uint64   `protobuf:"varint,2,opt,name=sent_unix_ms,json=sentUnixMs,proto3" json:"sent_unix_ms,omitempty"`
 	Replayed      bool     `protobuf:"varint,3,opt,name=replayed,proto3" json:"replayed,omitempty"` // true when resent after a reconnect / outage
 	Events        []*Event `protobuf:"bytes,4,rep,name=events,proto3" json:"events,omitempty"`
@@ -2481,7 +2482,6 @@ type PlayerJoin struct {
 	GameMode       GameMode `protobuf:"varint,7,opt,name=game_mode,json=gameMode,proto3,enum=pandaeye.v1.GameMode" json:"game_mode,omitempty"`
 	HotLoaded      bool     `protobuf:"varint,8,opt,name=hot_loaded,json=hotLoaded,proto3" json:"hot_loaded,omitempty"`                // the player was already online when the plugin was enabled
 	Exempt         bool     `protobuf:"varint,9,opt,name=exempt,proto3" json:"exempt,omitempty"`                                       // has the bypass permission
-	IpHash         []byte   `protobuf:"bytes,10,opt,name=ip_hash,json=ipHash,proto3" json:"ip_hash,omitempty"`                         // optional (off by default): HMAC-SHA256(ip, per-install secret), first 16 bytes
 	NetworkSession string   `protobuf:"bytes,11,opt,name=network_session,json=networkSession,proto3" json:"network_session,omitempty"` // set by the proxy plugin; backends set it only from a verified proxy message
 	Update         bool     `protobuf:"varint,12,opt,name=update,proto3" json:"update,omitempty"`                                      // metadata refresh (brand, network_session, periodic re-announce):
 	// never resets session state
@@ -2581,13 +2581,6 @@ func (x *PlayerJoin) GetExempt() bool {
 		return x.Exempt
 	}
 	return false
-}
-
-func (x *PlayerJoin) GetIpHash() []byte {
-	if x != nil {
-		return x.IpHash
-	}
-	return nil
 }
 
 func (x *PlayerJoin) GetNetworkSession() string {
@@ -2809,7 +2802,7 @@ type Attack struct {
 	Sneaking          bool                   `protobuf:"varint,8,opt,name=sneaking,proto3" json:"sneaking,omitempty"`
 	TargetWidth       float32                `protobuf:"fixed32,9,opt,name=target_width,json=targetWidth,proto3" json:"target_width,omitempty"` // target hitbox (scaled); 0 if unknown
 	TargetHeight      float32                `protobuf:"fixed32,10,opt,name=target_height,json=targetHeight,proto3" json:"target_height,omitempty"`
-	TargetHistory     []*TimedPos            `protobuf:"bytes,11,rep,name=target_history,json=targetHistory,proto3" json:"target_history,omitempty"` // target's positions received in the last 1000 ms, oldest first
+	TargetHistory     []*TimedPos            `protobuf:"bytes,11,rep,name=target_history,json=targetHistory,proto3" json:"target_history,omitempty"` // target's positions received in the last 1500 ms, oldest first
 	PingMs            uint32                 `protobuf:"varint,12,opt,name=ping_ms,json=pingMs,proto3" json:"ping_ms,omitempty"`                     // attacker's best current RTT estimate
 	EntityReach       float32                `protobuf:"fixed32,13,opt,name=entity_reach,json=entityReach,proto3" json:"entity_reach,omitempty"`     // attacker's entity_interaction_range attribute (3.0 default)
 	GameMode          GameMode               `protobuf:"varint,14,opt,name=game_mode,json=gameMode,proto3,enum=pandaeye.v1.GameMode" json:"game_mode,omitempty"`
@@ -4947,7 +4940,7 @@ const file_pandaeye_v1_wire_proto_rawDesc = "" +
 	"\x05stall\x18\x1b \x01(\v2\x18.pandaeye.v1.ServerStallH\x00R\x05stall\x12:\n" +
 	"\vcheck_stats\x18\x1c \x01(\v2\x17.pandaeye.v1.CheckStatsH\x00R\n" +
 	"checkStatsB\x06\n" +
-	"\x04kind\"\x9e\x03\n" +
+	"\x04kind\"\x94\x03\n" +
 	"\n" +
 	"PlayerJoin\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12)\n" +
@@ -4959,12 +4952,11 @@ const file_pandaeye_v1_wire_proto_rawDesc = "" +
 	"\tgame_mode\x18\a \x01(\x0e2\x15.pandaeye.v1.GameModeR\bgameMode\x12\x1d\n" +
 	"\n" +
 	"hot_loaded\x18\b \x01(\bR\thotLoaded\x12\x16\n" +
-	"\x06exempt\x18\t \x01(\bR\x06exempt\x12\x17\n" +
-	"\aip_hash\x18\n" +
-	" \x01(\fR\x06ipHash\x12'\n" +
+	"\x06exempt\x18\t \x01(\bR\x06exempt\x12'\n" +
 	"\x0fnetwork_session\x18\v \x01(\tR\x0enetworkSession\x12\x16\n" +
 	"\x06update\x18\f \x01(\bR\x06update\x12\x18\n" +
-	"\asession\x18\r \x01(\tR\asession\"$\n" +
+	"\asession\x18\r \x01(\tR\asessionJ\x04\b\n" +
+	"\x10\vR\aip_hash\"$\n" +
 	"\n" +
 	"PlayerQuit\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xe4\x02\n" +

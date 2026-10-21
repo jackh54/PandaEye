@@ -97,8 +97,20 @@ func EventsMsgID(tenantID, serverID string, batchSeq uint64, partition int) stri
 	return tenantID + ":" + serverID + ":" + strconv.FormatUint(batchSeq, 10) + ":" + identity.FormatPartition(partition)
 }
 
-// SignalMsgID returns the msg id of a signal or session marker:
+// SignalMsgID returns the msg id of a signal:
 // <tenant>:<server>:<batch_seq>:<NN>:<event index>:<check>:<emit ordinal>.
 func SignalMsgID(tenantID, serverID string, batchSeq uint64, partition, eventIndex int, checkID string, ordinal int) string {
 	return EventsMsgID(tenantID, serverID, batchSeq, partition) + ":" + strconv.Itoa(eventIndex) + ":" + checkID + ":" + strconv.Itoa(ordinal)
 }
+
+// SessionMarkerMsgID returns the msg id of a session marker:
+// <tenant>:<server>:<batch_seq>:<NN>:<event index>:session.
+func SessionMarkerMsgID(tenantID, serverID string, batchSeq uint64, partition, eventIndex int) string {
+	return EventsMsgID(tenantID, serverID, batchSeq, partition) + ":" + strconv.Itoa(eventIndex) + ":session"
+}
+
+// VerdictRecordMsgID returns the msg id of a VerdictRecord: the verdict id.
+func VerdictRecordMsgID(verdictID string) string { return verdictID }
+
+// AckRecordMsgID returns the msg id of an AckRecord: ack:<verdict id>.
+func AckRecordMsgID(verdictID string) string { return "ack:" + verdictID }

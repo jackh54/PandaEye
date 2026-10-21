@@ -8,17 +8,17 @@ import (
 	"github.com/jackh54/PandaEye/cloud/internal/store"
 )
 
-const banCols = `verdict_id, tenant_id, server_id, player_uuid, active, reason, created_at, overturned_at, overturned_by,
+const banCols = `verdict_id, tenant_id, server_id, player_uuid, active, reason, created_at, ends_at, overturned_at, overturned_by,
 	overturn_note, unban_verdict_id, unban_state`
 
 func scanBan(sc interface{ Scan(...any) error }) (*store.Ban, error) {
 	var b store.Ban
-	var created, overturned sql.NullInt64
-	if err := sc.Scan(&b.VerdictID, &b.TenantID, &b.ServerID, &b.PlayerUUID, &b.Active, &b.Reason, &created, &overturned,
+	var created, ends, overturned sql.NullInt64
+	if err := sc.Scan(&b.VerdictID, &b.TenantID, &b.ServerID, &b.PlayerUUID, &b.Active, &b.Reason, &created, &ends, &overturned,
 		&b.OverturnedBy, &b.OverturnNote, &b.UnbanVerdictID, &b.UnbanState); err != nil {
 		return nil, mapErr(err)
 	}
-	b.CreatedAt, b.OverturnedAt = fromUS(created), fromUS(overturned)
+	b.CreatedAt, b.EndsAt, b.OverturnedAt = fromUS(created), fromUS(ends), fromUS(overturned)
 	return &b, nil
 }
 
@@ -30,8 +30,13 @@ func (s *Store) ListBans(ctx context.Context, tenantID string, f store.BanFilter
 	where := " WHERE tenant_id = ?"
 	args := []any{tenantID}
 	if f.Active != nil {
-		where += " AND active = ?"
-		args = append(args, *f.Active)
+		at := orNow(f.At).UnixMicro()
+		if *f.Active {
+			where += " AND " + banOngoing("bans")
+		} else {
+			where += " AND NOT " + banOngoing("bans")
+		}
+		args = append(args, true, at)
 	}
 	if f.PlayerUUID != "" {
 		where += " AND player_uuid = ?"
@@ -80,4 +85,16 @@ func (s *Store) OverturnBan(ctx context.Context, tenantID, verdictID string, o s
 			false, orNow(o.At).UnixMicro(), o.By, o.Note, o.UnbanVerdictID, state, verdictID, tenantID)
 		return err
 	})
+}
+
+func (s *Store) PurgeBans(ctx context.Context, tenantID string, endedBefore time.Time) (int64, error) {
+	c := endedBefore.UnixMicro()
+	return s.deleteCount(ctx, `DELETE FROM bans WHERE tenant_id = ? AND (
+		(active = ? AND overturned_at IS NOT NULL AND overturned_at < ?) OR (ends_at IS NOT NULL AND ends_at < ?))`,
+		tenantID, false, c, c)
+}
+
+// banOngoing is the SQL condition "ban t is in force at time ?" (args: true, unix micros).
+func banOngoing(t string) string {
+	return "(" + t + ".active = ? AND (" + t + ".ends_at IS NULL OR " + t + ".ends_at > ?))"
 }

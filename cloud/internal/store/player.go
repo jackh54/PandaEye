@@ -15,4 +15,6 @@ type PlayerStore interface {
 	// FindPlayersByName returns players who used a name starting with prefix (case-insensitive),
 	// most recently seen first, at most limit (<= 200).
 	FindPlayersByName(ctx context.Context, tenantID, prefix string, limit int) ([]Player, error)
+	// PurgePlayers deletes players last seen before `before` and names last used before it.
+	PurgePlayers(ctx context.Context, tenantID string, before time.Time) (players, names int64, err error)
 }

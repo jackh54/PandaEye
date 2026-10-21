@@ -58,9 +58,6 @@ func validateEvent(e *pb.Event) error {
 		for _, s := range []*string{&j.Name, &j.ClientVersion, &j.Brand, &j.NetworkSession, &j.Session} {
 			trunc(s, MaxStringBytes)
 		}
-		if len(j.IpHash) > 32 {
-			j.IpHash = j.IpHash[:32]
-		}
 	case *pb.Event_Quit:
 		trunc(&k.Quit.Reason, MaxStringBytes)
 	case *pb.Event_Attack:
