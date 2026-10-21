@@ -23,9 +23,9 @@ function columnPath(x: number, y: number, w: number, base: number): string {
 }
 
 export function PeakPlayersChart(props: { days: DayPoint[]; limit: number | null; title: string }) {
-  const W = 720;
-  const H = 260;
-  const m = { top: 20, right: 16, bottom: 30, left: 44 };
+  const W = 960;
+  const H = 300;
+  const m = { top: 24, right: 16, bottom: 30, left: 44 };
   const pw = W - m.left - m.right;
   const ph = H - m.top - m.bottom;
   const days = props.days;
@@ -85,7 +85,7 @@ export function PeakPlayersChart(props: { days: DayPoint[]; limit: number | null
         {props.limit ? (
           <g class="chart-limit">
             <line x1={m.left} x2={W - m.right} y1={y(props.limit)} y2={y(props.limit)} stroke-dasharray="6 4" />
-            <text x={W - m.right} y={y(props.limit) - 6} text-anchor="end">
+            <text x={m.left + 6} y={y(props.limit) - 6} text-anchor="start" class="chart-halo">
               {`Free tier limit: ${props.limit}`}
             </text>
           </g>

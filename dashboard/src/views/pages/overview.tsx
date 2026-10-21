@@ -5,7 +5,6 @@ import type { Session } from "../../lib/session";
 import { PeakPlayersChart } from "../chart";
 import {
   ActionBadge,
-  AbsTime,
   CategoryTag,
   EmptyRow,
   ExecState,
@@ -120,6 +119,7 @@ export function OverviewPage(props: {
   const players = online.reduce((a, s) => a + s.onlinePlayers, 0);
   const lat = props.latency.ok ? props.latency.value.windows[0] : undefined;
   const slo = props.latency.ok ? props.latency.value : null;
+  const windows = props.stats.ok ? props.stats.value : [];
   return (
     <Layout title="Overview" nonce={props.nonce} session={props.session} active="overview" flash={props.flash}>
       <PageHeader title="Overview" />
@@ -199,7 +199,7 @@ export function OverviewPage(props: {
                   {CATEGORIES.map((cat) => (
                     <tr>
                       <th scope="row">{CATEGORY_LABEL[cat]}</th>
-                      {props.stats.value.map((w) => (
+                      {windows.map((w) => (
                         <td class="num">{formatNumber(w.byCategory[cat] ?? 0)}</td>
                       ))}
                     </tr>
@@ -347,4 +347,3 @@ export function UsagePage(props: { nonce: string; session: Session; usage: Usage
   );
 }
 
-export { AbsTime };

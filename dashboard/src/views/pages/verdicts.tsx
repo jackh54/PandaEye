@@ -555,4 +555,3 @@ export function VerdictPage(props: { nonce: string; session: Session; verdict: V
   );
 }
 
-export { categoryLabel };

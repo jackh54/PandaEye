@@ -8,7 +8,7 @@ import { cloudChecks } from "../lib/checks";
 import { normalizeAction, withQuery, type ActionName } from "../lib/format";
 import { flashFromQuery } from "../lib/messages";
 import { API_KEY_SCOPES, VERDICT_STATUSES, type CheckConfig, type TenantPatch, type VerdictStatus } from "../lib/pandaeye";
-import { invitableRoles, isRole } from "../lib/roles";
+import { invitableRoles, isRole, type Role } from "../lib/roles";
 import {
   createInvite,
   findUser,
@@ -19,7 +19,7 @@ import {
   setUserRole,
 } from "../lib/users";
 import { checkbox, field, isDiscordWebhook, isId, isUuid, parseOverrides } from "../lib/validate";
-import { csrfGuard, forbidden, requirePerm, requireSession } from "../middleware";
+import { csrfGuard, requirePerm, requireSession } from "../middleware";
 import type { AppEnv, Ctx } from "../types";
 import { ErrorPage } from "../views/errors";
 import { ApiKeysPage, AuditPage, UsersPage } from "../views/pages/admin";
@@ -369,7 +369,7 @@ export function dashboardRoutes(): Hono<AppEnv> {
 
   // ---- users and invites (D1) -------------------------------------------------------------------
 
-  async function renderUsers(c: Ctx, extra: { newInvite?: { url: string; role: import("../lib/roles").Role; expiresAt: number }; error?: string }, status: 200 | 400 = 200) {
+  async function renderUsers(c: Ctx, extra: { newInvite?: { url: string; role: Role; expiresAt: number }; error?: string }, status: 200 | 400 = 200) {
     const s = c.get("session")!;
     const now = c.get("deps").now();
     const [users, invites] = await Promise.all([listUsers(c.env.DB, s.user.tenantId), listPendingInvites(c.env.DB, s.user.tenantId, now)]);
@@ -472,4 +472,3 @@ export function dashboardRoutes(): Hono<AppEnv> {
   return r;
 }
 
-export { forbidden };
