@@ -1,0 +1,25 @@
+{
+  "name": "pandaeye-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PandaEye dashboard: Cloudflare Worker (Hono + D1)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate:local": "wrangler d1 migrations apply pandaeye-dashboard --local"
+  },
+  "dependencies": {
+    "hono": "4.13.13"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.2",
+    "@cloudflare/workers-types": "5.20261001.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.148.0"
+  }
+}
