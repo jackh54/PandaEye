@@ -67,14 +67,27 @@ module.exports = [
     kind: 'cheat',
     engine: 'raw',
     checks: ['latency.pingspoof'],
-    players: ['ch_pingspoof'],
+    players: ['ch_pingspoof', 'ch_pingspoof_a'],
+    suspects: ['ch_pingspoof'],
     traceSeconds: 150,
-    description: 'answers every KEEP_ALIVE 500 ms late while answering PINGs (KnockbackSync) immediately; walks back and forth for 75 s',
+    description: 'answers every KEEP_ALIVE 500 ms late while answering PINGs immediately; a legit attacker hits it every ' +
+      'second so KnockbackSync keeps it combat-tagged and pings it (ping_strategy PING), 75 s',
     async run (ctx) {
-      const { b } = await laneBot(ctx, 'ch_pingspoof', 37)
-      b.keepAliveDelayMs = 500
-      await everyTick(ctx, b, ctx.dur(75000) / 50, (n, i) => { b.input.forward = (Math.floor(i / 60) % 2) ? -1 : 1 })
-      b.input.forward = 0
+      const c = ctx.fx.combat.center
+      const v = await ctx.raw('ch_pingspoof')
+      await ctx.probe('effect ch_pingspoof resistance 300 4')
+      await ctx.tp(v, c[0], c[1], c[2], 180, 0)
+      v.keepAliveDelayMs = 500
+      const a = await ctx.raw('ch_pingspoof_a')
+      await ctx.probe('effect ch_pingspoof_a resistance 300 4')
+      await ctx.tp(a, c[0], c[1], c[2] - 2.6, 0, 0)
+      await everyTick(ctx, a, ctx.dur(75000) / 50, (n, i) => {
+        aim(a, v)
+        const d = Math.hypot(v.pos.x - a.pos.x, v.pos.z - a.pos.z)
+        a.input.forward = d > 2.8 ? 1 : 0
+        if (i % 20 === 10 && d < 3.0) a.attack(v.entityId)
+        if (i % 20 === 0) { v.input.forward = d > 3.5 ? 1 : 0; v.input.yaw = 180 }
+      })
     },
     verify (tr) {
       const es = tr.ch_pingspoof

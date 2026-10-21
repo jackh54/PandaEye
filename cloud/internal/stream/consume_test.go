@@ -226,7 +226,7 @@ func TestStaleAckCannotMoveNewEpoch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch, err := ea.Consumer.Fetch(50, jetstream.FetchMaxWait(5*time.Second))
+	batch, err := ea.Consumer.Fetch(50, jetstream.FetchMaxWait(5*time.Second), jetstream.FetchPriorityGroup(PriorityGroup))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,5 +425,44 @@ func TestReplay(t *testing.T) {
 	stop := errors.New("stop")
 	if n, err := b.Replay(ctx, ReplaySpec{Stream: StreamEvents, Subject: EventsSubject(3), Since: since, UpTo: 1 << 40}, func(*Msg) error { return stop }); !errors.Is(err, stop) || n != 0 {
 		t.Fatalf("fn error: %d %v", n, err)
+	}
+}
+
+// TestPinnedConsumerAdmitsOnePuller: besides the lease, the server pins one puller per epoch.
+func TestPinnedConsumerAdmitsOnePuller(t *testing.T) {
+	srv := startServer(t)
+	a := openBus(t, testConfig(srv.ClientURL(), "owner-a"))
+	b := openBus(t, testConfig(srv.ClientURL(), "owner-b"))
+	l := acquire(t, a, PartitionLeaseKey(GroupEvents, 1))
+	e, err := a.ResetConsumer(ctxT(t, 10*time.Second), PartitionConsumer(GroupEvents, 1), newEpoch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var aSeen recorder
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.Consume(ctx, e, l, func(ctx context.Context, m *Msg, done func(error)) { aSeen.add(m.Seq); done(nil) }, ConsumeOptions{})
+	publishN(t, a, 1, 5, "p1")
+	eventually(t, 10*time.Second, "A pinned and consuming", func() bool { return len(aSeen.get()) == 5 })
+
+	intruder, err := b.JS.Consumer(ctxT(t, 5*time.Second), StreamEvents, e.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bGot int
+	var bmu sync.Mutex
+	cc, err := intruder.Consume(func(m jetstream.Msg) { bmu.Lock(); bGot++; bmu.Unlock() },
+		jetstream.PullPriorityGroup(PriorityGroup), jetstream.ConsumeErrHandler(func(jetstream.ConsumeContext, error) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cc.Stop()
+	publishN(t, a, 1, 20, "p2")
+	eventually(t, 10*time.Second, "A gets the new messages", func() bool { return len(aSeen.get()) == 25 })
+	time.Sleep(300 * time.Millisecond)
+	bmu.Lock()
+	defer bmu.Unlock()
+	if bGot != 0 {
+		t.Fatalf("an unpinned puller received %d messages", bGot)
 	}
 }

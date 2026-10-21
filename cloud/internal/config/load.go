@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
+	"github.com/jackh54/PandaEye/cloud/internal/netutil"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -56,7 +57,16 @@ var fields = []field{
 	{"metrics.listen", "127.0.0.1:9090", str(func(c *Config) *string { return &c.MetricsListen })},
 	{"tls.cert", "", str(func(c *Config) *string { return &c.TLSCert })},
 	{"tls.key", "", str(func(c *Config) *string { return &c.TLSKey })},
-	{"trusted.proxies", "", func(c *Config, v string) (err error) { c.TrustedProxies, err = parsePrefixes(v); return err }},
+	{"trusted.proxies", "", func(c *Config, v string) error {
+		ps, err := parsePrefixes(v)
+		c.TrustedProxies = netutil.NewTrustedProxies(ps...)
+		return err
+	}},
+	{"trusted.proxies.preset", "", str(func(c *Config) *string { return &c.TrustedProxyPreset })},
+	{"require.trusted.proxy", "false", func(c *Config, v string) (err error) {
+		c.RequireTrustedProxy, err = strconv.ParseBool(strings.TrimSpace(v))
+		return err
+	}},
 	{"public.url", "", str(func(c *Config) *string { return &c.PublicURL })},
 	{"nats.url", "", str(func(c *Config) *string { return &c.NATS.URL })},
 	{"nats.creds", "", str(func(c *Config) *string { return &c.NATS.Creds })},
@@ -159,6 +169,9 @@ func Load(role Role, path string, environ []string) (*Config, error) {
 }
 
 func (c *Config) applyRoleDefaults() {
+	if c.TrustedProxyPreset == PresetCloudflare {
+		c.TrustedProxies.SetCloudflare(netutil.CloudflarePrefixes())
+	}
 	if c.OwnerID == "" {
 		host, _ := os.Hostname()
 		c.OwnerID = SanitizeOwnerID(string(c.Role) + "-" + host)

@@ -35,6 +35,12 @@ func (c *Config) Validate() error {
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		bad("PE_TLS_CERT and PE_TLS_KEY must be set together")
 	}
+	if c.TrustedProxyPreset != "" && c.TrustedProxyPreset != PresetCloudflare {
+		bad("PE_TRUSTED_PROXIES_PRESET must be empty or %s", PresetCloudflare)
+	}
+	if c.RequireTrustedProxy && c.TrustedProxies.Empty() {
+		bad("PE_REQUIRE_TRUSTED_PROXY needs PE_TRUSTED_PROXIES or PE_TRUSTED_PROXIES_PRESET (it would refuse every peer)")
+	}
 	if c.PublicURL != "" {
 		if u, err := url.Parse(c.PublicURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 			bad("PE_PUBLIC_URL must be an absolute http(s) URL")
@@ -123,8 +129,8 @@ func (c *Config) validateNATS() []error {
 	if n.Replicas < 1 || n.Replicas > 5 {
 		bad("PE_NATS_REPLICAS must be 1..5")
 	}
-	if !c.Role.Service() {
-		return errs
+	if !c.Role.Service() || (c.Role == RoleReplay && n.Embedded()) {
+		return errs // migrate never connects; replay without PE_NATS_URL replays clips only
 	}
 	if n.Embedded() {
 		if c.Role != RoleAll {

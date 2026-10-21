@@ -178,6 +178,7 @@ public final class PacketProcessor {
     public void applyBaseline(Baseline baseline, long nanos) {
         state.applyBaseline(baseline);
         checks.dispatch(new CheckInput.Reset(CheckInput.ResetReason.SEEDED), nanos);
+        events.joined(nanos);
     }
 
     public void serverTeleport(int id, double x, double y, double z, float yaw, float pitch, boolean relX,

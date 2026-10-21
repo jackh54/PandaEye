@@ -1,0 +1,30 @@
+name: PandaEye
+version: '${version}'
+main: dev.pandascript.pandaeye.paper.PandaEyePlugin
+api-version: '1.21'
+folia-supported: true
+description: Cloud anticheat (packet capture and local checks; detection runs in the PandaEye cloud).
+depend: [packetevents]
+softdepend: [floodgate, ViaVersion]
+commands:
+  pandaeye:
+    description: PandaEye status, alerts and administration.
+    usage: /<command> status|alerts [on|off]|player <name>|debug <name>|breaker [reset]|forget <uuid>|reload
+    aliases: [peye]
+    permission: pandaeye.command
+permissions:
+  pandaeye.command:
+    description: Use /pandaeye.
+    default: op
+  pandaeye.alerts:
+    description: Receive PandaEye alerts in game (toggle with /pandaeye alerts).
+    default: op
+  pandaeye.admin:
+    description: Administrative PandaEye commands (reload, breaker, forget).
+    default: op
+    children:
+      pandaeye.command: true
+      pandaeye.alerts: true
+  pandaeye.bypass:
+    description: Exempt from enforcement (and from detection outside shadow mode).
+    default: false

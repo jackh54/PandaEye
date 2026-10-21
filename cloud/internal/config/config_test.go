@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -91,8 +92,11 @@ static.licenses: "A:3:pro,B"
 		t.Errorf("file values: %+v %v %v", c.NATS, c.EventsMaxAge, c.LogLevel)
 	}
 	want := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("192.168.1.7/32")}
-	if len(c.TrustedProxies) != 2 || c.TrustedProxies[0] != want[0] || c.TrustedProxies[1] != want[1] {
-		t.Errorf("proxies %v", c.TrustedProxies)
+	if ps := c.TrustedProxies.Prefixes(); len(ps) != 2 || ps[0] != want[0] || ps[1] != want[1] {
+		t.Errorf("proxies %v", ps)
+	}
+	if !c.TrustedProxies.Contains(netip.MustParseAddr("192.168.1.7")) || c.TrustedProxies.Contains(netip.MustParseAddr("192.168.1.8")) {
+		t.Error("Contains")
 	}
 	if len(c.License.Static) != 2 || c.License.Static[0].Key.Reveal() != "A" || c.License.Static[0].MaxServers != 3 ||
 		c.License.Static[0].Plan != "pro" || c.License.Static[1].MaxServers != 0 || c.License.Static[1].Plan != "free" {
@@ -123,15 +127,29 @@ func TestEnvName(t *testing.T) {
 		}
 		seen[EnvName(k)] = true
 	}
-	for _, documented := range []string{"PE_GATEWAY_LISTEN", "PE_API_LISTEN", "PE_METRICS_LISTEN", "PE_TLS_CERT", "PE_TLS_KEY",
-		"PE_TRUSTED_PROXIES", "PE_PUBLIC_URL", "PE_NATS_URL", "PE_NATS_CREDS", "PE_NATS_TOKEN", "PE_NATS_TLS_CA", "PE_NATS_DIR",
-		"PE_NATS_REPLICAS", "PE_NATS_SYNC", "PE_OUTBOUND_KEY", "PE_PARTITIONS", "PE_DB_DRIVER", "PE_DB_DSN", "PE_CLICKHOUSE_DSN",
-		"PE_LICENSE_MODE", "PE_LICENSE_URL", "PE_LICENSE_PRODUCT", "PE_LICENSE_PEPPER", "PE_STATIC_LICENSES", "PE_SERVICE_TOKEN",
-		"PE_SERVICE_TOKEN_NEXT", "PE_ASSERTION_KEY", "PE_EVENTS_MAX_AGE", "PE_EVENTS_MAX_BYTES", "PE_WORKER_MAX_MEMORY",
-		"PE_REGION", "PE_LOG_LEVEL", "PE_ML_MODEL", "PE_ML_POINTS"} {
-		if !seen[documented] {
-			t.Errorf("ARCHITECTURE 5.1 key %s missing", documented)
+	doc, err := os.ReadFile("../../../docs/ARCHITECTURE.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := string(doc)
+	section = section[strings.Index(section, "### 5.1 "):]
+	section = section[:strings.Index(section, "### 5.2 ")]
+	key := regexp.MustCompile("`(PE_[A-Z0-9_]+)`")
+	n := 0
+	for _, line := range strings.Split(section, "\n") {
+		cells := strings.Split(line, "|")
+		if len(cells) < 3 || !strings.Contains(cells[1], "`PE_") {
+			continue
 		}
+		for _, m := range key.FindAllStringSubmatch(cells[1], -1) {
+			n++
+			if !seen[m[1]] {
+				t.Errorf("ARCHITECTURE 5.1 key %s is not loaded", m[1])
+			}
+		}
+	}
+	if n < 30 {
+		t.Fatalf("found only %d keys in the ARCHITECTURE 5.1 table", n)
 	}
 }
 
@@ -148,6 +166,7 @@ func TestValidation(t *testing.T) {
 	mustLoad(t, RoleWorker, "", prodEnv("PE_LICENSE_PEPPER="))
 	wantErr(t, RoleWorker, prodEnv("PE_DB_DRIVER=sqlite"), "only allowed in `all`")
 	mustLoad(t, RoleMigrate, "", []string{"PE_DB_DRIVER=sqlite"})
+	mustLoad(t, RoleReplay, "", []string{"PE_DB_DRIVER=sqlite"})
 	wantErr(t, RoleAll, []string{"PE_DB_DRIVER=mysql"}, "PE_DB_DRIVER must be")
 	wantErr(t, RoleAll, []string{"PE_DB_DSN="}, "PE_DB_DSN is required")
 	wantErr(t, RoleAll, []string{"PE_LICENSE_MODE=pandascript"}, "PE_LICENSE_URL is required")
@@ -183,6 +202,25 @@ func TestValidation(t *testing.T) {
 	wantErr(t, RoleAll, []string{"PE_OWNER_ID=has space"}, "PE_OWNER_ID")
 	wantErr(t, RoleAll, []string{"PE_LEASES=0-3,20"}, "does not exist")
 	wantErr(t, RoleAll, []string{"PE_LEASES=3-1"}, "partition list")
+}
+
+func TestTrustedProxies(t *testing.T) {
+	c := mustLoad(t, RoleAll, "", nil)
+	if !c.TrustedProxies.Empty() || c.RequireTrustedProxy {
+		t.Fatal("default trusts nobody and requires nothing")
+	}
+	c = mustLoad(t, RoleAll, "", []string{"PE_TRUSTED_PROXIES_PRESET=cloudflare", "PE_TRUSTED_PROXIES=127.0.0.1", "PE_REQUIRE_TRUSTED_PROXY=true"})
+	cf := netip.MustParseAddr("173.245.48.1")
+	if !c.RequireTrustedProxy || !c.TrustedProxies.IsCloudflare(cf) || !c.TrustedProxies.Contains(netip.MustParseAddr("127.0.0.1")) ||
+		c.TrustedProxies.Contains(netip.MustParseAddr("8.8.8.8")) {
+		t.Fatal("preset")
+	}
+	if !c.TrustedProxies.PeerAllowed(cf, c.RequireTrustedProxy) || c.TrustedProxies.PeerAllowed(netip.MustParseAddr("8.8.8.8"), c.RequireTrustedProxy) {
+		t.Fatal("require")
+	}
+	wantErr(t, RoleAll, []string{"PE_REQUIRE_TRUSTED_PROXY=true"}, "would refuse every peer")
+	wantErr(t, RoleAll, []string{"PE_REQUIRE_TRUSTED_PROXY=maybe"}, "PE_REQUIRE_TRUSTED_PROXY")
+	wantErr(t, RoleAll, []string{"PE_TRUSTED_PROXIES_PRESET=akamai"}, "PE_TRUSTED_PROXIES_PRESET")
 }
 
 func TestLeases(t *testing.T) {

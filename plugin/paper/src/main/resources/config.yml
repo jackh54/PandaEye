@@ -1,0 +1,57 @@
+# shadow = observe only: never sends, cancels or modifies packets, never punishes or mitigates.
+# live   = enforcement allowed when the dashboard also enables enforcement.
+mode: shadow
+server-name: ""
+network-id: ""
+cloud:
+  enabled: true
+  endpoint: "wss://cloud.pandaeye.dev/v1/connect"
+  license-key: ""
+  batch-interval-ms: 50
+  max-buffer-mb: 64
+  max-buffer-age-minutes: 10
+  # ws:// is refused except to a loopback address unless this is true (cloud on a private network only).
+  allow-insecure: false
+telemetry:
+  full: false
+  focus-seconds: 5
+  idle-sample-hz: 2
+checks:                    # enabled + thresholds from CHECKS.md, per check id
+  timer.balance: { enabled: true }
+  movement.speed: { enabled: true }
+  movement.fly: { enabled: true }
+  movement.step: { enabled: true }
+  movement.groundspoof: { enabled: true }
+  movement.noslow: { enabled: true }
+  dig.speed: { enabled: true }
+  protocol.pitch: { enabled: true }
+  protocol.position: { enabled: true }
+  protocol.slot: { enabled: true }
+  protocol.selfhit: { enabled: true }
+  protocol.cursor: { enabled: true }
+  protocol.flood: { enabled: true }
+  protocol.abilities: { enabled: true }
+  inventory.closed: { enabled: true }
+alerts:
+  console: true
+  in-game-default: auto        # auto | on | off
+  log-file: true
+exempt:
+  bedrock: true
+  bypass-detection-in-shadow: false
+proxy:
+  session-channel: false
+  secret: ""
+setbacks:
+  enabled: true
+punishments:
+  kick-command: ""                                   # empty = player.kick(message)
+  kick-message: "Unfair advantage detected"
+  ban-command: "ban %player% Unfair advantage. Appeal at %appeal_url% with code %appeal_code%"
+  unban-command: "pardon %player%"
+  appeal-url: ""
+  max-bans-per-hour: 3
+  max-kicks-per-10min: 5
+mitigations:
+  enabled: true
+debug: false

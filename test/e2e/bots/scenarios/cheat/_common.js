@@ -54,12 +54,15 @@ function aim (a, t, { dy = 0.9 } = {}) {
 /** Run fn(n, i) on each of the next `ticks` ticks of bot b. */
 function everyTick (ctx, b, ticks, fn) {
   return new Promise((resolve) => {
+    if (b.ended) return resolve()
     let i = 0
+    const done = () => { b.removeListener('tick', f); b.removeListener('end', done); resolve() }
     const f = (n) => {
       try { fn(n, i) } catch (e) { ctx.log('tick fn error ' + e.message) }
-      if (++i >= ticks) { b.removeListener('tick', f); resolve() }
+      if (++i >= ticks) done()
     }
     b.on('tick', f)
+    b.once('end', done)
   })
 }
 

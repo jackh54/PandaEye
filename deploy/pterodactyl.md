@@ -20,7 +20,7 @@ servers. For larger installations use the split deployment in [../docs/OPERATION
 ## Variables
 
 Set these as egg variables (environment). Everything not listed keeps the defaults of
-[OPERATIONS.md "Configuration reference"](../docs/OPERATIONS.md#configuration-reference).
+[OPERATIONS.md "Configuration reference"](../docs/OPERATIONS.md#3-configuration-reference).
 
 | Variable | Value |
 |---|---|
@@ -49,7 +49,7 @@ reaches PandaEye through the node's address, not loopback. So the gateway needs 
 - **On the node**: a reverse proxy on the host (nginx, Caddy, HAProxy) terminating TLS and forwarding
   WebSocket upgrades to the allocation; set `PE_TRUSTED_PROXIES` to the proxy's address as seen from the
   container (often the `pterodactyl0` bridge gateway, e.g. `172.18.0.1/32`). Proxy settings: see
-  [OPERATIONS.md "TLS termination"](../docs/OPERATIONS.md#tls-termination).
+  [OPERATIONS.md "TLS termination"](../docs/OPERATIONS.md#7-tls-termination).
 
 Plugins then use `cloud.endpoint: "wss://<hostname>:<port>/v1/connect"`.
 
@@ -68,4 +68,4 @@ Plugins then use `cloud.endpoint: "wss://<hostname>:<port>/v1/connect"`.
 
 Stop the server (clean shutdown), then copy `/home/container/data/` (Pterodactyl backups do this). A
 live copy of `pandaeye.db` must use sqlite's backup API (`sqlite3 data/pandaeye.db ".backup
-backup.db"`), not a file copy. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#backups-and-disaster-recovery).
+backup.db"`), not a file copy. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#83-backups-and-disaster-recovery).

@@ -4,7 +4,7 @@
 #   provision.sh NAME --flavor paper|folia|canvas [--port 25601] [--profile baseline|pandaeye|hotload]
 #                [--no-probe] [--fresh] [--xmx 1536M] [--compression 256]
 #                [--pandaeye-jar PATH] [--cloud-endpoint URL] [--license KEY] [--mode shadow|live]
-#                [--telemetry-full] [--debug] [--extra-plugin JAR]...
+#                [--telemetry-full] [--debug] [--extra-plugin JAR]... [--kbsync-ping PING|KEEPALIVE]
 #
 # Profiles (plugins copied into plugins/):
 #   baseline  PacketEvents b906 (reEncodeByDefault as shipped), ViaVersion, ViaBackwards, PlugManX, KnockbackSync
@@ -21,6 +21,7 @@ shift
 FLAVOR=paper PORT=25601 PROFILE=baseline PROBE=1 FRESH=0 XMX="$PE_E2E_XMX" COMPRESSION=256
 PE_JAR="" ENDPOINT="$PE_CLOUD_GATEWAY" LICENSE="$PE_E2E_LICENSE" MODE=shadow TELEMETRY_FULL=false DEBUG=false
 EXTRA=()
+KBSYNC_PING="${PE_E2E_KBSYNC_PING:-PING}"   # production KnockbackSync sends PINGs
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --flavor) FLAVOR="$2"; shift 2 ;;
@@ -37,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     --telemetry-full) TELEMETRY_FULL=true; shift ;;
     --debug) DEBUG=true; shift ;;
     --extra-plugin) EXTRA+=("$2"); shift 2 ;;
+    --kbsync-ping) KBSYNC_PING="$2"; shift 2 ;;
     *) die "unknown option $1" ;;
   esac
 done
@@ -72,6 +74,9 @@ if [[ $PROBE == 1 ]]; then
   cp "$PE_PROBE_JAR" "$DIR/plugins/PandaEyeProbe.jar"
 fi
 for j in "${EXTRA[@]}"; do cp "$j" "$DIR/plugins/"; done
+# KnockbackSync config (seeded before its first start): no update notifications, ping strategy as in production
+mkdir -p "$DIR/plugins/KnockbackSync"
+sed -e "s/@KBSYNC_PING_STRATEGY@/$KBSYNC_PING/" "$TPL/plugins/KnockbackSync/config.yml" > "$DIR/plugins/KnockbackSync/config.yml"
 
 write_pandaeye_config() {
   mkdir -p "$DIR/plugins/PandaEye"

@@ -5,11 +5,14 @@ package config
 
 import (
 	"log/slog"
-	"net/netip"
 	"time"
 
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
+	"github.com/jackh54/PandaEye/cloud/internal/netutil"
 )
+
+// PresetCloudflare is the PE_TRUSTED_PROXIES_PRESET value that trusts Cloudflare's edge ranges.
+const PresetCloudflare = "cloudflare"
 
 // Role is the subcommand a process runs.
 type Role string
@@ -40,13 +43,17 @@ func (r Role) Service() bool { return r != RoleMigrate }
 type Config struct {
 	Role Role
 
-	GatewayListen  string         // PE_GATEWAY_LISTEN
-	APIListen      string         // PE_API_LISTEN
-	MetricsListen  string         // PE_METRICS_LISTEN; empty disables /metrics
-	TLSCert        string         // PE_TLS_CERT
-	TLSKey         string         // PE_TLS_KEY
-	TrustedProxies []netip.Prefix // PE_TRUSTED_PROXIES
-	PublicURL      string         // PE_PUBLIC_URL
+	GatewayListen string // PE_GATEWAY_LISTEN
+	APIListen     string // PE_API_LISTEN
+	MetricsListen string // PE_METRICS_LISTEN; empty disables /metrics
+	TLSCert       string // PE_TLS_CERT
+	TLSKey        string // PE_TLS_KEY
+	// TrustedProxies holds PE_TRUSTED_PROXIES plus the PE_TRUSTED_PROXIES_PRESET ranges (embedded
+	// list; app.New refreshes the Cloudflare ranges at start). Use Contains and ClientIP.
+	TrustedProxies      netutil.TrustedProxies
+	TrustedProxyPreset  string // PE_TRUSTED_PROXIES_PRESET: "" or PresetCloudflare
+	RequireTrustedProxy bool   // PE_REQUIRE_TRUSTED_PROXY: refuse TCP peers outside TrustedProxies
+	PublicURL           string // PE_PUBLIC_URL
 
 	NATS NATS
 

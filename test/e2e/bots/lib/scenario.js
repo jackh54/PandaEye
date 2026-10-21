@@ -58,8 +58,8 @@ class Context {
     this.errors = []
   }
 
-  /** Scale a duration for --quick verification runs. */
-  dur (ms) { return this.quick ? Math.max(1000, Math.round(ms * 0.4)) : ms }
+  /** Scale a long duration (> 20 s) for --quick verification runs; short scenarios run unchanged. */
+  dur (ms) { return this.quick && ms > 20000 ? Math.round(ms * 0.4) : ms }
   sleep (ms) { return sleep(ms) }
   note (s) { this.notes.push(s); this.log(`  note: ${s}`) }
 
@@ -113,9 +113,12 @@ class Context {
   /** Ticks helper for raw bots: resolves after n ticks of bot. */
   ticks (bot, n) {
     return new Promise((resolve) => {
+      if (bot.ended) return resolve()
       let i = 0
-      const f = () => { if (++i >= n) { bot.removeListener('postTick', f); resolve() } }
+      const done = () => { bot.removeListener('postTick', f); bot.removeListener('end', done); resolve() }
+      const f = () => { if (++i >= n) done() }
       bot.on('postTick', f)
+      bot.once('end', done)
     })
   }
 
