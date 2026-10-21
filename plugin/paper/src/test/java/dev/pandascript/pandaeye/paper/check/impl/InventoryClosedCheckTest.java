@@ -71,7 +71,7 @@ class InventoryClosedCheckTest {
     }
 
     @Test
-    void clicksInAServerClosedContainerFlagOnceTheCloseIsAppliedOrTheGraceIsOver() {
+    void clicksInAServerClosedContainerFlagOnlyOnceTheCloseIsAcknowledged() {
         CheckHarness acknowledged = harness();
         open(acknowledged, 5);
         acknowledged.processor().serverCloseWindow(5, acknowledged.now());
@@ -81,15 +81,12 @@ class InventoryClosedCheckTest {
         click(acknowledged, 5);
         assertEquals(1, acknowledged.flags().size());
 
-        CheckHarness fallback = harness();
-        open(fallback, 5);
-        fallback.processor().serverCloseWindow(5, fallback.now());
-        fallback.advance(200_000_000L);
-        click(fallback, 5);
-        assertEquals(0, fallback.flags().size(), "within 1.5 * ping (1 ms in the harness) + 250 ms");
-        fallback.advance(100_000_000L);
-        click(fallback, 5);
-        assertEquals(1, fallback.flags().size());
+        CheckHarness unacknowledged = harness();
+        open(unacknowledged, 5);
+        unacknowledged.processor().serverCloseWindow(5, unacknowledged.now());
+        unacknowledged.advance(30_000_000_000L);
+        click(unacknowledged, 5);
+        assertEquals(0, unacknowledged.flags().size(), "time alone never makes a close applied");
     }
 
     @Test

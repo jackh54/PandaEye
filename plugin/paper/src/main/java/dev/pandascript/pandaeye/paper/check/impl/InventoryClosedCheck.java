@@ -16,25 +16,20 @@ import java.util.Map;
 /**
  * inventory.closed (CHECKS 1.14): a CLICK_WINDOW for a container id > 0 that was never opened in this session,
  * or that was closed or replaced (an OPEN_WINDOW / OPEN_HORSE_WINDOW over an open one) and the client has
- * applied that already (passive acknowledgement, fallback 1.5 * ping + 250 ms). Container state is unknown
+ * applied that already (passive acknowledgement only: never stricter on time alone). Container state is unknown
  * after a hot load, JOIN_GAME and RESPAWN until the next open or close, and "never opened" is only judged once
  * the client has applied that open or close (an older window may still be on its screen until then).
  * Statistic: 1 for an invalid click, else 0. At most one flag per second.
  */
 public final class InventoryClosedCheck extends Check {
 
-    private static final long GRACE_BASE_NANOS = 250_000_000L;
-    private static final double GRACE_PING_FACTOR = 1.5;
-
-    /** Applied when acknowledged, or after the fallback grace. */
-    private final class CloseClock implements AckClock {
+    /** Applied once a PONG acknowledged it; a missing acknowledgement never counts as applied. */
+    private static final class CloseClock implements AckClock {
         AckTracker acks;
-        long nowNanos;
-        long fallbackNanos;
 
         @Override
         public boolean applied(long sentNanos) {
-            return (acks.hasAck() && acks.ackedUpTo() - sentNanos >= 0) || nowNanos - sentNanos >= fallbackNanos;
+            return acks.hasAck() && acks.ackedUpTo() - sentNanos >= 0;
         }
     }
 
@@ -57,8 +52,6 @@ public final class InventoryClosedCheck extends Check {
         }
         long now = context.nowNanos();
         clock.acks = state.acks();
-        clock.nowNanos = now;
-        clock.fallbackNanos = GRACE_BASE_NANOS + (long) (GRACE_PING_FACTOR * state.rtt().pingMillis(now) * 1_000_000L);
         int id = click.windowId();
         long knownSince = containers.knownSinceNanos();
         boolean neverOpened = !containers.everOpened(id) && (knownSince == Long.MIN_VALUE || clock.applied(knownSince));
