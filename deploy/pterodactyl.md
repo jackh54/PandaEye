@@ -66,6 +66,9 @@ in the Hello.
 - Disk: embedded JetStream holds up to `PE_EVENTS_MAX_BYTES` (10 GiB default) of events plus 7 days of
   signals and 30 days of verdict records; size the server's disk limit accordingly or lower
   `PE_EVENTS_MAX_BYTES`.
+- Building on the server (an egg that runs `go build` at start): Pterodactyl's `/tmp` is a small tmpfs and
+  the build fails with "no space left on device". Set `GOTMPDIR` (and `TMPDIR`) to a folder under
+  `/home/container`. Set `GOMEMLIMIT` a little below the container's memory limit.
 - sqlite allows one writer; `all` is for small installations. Move to the split deployment when the
   `/status` probe p95 approaches the SLO ([../docs/SLO.md](../docs/SLO.md)).
 
