@@ -1,0 +1,9 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit real values.
+PANDAEYE_API_URL=http://127.0.0.1:8081
+PANDAEYE_SERVICE_TOKEN=dev-service-token-at-least-32-bytes-long
+PANDAEYE_ASSERTION_KEY=dev-assertion-key-at-least-32-bytes-long
+PASSWORD_PEPPER=dev-password-pepper-at-least-32-bytes
+# Turnstile is optional only when ENVIRONMENT=development (verification is skipped).
+TURNSTILE_SITEKEY=
+TURNSTILE_SECRET=
+ENVIRONMENT=development

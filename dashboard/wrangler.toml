@@ -1,15 +1,39 @@
+# PandaEye dashboard (Cloudflare Worker + D1). See docs/ARCHITECTURE.md section 7.
+#
+# Secrets (set with `wrangler secret put <NAME>`, never commit them):
+#   PANDAEYE_API_URL        base URL (origin only) of the PandaEye Go API, e.g. https://api.example.com
+#   PANDAEYE_SERVICE_TOKEN  transport token, must equal the API's PE_SERVICE_TOKEN (>= 32 bytes)
+#   PANDAEYE_ASSERTION_KEY  HMAC key for user assertions, must equal the API's PE_ASSERTION_KEY (>= 32 bytes)
+#   PASSWORD_PEPPER         HMAC pepper applied before PBKDF2 (>= 32 bytes); changing it invalidates all passwords
+#   TURNSTILE_SECRET        Turnstile secret key (optional only when ENVIRONMENT = "development")
+#   TURNSTILE_SITEKEY       Turnstile site key (public, may also be a plain var)
+#
+# PBKDF2 at 100 000 iterations needs the Workers Paid plan for its CPU time.
 name = "pandaeye-dashboard"
 main = "src/index.ts"
 compatibility_date = "2026-09-15"
-compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "pandaeye-dashboard"
+# Replace with the id printed by `wrangler d1 create pandaeye-dashboard`.
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
+# Static files (stylesheet, replay viewer script) are served through the Worker so every response
+# carries the security headers.
 [assets]
 directory = "./public"
 binding = "ASSETS"
 run_worker_first = true
+
+# Hourly cleanup of expired sessions, invites and login attempt counters.
+[triggers]
+crons = ["17 * * * *"]
+
+[observability]
+enabled = true

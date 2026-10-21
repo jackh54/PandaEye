@@ -1,0 +1,26 @@
+[versions]
+protobuf = "4.36.2"
+aircompressor = "0.27"
+paper = "1.21.4-R0.1-SNAPSHOT"
+packetevents = "2.13.0"
+velocity = "3.4.0"
+junit = "5.13.4"
+archunit = "1.4.1"
+netty = "4.1.115.Final"
+
+[libraries]
+protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf" }
+protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf" }
+aircompressor = { module = "io.airlift:aircompressor", version.ref = "aircompressor" }
+paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper" }
+packetevents-spigot = { module = "com.github.retrooper:packetevents-spigot", version.ref = "packetevents" }
+velocity-api = { module = "com.velocitypowered:velocity-api", version.ref = "velocity" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+archunit = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+netty-buffer = { module = "io.netty:netty-buffer", version.ref = "netty" }
+
+[plugins]
+shadow = { id = "com.gradleup.shadow", version = "9.2.2" }
+protobuf = { id = "com.google.protobuf", version = "0.9.5" }

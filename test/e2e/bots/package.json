@@ -1,0 +1,15 @@
+{
+  "name": "pandaeye-e2e-bots",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PandaEye e2e harness: legit bots (mineflayer + vanilla-mover) and cheat clients (raw minecraft-protocol)",
+  "type": "commonjs",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "minecraft-data": "3.117.0",
+    "minecraft-protocol": "1.68.0",
+    "mineflayer": "4.39.0",
+    "prismarine-physics": "1.11.1",
+    "vec3": "0.1.10"
+  }
+}
