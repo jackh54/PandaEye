@@ -574,8 +574,9 @@ internal/testkit           fake plugin client, event builders, helpers
   provisions streams/buckets idempotently, so `PE_NATS_REPLICAS` and `PE_EVENTS_MAX_*` must be identical on
   all roles.
 - Partition: `siphash24(partition_key, 16 uuid bytes) % PE_PARTITIONS`, two-digit zero-padded (`07`).
-  Probes use `probe_id % P` (round-robin, so every partition owner is measured); other server-level events
-  (stalls) use `siphash(server_id) % P`.
+  Probes use `probe_id % P` (round-robin, so every partition owner is measured). `ServerStall` events are
+  copied into every partition's StreamBatch of that batch (every worker needs them for its players);
+  other server-level events use `siphash(server_id) % P`.
 - **Leases and consumer epochs.** A process takes a lease with `kv.Create(key, ownerToken)` (owner token =
   stable owner id + random epoch), renews every 5 s with `kv.Update(key, token, lastRevision)`; on an Update
   timeout it `Get`s the key and adopts the revision if the value is its token. It self-fences (stops
@@ -612,6 +613,10 @@ internal/testkit           fake plugin client, event builders, helpers
 - Per-tenant check configuration (`tenant_checks`: enabled, threshold overrides) is read from KV
   `PE_TENANTS` and applied by the worker and the verdict service (disabled checks emit nothing; local
   checks are configured in the plugin's config.yml).
+- Check contract: `internal/checks/api.go` (Detector, Factory, Register, Ctx, Emission),
+  `internal/checks/view.go` (the per-player `View` and `View.Apply`, the single place that derives shared
+  state), `internal/checks/stats.go` and `internal/checks/checktest` (runs detectors over synthetic event
+  sequences exactly as the worker does). One Detector per factory per player session.
 - For each event: update derived state (moves, rotations, ticks, env flags, game mode, attributes, combat
   timestamps, latency, stalls), then call the checks registered for that event kind
   (`ctx.Emit(check, points, confidence, info, data)`). Signals go to `pe.signals.<NN>` with msg id
