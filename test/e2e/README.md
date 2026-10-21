@@ -194,7 +194,17 @@ Cloud (`cloud/`):
   `check_id`, or text containing the check id).
 Confirm/adjust these in `orchestrator/cloud.js` once `cloud/internal/api` exists (marked there).
 
-## Findings from the baseline stack (no PandaEye)
+## Findings
+
+* **PandaEye 0.1.0 (plugin/paper/build/libs/PandaEye-0.1.0.jar, 19:58) does not enable on Paper 1.21.11 / Java 21**:
+  `IllegalArgumentException: No implementation of the random number generator algorithm "L32X64MixRandom" is
+  available` at `CloudClient.<init>(CloudClient.java:130)`. Cause: module `jdk.random` is defined to the *app*
+  class loader, but paperclip runs the server in a URLClassLoader whose parent is the *platform* loader, so the
+  ServiceLoader lookup behind `RandomGenerator.of(...)` never sees it (reproduced with a 20-line plugin; `new
+  SplittableRandom()` works). Use `SplittableRandom`/`ThreadLocalRandom`/`Random` instead. After the failed
+  enable PandaEye leaves no listener and no thread (checked with the probe).
+
+Baseline stack (no PandaEye):
 
 * **KnockbackSync swallows the PONGs to its own PINGs before the PacketEvents plugin sees them.** KnockbackSync
   shades its own PacketEvents; its decoder (`pe-decoder-knockbacksync`) sits before `pe-decoder-packetevents`.
@@ -202,6 +212,9 @@ Confirm/adjust these in `orchestrator/cloud.js` once `cloud/internal/api` exists
   PacketEvents-plugin listeners (and therefore PandaEye) see zero PONG events. KnockbackSync's PINGs themselves
   are visible to PacketEvents listeners. PandaEye's passive acknowledgement via other plugins' pings (CHECKS 1.1)
   and latency.pingspoof pairing will not get samples from KnockbackSync on this stack.
+* In-flight accounting is skipped for ViaVersion-translated clients (wire bytes are in the client's protocol);
+  in the baseline the only remaining in-flight anomalies are the KnockbackSync PONGs and a handful of packets at
+  join/quit (in flight while the taps attach or the channel closes), identical in every run.
 * With `reEncodeByDefault=true`, PacketEvents itself attaches wrappers (and will re-encode) for `login:LOGIN_SUCCESS`,
   `configuration:REGISTRY_DATA`, `configuration:CONFIGURATION_END`, `play:JOIN_GAME` and the inbound handshake in
   the baseline; the shadow comparison only fails on an *increase* of these counts.

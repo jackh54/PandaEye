@@ -45,7 +45,7 @@ func (b *Bus) Replay(ctx context.Context, spec ReplaySpec, fn func(*Msg) error) 
 	if info.NumPending == 0 {
 		return 0, nil
 	}
-	it, err := cons.Messages(jetstream.PullMaxMessages(PullBatch))
+	it, err := cons.Messages(jetstream.PullMaxMessagesWithBytesLimit(PullBatch, PullMaxBytes))
 	if err != nil {
 		return 0, err
 	}

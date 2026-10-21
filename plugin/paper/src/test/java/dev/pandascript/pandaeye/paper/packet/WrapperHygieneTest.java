@@ -128,6 +128,7 @@ class WrapperHygieneTest {
     private User user;
     private PandaEyePacketListener listener;
     private SessionRegistry sessions;
+    private PacketCost cost;
 
     @BeforeAll
     static void packetEvents() {
@@ -156,8 +157,9 @@ class WrapperHygieneTest {
         });
         ActiveGate gate = new ActiveGate();
         gate.open();
+        cost = new PacketCost();
         listener = new PandaEyePacketListener(gate, sessions, () -> config, (session, nanos) -> {
-        }, new PacketCost(), new RateLimitedLog(recordingLog(), 1));
+        }, cost, new RateLimitedLog(recordingLog(), 1));
         user = TestPacketEvents.user(uuid);
     }
 
@@ -194,6 +196,42 @@ class WrapperHygieneTest {
                 assertTrue(warnings.isEmpty(), c.name() + ": " + warnings);
             }
         }
+    }
+
+    @Test
+    void unhandledPacketsReturnBeforeTouchingAnyState() {
+        run(List.of(joinGame()));
+        Session session = sessions.get(user);
+        long lastPacket = session.lastPacketNanos();
+        long recorded = cost.summary().packets();
+        // Raw garbage bodies: an unhandled type must not even be decoded.
+        PacketSendEvent chat = TestPacketEvents.send(user, PacketType.Play.Server.SYSTEM_CHAT_MESSAGE,
+                io.netty.buffer.Unpooled.wrappedBuffer(new byte[]{(byte) 0xff, (byte) 0xff}));
+        PacketSendEvent headLook = TestPacketEvents.send(user, PacketType.Play.Server.ENTITY_HEAD_LOOK,
+                io.netty.buffer.Unpooled.wrappedBuffer(new byte[]{(byte) 0xff}));
+        PacketReceiveEvent clientChat = TestPacketEvents.receive(user, PacketType.Play.Client.CHAT_MESSAGE,
+                io.netty.buffer.Unpooled.wrappedBuffer(new byte[]{(byte) 0xff}));
+        for (int i = 0; i < 1_000; i++) {
+            listener.onPacketSend(chat);
+            listener.onPacketSend(headLook);
+            listener.onPacketReceive(clientChat);
+        }
+        assertEquals(lastPacket, session.lastPacketNanos(), "no session write");
+        session.costRecorder(cost).flush();
+        assertEquals(recorded, cost.summary().packets(), "no cost recorded");
+        assertTrue(warnings.isEmpty(), warnings.toString());
+        assertEquals(0, ((ByteBuf) chat.getByteBuf()).readerIndex(), "not read");
+
+        // Micro-benchmark: the unhandled path is a type check only (best of 5 runs, generous bound).
+        double best = Double.MAX_VALUE;
+        for (int run = 0; run < 5; run++) {
+            long start = System.nanoTime();
+            for (int i = 0; i < 200_000; i++) {
+                listener.onPacketSend(headLook);
+            }
+            best = Math.min(best, (System.nanoTime() - start) / 200_000.0);
+        }
+        assertTrue(best < 50, "unhandled packet costs " + best + " ns");
     }
 
     @Test

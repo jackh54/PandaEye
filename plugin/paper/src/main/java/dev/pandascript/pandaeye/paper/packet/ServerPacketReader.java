@@ -34,6 +34,7 @@ import dev.pandascript.pandaeye.paper.state.PacketState;
 import dev.pandascript.pandaeye.paper.state.VelocityTracker;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +47,24 @@ import static dev.pandascript.pandaeye.paper.packet.Wrappers.read;
  * id-based is read before the session is seeded.
  */
 final class ServerPacketReader {
+
+    /** The types {@link #handle} reads (plus JOIN_GAME, handled by the listener); keep in sync with its switch. */
+    private static final boolean[] HANDLED = PacketTypes.table(PacketType.Play.Server.values(), EnumSet.of(
+            PacketType.Play.Server.JOIN_GAME, PacketType.Play.Server.RESPAWN,
+            PacketType.Play.Server.PLAYER_POSITION_AND_LOOK, PacketType.Play.Server.PLAYER_ROTATION,
+            PacketType.Play.Server.FACE_PLAYER, PacketType.Play.Server.ENTITY_VELOCITY,
+            PacketType.Play.Server.EXPLOSION, PacketType.Play.Server.PLAYER_ABILITIES,
+            PacketType.Play.Server.CHANGE_GAME_STATE, PacketType.Play.Server.ENTITY_EFFECT,
+            PacketType.Play.Server.REMOVE_ENTITY_EFFECT, PacketType.Play.Server.UPDATE_ATTRIBUTES,
+            PacketType.Play.Server.ENTITY_METADATA, PacketType.Play.Server.UPDATE_HEALTH,
+            PacketType.Play.Server.DEATH_COMBAT_EVENT, PacketType.Play.Server.TICKING_STATE,
+            PacketType.Play.Server.SET_PASSENGERS, PacketType.Play.Server.OPEN_WINDOW,
+            PacketType.Play.Server.OPEN_HORSE_WINDOW, PacketType.Play.Server.CLOSE_WINDOW,
+            PacketType.Play.Server.KEEP_ALIVE, PacketType.Play.Server.PING, PacketType.Play.Server.HELD_ITEM_CHANGE));
+
+    static boolean handles(PacketType.Play.Server type) {
+        return HANDLED[type.ordinal()];
+    }
 
     private static final int METADATA_ENTITY_FLAGS = 0;
     private static final int METADATA_LIVING_FLAGS = 8;

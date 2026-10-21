@@ -3,6 +3,7 @@ package dev.pandascript.pandaeye.paper.session;
 import com.github.retrooper.packetevents.protocol.player.User;
 import dev.pandascript.pandaeye.common.util.TokenBucket;
 import dev.pandascript.pandaeye.paper.check.PlayerChecks;
+import dev.pandascript.pandaeye.paper.packet.PacketCost;
 import dev.pandascript.pandaeye.paper.state.Baseline;
 import dev.pandascript.pandaeye.paper.state.ClientInfo;
 import dev.pandascript.pandaeye.paper.state.PacketProcessor;
@@ -46,6 +47,7 @@ public final class Session {
     private PacketProcessor processor;
     private volatile Player player;
     private volatile long lastPacketNanos;
+    private PacketCost.Recorder costRecorder;
     private volatile long lastAttackedNanos = Long.MIN_VALUE;
     private volatile long lastFlagNanos = Long.MIN_VALUE;
     private volatile long watchUntilNanos = Long.MIN_VALUE;
@@ -81,17 +83,38 @@ public final class Session {
         processor = packetProcessor;
     }
 
-    /** Netty thread, before every packet: applies inputs handed over by other threads. */
-    public void beforePacket(long nanos) {
-        lastPacketNanos = nanos;
-        Baseline baseline = pendingBaseline.getAndSet(null);
-        if (baseline != null) {
-            processor.applyBaseline(baseline, nanos);
+    /**
+     * Netty thread, before every handled packet: applies inputs handed over by other threads. Only server-bound
+     * packets count as activity of the client (stall detection). Reads before it writes, so the common case
+     * (nothing handed over) does no atomic read-modify-write.
+     */
+    public void beforePacket(long nanos, boolean fromClient) {
+        if (fromClient) {
+            lastPacketNanos = nanos;
         }
-        double[] velocity;
-        while ((velocity = bukkitVelocities.poll()) != null) {
-            processor.velocity(velocity[0], velocity[1], velocity[2], VelocityTracker.Source.BUKKIT, (long) velocity[3]);
+        if (pendingBaseline.get() != null) {
+            Baseline baseline = pendingBaseline.getAndSet(null);
+            if (baseline != null) {
+                processor.applyBaseline(baseline, nanos);
+            }
         }
+        if (!bukkitVelocities.isEmpty()) {
+            double[] velocity;
+            while ((velocity = bukkitVelocities.poll()) != null) {
+                processor.velocity(velocity[0], velocity[1], velocity[2], VelocityTracker.Source.BUKKIT,
+                        (long) velocity[3]);
+            }
+        }
+    }
+
+    /** Netty thread only: this session's packet-cost recorder. */
+    public PacketCost.Recorder costRecorder(PacketCost owner) {
+        PacketCost.Recorder recorder = costRecorder;
+        if (recorder == null) {
+            recorder = owner.recorder();
+            costRecorder = recorder;
+        }
+        return recorder;
     }
 
     /** Entity thread: the hot-load snapshot. */

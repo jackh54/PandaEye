@@ -35,7 +35,7 @@ func startServer(t testing.TB) *server.Server {
 }
 
 func testConfig(url, owner string) Config {
-	return Config{URL: url, Name: owner, Partitions: 4, OwnerID: owner, Lease: testTimings, PublishTimeout: time.Second}
+	return Config{URL: url, Name: owner, Partitions: 4, OwnerID: owner, Lease: testTimings, PublishTimeout: time.Second, EventsMaxBytes: 256 << 20}
 }
 
 func openBus(t testing.TB, cfg Config) *Bus {

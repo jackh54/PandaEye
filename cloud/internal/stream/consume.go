@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -64,6 +65,11 @@ type ConsumeResult struct {
 // ErrConsumerGone is returned when the epoch's consumer was deleted, i.e. another owner reset it.
 var ErrConsumerGone = errors.New("stream: consumer deleted by a newer epoch")
 
+// ErrDeliveryGap is returned when a delivery sequence was skipped: the client dropped a message (slow
+// consumer). Acking past it would acknowledge a message nobody handled, so the loop stops after
+// acking what completed before it, and the next epoch redelivers from there.
+var ErrDeliveryGap = errors.New("stream: delivery gap (message dropped by the client)")
+
 type pendingMsg struct {
 	seq     uint64
 	msg     jetstream.Msg
@@ -85,6 +91,7 @@ type consumeLoop struct {
 	bySeq     map[uint64]*pendingMsg
 	completed int
 	failure   error
+	delivered uint64 // highest consumer (delivery) sequence received
 }
 
 // Consume runs the ordered partition loop on an epoch's consumer while the lease is valid: messages
@@ -110,7 +117,7 @@ func (c *consumeLoop) run(ctx context.Context, h Handler) (ConsumeResult, error)
 		case <-stopped:
 		}
 	},
-		jetstream.PullMaxMessages(PullBatch),
+		jetstream.PullMaxMessagesWithBytesLimit(PullBatch, PullMaxBytes),
 		jetstream.PullPriorityGroup(PriorityGroup),
 		jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
 			select {
@@ -200,6 +207,18 @@ func (c *consumeLoop) receive(ctx context.Context, m jetstream.Msg, h Handler) {
 	seq := meta.Sequence.Stream
 	c.b.m.ConsumerLag.WithLabelValues(c.e.Base).Set(float64(meta.NumPending))
 	c.mu.Lock()
+	if c.failure != nil {
+		c.mu.Unlock()
+		return
+	}
+	if d := meta.Sequence.Consumer; c.delivered != 0 && d > c.delivered+1 {
+		c.failure = fmt.Errorf("%w: delivery %d after %d (stream seq %d)", ErrDeliveryGap, d, c.delivered, seq)
+		c.mu.Unlock()
+		c.b.log.Warn("consume: delivery gap, restarting the epoch", "consumer", c.e.Name, "after", c.delivered, "got", d)
+		return
+	} else if d > c.delivered {
+		c.delivered = d
+	}
 	if _, ok := c.bySeq[seq]; ok {
 		// Redelivery of an in-flight message. Keep acking with the first delivery's handle: the
 		// server ignores an AckAll whose delivery sequence is below the last one acked, so acking

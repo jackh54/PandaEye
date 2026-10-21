@@ -127,7 +127,11 @@ final class WireTaps {
                 ChannelPipeline p = channel.pipeline();
                 if (p.get(TAP_OUT_WIRE) == null) p.addFirst(TAP_OUT_WIRE, new OutWire(c));
                 if (p.get(TAP_IN_WIRE) == null) p.addFirst(TAP_IN_WIRE, new InWire(c));
-                if (!c.relativeAttached) {
+                if (c.clientVersion != null && c.serverProtocolVersion != null && c.clientVersion != c.serverProtocolVersion) {
+                    // ViaVersion translates this client's packets: wire bytes never equal encoder bytes, so in-flight
+                    // accounting would only report translation; wire counts are still taken
+                    stats.inc("inflight.skipped_translated_client", c.name + " " + c.clientVersion);
+                } else if (!c.relativeAttached) {
                     if (p.get("encoder") != null && p.get(TAP_OUT_ENC) == null) p.addBefore("encoder", TAP_OUT_ENC, new OutEnc(c));
                     if (p.get("decoder") != null && p.get(TAP_IN_DEC) == null) p.addBefore("decoder", TAP_IN_DEC, new InDec(c));
                     String pre = p.get("decompress") != null ? "decompress" : (p.get("splitter") != null ? "splitter" : null);

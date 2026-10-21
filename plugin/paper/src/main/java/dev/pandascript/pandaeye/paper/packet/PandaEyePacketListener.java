@@ -48,18 +48,26 @@ public final class PandaEyePacketListener implements PacketListener {
 
     @Override
     public void onPacketReceive(PacketReceiveEvent event) {
+        // Unhandled types return before the gate: no clock read, no shared write, no session lookup.
+        PacketTypeCommon type = event.getPacketType();
+        if (type instanceof PacketType.Play.Client play) {
+            if (!ClientPacketReader.handles(play)) {
+                return;
+            }
+        } else if (type != PacketType.Configuration.Client.PLUGIN_MESSAGE) {
+            return;
+        }
         if (!gate.enter()) {
             return;
         }
         try {
             long now = System.nanoTime();
-            PacketTypeCommon type = event.getPacketType();
             if (type instanceof PacketType.Play.Client play) {
                 Session session = sessions.get(event.getUser());
                 if (session != null) {
-                    session.beforePacket(now);
+                    session.beforePacket(now, true);
                     client.handle(event, play, session, now);
-                    cost.record(System.nanoTime() - now);
+                    session.costRecorder(cost).record(System.nanoTime() - now);
                 } else if (play == PacketType.Play.Client.PLUGIN_MESSAGE) {
                     WrapperPlayClientPluginMessage message = Wrappers.read(event, WrapperPlayClientPluginMessage.class,
                             WrapperPlayClientPluginMessage::new);
@@ -79,13 +87,15 @@ public final class PandaEyePacketListener implements PacketListener {
 
     @Override
     public void onPacketSend(PacketSendEvent event) {
+        // Unhandled types return before the gate: no clock read, no shared write, no session lookup.
+        if (!(event.getPacketType() instanceof PacketType.Play.Server play) || !ServerPacketReader.handles(play)
+                || event.isCancelled()) {
+            return;
+        }
         if (!gate.enter()) {
             return;
         }
         try {
-            if (event.isCancelled() || !(event.getPacketType() instanceof PacketType.Play.Server play)) {
-                return;
-            }
             long now = System.nanoTime();
             if (play == PacketType.Play.Server.JOIN_GAME) {
                 joinGame(event, now);
@@ -93,9 +103,9 @@ public final class PandaEyePacketListener implements PacketListener {
             }
             Session session = sessions.get(event.getUser());
             if (session != null) {
-                session.beforePacket(now);
+                session.beforePacket(now, false);
                 server.handle(event, play, session, now);
-                cost.record(System.nanoTime() - now);
+                session.costRecorder(cost).record(System.nanoTime() - now);
             }
         } catch (Throwable t) {
             errors.warn("send " + safeName(event.getPacketType()), "packet handling failed", t);

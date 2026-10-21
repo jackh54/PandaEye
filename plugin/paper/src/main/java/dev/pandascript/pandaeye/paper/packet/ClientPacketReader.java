@@ -27,12 +27,33 @@ import dev.pandascript.pandaeye.paper.check.CheckInput;
 import dev.pandascript.pandaeye.paper.session.Session;
 import dev.pandascript.pandaeye.paper.state.PacketProcessor;
 
+import java.util.EnumSet;
+
 import static dev.pandascript.pandaeye.paper.packet.Wrappers.read;
 
 /** Decodes server-bound PLAY packets into {@link PacketProcessor} calls (netty thread). */
 final class ClientPacketReader {
 
+    /** The types {@link #handle} reads; keep in sync with its switch. Everything else is ignored unseen. */
+    private static final boolean[] HANDLED = PacketTypes.table(PacketType.Play.Client.values(), EnumSet.of(
+            PacketType.Play.Client.PLAYER_FLYING, PacketType.Play.Client.PLAYER_POSITION,
+            PacketType.Play.Client.PLAYER_ROTATION, PacketType.Play.Client.PLAYER_POSITION_AND_ROTATION,
+            PacketType.Play.Client.CLIENT_TICK_END, PacketType.Play.Client.TELEPORT_CONFIRM,
+            PacketType.Play.Client.KEEP_ALIVE, PacketType.Play.Client.PONG, PacketType.Play.Client.HELD_ITEM_CHANGE,
+            PacketType.Play.Client.INTERACT_ENTITY, PacketType.Play.Client.ATTACK, PacketType.Play.Client.ANIMATION,
+            PacketType.Play.Client.PLAYER_BLOCK_PLACEMENT, PacketType.Play.Client.PLAYER_DIGGING,
+            PacketType.Play.Client.CLICK_WINDOW, PacketType.Play.Client.USE_ITEM,
+            PacketType.Play.Client.PLUGIN_MESSAGE, PacketType.Play.Client.ENTITY_ACTION,
+            PacketType.Play.Client.PLAYER_INPUT, PacketType.Play.Client.VEHICLE_MOVE,
+            PacketType.Play.Client.STEER_VEHICLE, PacketType.Play.Client.STEER_BOAT,
+            PacketType.Play.Client.PLAYER_ABILITIES, PacketType.Play.Client.CLOSE_WINDOW,
+            PacketType.Play.Client.PLAYER_LOADED));
+
     private final ProxySessionChannel proxySessions;
+
+    static boolean handles(PacketType.Play.Client type) {
+        return HANDLED[type.ordinal()];
+    }
 
     ClientPacketReader(ProxySessionChannel proxySessions) {
         this.proxySessions = proxySessions;

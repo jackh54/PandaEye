@@ -14,9 +14,12 @@ import (
 
 // Consumer settings (ARCHITECTURE 5.4).
 const (
-	AckWait        = 30 * time.Second
-	MaxAckPending  = 10000
-	PullBatch      = 100
+	AckWait       = 30 * time.Second
+	MaxAckPending = 10000
+	PullBatch     = 100
+	// PullMaxBytes caps the bytes of one pull request (at least 4 large messages). Without it a batch
+	// of large messages overflows the client subscription's pending limit and nats.go drops them.
+	PullMaxBytes   = 4 * MaxPayload
 	PinnedTTL      = 15 * time.Second
 	PriorityGroup  = "owner"
 	FirstStartBack = 2 * time.Minute // a partition without a consumer starts this far back, never DeliverAll
@@ -50,8 +53,8 @@ type Epoch struct {
 }
 
 // ResetConsumer starts a new consumer epoch after acquiring a lease (ARCHITECTURE 5.4): it reads the
-// AckFloor.Stream of the previous epochs' durable consumers, deletes them, and creates
-// "<Name>-<epoch>" delivering from AckFloor + 1; without a previous consumer it delivers from
+// AckFloor.Stream of the previous epochs' durable consumers, creates "<Name>-<epoch>" delivering from
+// AckFloor + 1 and then deletes the previous ones; without a previous consumer it delivers from
 // now - FirstStartBack. Because every epoch has its own durable name, acks from a fenced previous
 // owner can never move the new consumer's ack floor. An empty epoch picks a random one.
 func (b *Bus) ResetConsumer(ctx context.Context, spec ConsumerSpec, epoch string) (*Epoch, error) {
@@ -82,11 +85,6 @@ func (b *Bus) ResetConsumer(ctx context.Context, spec ConsumerSpec, epoch string
 	if err := lister.Err(); err != nil {
 		return nil, fmt.Errorf("stream: list consumers of %s: %w", spec.Stream, err)
 	}
-	for _, name := range old {
-		if err := st.DeleteConsumer(ctx, name); err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
-			return nil, fmt.Errorf("stream: delete consumer %s: %w", name, err)
-		}
-	}
 	e := &Epoch{Base: spec.Name, Name: prefix + epoch}
 	cc := jetstream.ConsumerConfig{
 		Durable:        e.Name,
@@ -107,8 +105,19 @@ func (b *Bus) ResetConsumer(ctx context.Context, spec ConsumerSpec, epoch string
 		e.StartTime = time.Now().Add(-FirstStartBack)
 		cc.DeliverPolicy, cc.OptStartTime = jetstream.DeliverByStartTimePolicy, &e.StartTime
 	}
+	// Create before deleting: if the create fails, the previous epochs (and their ack floor) are still
+	// there for the next attempt instead of the partition restarting at now - FirstStartBack.
 	if e.Consumer, err = st.CreateConsumer(ctx, cc); err != nil {
 		return nil, fmt.Errorf("stream: create consumer %s: %w", e.Name, err)
+	}
+	for _, name := range old {
+		if name == e.Name {
+			continue
+		}
+		if err := st.DeleteConsumer(ctx, name); err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
+			// The new epoch exists with the right start; the next reset deletes the leftover.
+			return nil, fmt.Errorf("stream: delete consumer %s: %w", name, err)
+		}
 	}
 	return e, nil
 }
