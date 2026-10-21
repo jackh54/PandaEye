@@ -2,8 +2,8 @@
 // derived state and scores them with an optional model (ARCHITECTURE 5.10).
 //
 //   - features.go: the 94-feature vector of one session per 30 s window (Session).
-//   - FeatureSink receives finalised windows (telemetry feature_windows; the ClickHouse sink
-//     implements it, NopSink is the default).
+//   - The worker writes finalised windows to telemetry (telemetry.FeatureSink, table
+//     feature_windows) and, when a model is loaded, scores them.
 //   - Scorer scores windows. Default builds have only the disabled scorer; `-tags onnx` builds an
 //     ONNX Runtime implementation (github.com/yalue/onnxruntime_go, shared library at runtime) that
 //     refuses models whose feature version or names differ from FeatureNames or that were trained on
@@ -32,18 +32,6 @@ type Window struct {
 	Features       [NumFeatures]float32 // table order, defaults and clipping applied
 	WorkerUnixUs   int64                // when the worker finalised the window
 }
-
-// FeatureSink receives finalised feature windows. WriteFeatureWindow must not block (the telemetry
-// sink batches and drops on overflow) and must not retain w after returning unless it copies it.
-type FeatureSink interface {
-	WriteFeatureWindow(w *Window)
-}
-
-// NopSink discards windows (telemetry disabled).
-type NopSink struct{}
-
-// WriteFeatureWindow implements FeatureSink.
-func (NopSink) WriteFeatureWindow(*Window) {}
 
 // Score is a model's verdict on one window.
 type Score struct {

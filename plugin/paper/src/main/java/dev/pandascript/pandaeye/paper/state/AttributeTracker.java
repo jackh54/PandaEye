@@ -74,6 +74,16 @@ public final class AttributeTracker {
         }
     }
 
+    /** RESPAWN without kept attributes: every value returns to its default once the client applies it. */
+    void sentDefaults(long nanos) {
+        for (Map.Entry<String, Tracked<Double>> entry : values.entrySet()) {
+            Double fallback = DEFAULTS.get(entry.getKey());
+            if (!fallback.equals(entry.getValue().latest())) {
+                entry.getValue().sent(fallback, nanos);
+            }
+        }
+    }
+
     void sent(String key, double value, long nanos) {
         Tracked<Double> tracked = values.get(key);
         if (tracked != null) {

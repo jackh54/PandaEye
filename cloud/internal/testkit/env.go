@@ -55,10 +55,13 @@ func NewStore(t testing.TB) *sqlstore.Store {
 }
 
 // NewBus returns a bus on its own embedded server in a temporary directory, with FastLeases.
-// tune may adjust the configuration (partitions default to 4).
+// tune may adjust the configuration (partitions default to 4). PE_EVENTS is capped at 256 MiB:
+// JetStream reserves a stream's MaxBytes up front, and the 10 GiB production default fails on
+// small CI disks.
 func NewBus(t testing.TB, tune ...func(*stream.Config)) *stream.Bus {
 	t.Helper()
-	cfg := stream.Config{Dir: t.TempDir(), Partitions: 4, OwnerID: "test", Lease: FastLeases, PublishTimeout: time.Second}
+	cfg := stream.Config{Dir: t.TempDir(), Partitions: 4, OwnerID: "test", Lease: FastLeases, PublishTimeout: time.Second,
+		EventsMaxBytes: 256 << 20}
 	for _, f := range tune {
 		f(&cfg)
 	}
@@ -83,6 +86,7 @@ func NewDeps(t testing.TB, env ...string) *app.Deps {
 		"PE_PARTITIONS=4",
 		"PE_METRICS_LISTEN=",
 		"PE_OWNER_ID=testkit",
+		"PE_EVENTS_MAX_BYTES=256MiB",
 	}
 	cfg, err := config.Load(config.RoleAll, "", append(base, env...))
 	if err != nil {

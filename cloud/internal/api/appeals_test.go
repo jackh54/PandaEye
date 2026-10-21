@@ -104,7 +104,7 @@ func TestPublicAppealsPerIPLimit(t *testing.T) {
 	}
 	e.must(202, "POST", "/api/v1/public/appeals", appealBody("0f000000-0000-5000-8000-0000000000ff", "x"), service(), header("X-PandaEye-Client-IP", "2001:db8:1:3::1"))
 	// An hour later the client may appeal again.
-	e.s.now = func() time.Time { return fixedNow.Add(time.Hour) }
+	e.setNow(fixedNow.Add(time.Hour))
 	e.must(202, "POST", "/api/v1/public/appeals", appealBody("0f000000-0000-5000-8000-0000000000ff", "x"), service(), header("X-PandaEye-Client-IP", "2001:db8:1:2::1"))
 }
 

@@ -56,17 +56,17 @@ type velocityDetector struct {
 
 // velPending is the velocity whose window is open.
 type velPending struct {
-	active         bool
-	endUs          int64
-	vx, vy, vz     float64
-	groundBefore   bool
-	sawMove        bool
-	consecutive    int // consecutive position moves seen in the window
-	matched        bool
-	hJudged        bool // some matching candidate was judged horizontally
-	hBlocked       bool // some matching candidate collided horizontally (not judgeable)
-	shortfall      float64
-	h, hMin, vxzOK float64
+	active       bool
+	endUs        int64
+	vx, vy, vz   float64
+	groundBefore bool
+	sawMove      bool
+	consecutive  int // consecutive position moves seen in the window
+	matched      bool
+	hJudged      bool // some matching candidate was judged horizontally
+	hBlocked     bool // some matching candidate collided horizontally (not judgeable)
+	shortfall    float64
+	h, hMin, vxz float64
 }
 
 func (d *velocityDetector) Handle(c *Ctx, ev *pb.Event) {
@@ -178,7 +178,7 @@ func (d *velocityDetector) onMove(c *Ctx) {
 	h := cur.Pos.Sub(prev.Pos).HorizontalLen()
 	s, hMin := velocityShortfall(vxz, h, v.MovementSpeed, prevGround)
 	if !d.p.hJudged || s < d.p.shortfall {
-		d.p.shortfall, d.p.h, d.p.hMin, d.p.vxzOK = s, h, hMin, vxz
+		d.p.shortfall, d.p.h, d.p.hMin, d.p.vxz = s, h, hMin, vxz
 	}
 	d.p.hJudged = true
 }
@@ -254,7 +254,7 @@ func (d *velocityDetector) judgeHorizontal(c *Ctx, p velPending) {
 	d.horiz.reset()
 	c.Emit(Emission{Check: idVelocityHorizontal, Points: 5, Confidence: 0.8,
 		Info: fmt.Sprintf("took %.0f%% of the expected horizontal knockback on %d of the last %d", 100*(1-p.shortfall), n, of),
-		Data: map[string]float64{"shortfall": p.shortfall, "h": p.h, "h_min": p.hMin, "v_xz": p.vxzOK, "count": float64(n), "of": float64(of)}})
+		Data: map[string]float64{"shortfall": p.shortfall, "h": p.h, "h_min": p.hMin, "v_xz": p.vxz, "count": float64(n), "of": float64(of)}})
 }
 
 // ---------------------------------------------------------------------------------------------

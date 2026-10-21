@@ -133,7 +133,11 @@ func newClient(opts Options, r resolver, tlsCfg *tls.Config) *Client {
 // service's alerts share one per-tenant budget.
 func Shared(d *app.Deps) (*Client, error) {
 	v, err := d.Shared("discord", func() (any, error) {
-		return New(Options{Log: d.Log.With("component", "discord")}), nil
+		var log *slog.Logger
+		if d.Log != nil {
+			log = d.Log.With("component", "discord")
+		}
+		return New(Options{Log: log}), nil
 	})
 	if err != nil {
 		return nil, err

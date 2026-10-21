@@ -224,8 +224,12 @@ func TestDuplicateInstallRejected(t *testing.T) {
 func TestReplacementOfTheSameInstance(t *testing.T) {
 	e := newEnv(t, fastOptions())
 	s := newServer(keyPro)
-	old, _ := e.connect(s)
+	old, w0 := e.connect(s)
 	sendBatch(t, old, testkit.Batch(1, testkit.Probe(1, 1)))
+	testkit.Eventually(t, 5*time.Second, "acked seq stored", func() bool {
+		r, _, err := e.d.Bus.GetServerRecord(context.Background(), w0.TenantId, s.id)
+		return err == nil && r.LastAckedSeq == 1
+	})
 	fresh, w := e.connect(s)
 	if _, code := old.ReadErr(ctxT(t, 5*time.Second)); code != int(websocket.StatusNormalClosure) {
 		t.Fatalf("replaced connection close code %d", code)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackh54/PandaEye/cloud/internal/app"
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
+	"github.com/jackh54/PandaEye/cloud/internal/stream"
 	"github.com/jackh54/PandaEye/cloud/internal/testkit"
 )
 
@@ -35,7 +36,7 @@ func (s *switchable) Verify(_ context.Context, key string) (License, error) {
 func TestResolver(t *testing.T) {
 	ctx := context.Background()
 	st := testkit.NewStore(t)
-	bus := testkit.NewBus(t)
+	bus := testkit.NewBus(t, func(c *stream.Config) { c.EventsMaxBytes = 256 << 20 })
 	var logs bytes.Buffer
 	var logMu sync.Mutex
 	log := app.NewLogger(lockedWriter{&logs, &logMu}, slog.LevelDebug)

@@ -56,7 +56,8 @@ final class ServerPacketReader {
         switch (type) {
             case RESPAWN -> {
                 WrapperPlayServerRespawn respawn = read(event, WrapperPlayServerRespawn.class, WrapperPlayServerRespawn::new);
-                processor.respawn(GameModes.of(respawn.getGameMode()), respawn.getWorldName().orElse(null), now);
+                processor.respawn(GameModes.of(respawn.getGameMode()), respawn.getWorldName().orElse(null),
+                        respawn.getKeptData(), now);
             }
             case PLAYER_POSITION_AND_LOOK -> {
                 WrapperPlayServerPlayerPositionAndLook teleport = read(event,

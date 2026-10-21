@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"strings"
 	"unicode/utf8"
 
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
@@ -120,6 +121,10 @@ func uuidBytes(b []byte) bool { return len(b) == 0 || len(b) == 16 }
 
 // trunc shortens *s to at most max bytes without splitting a UTF-8 sequence.
 func trunc(s *string, max int) {
+	// NUL is valid UTF-8 but Postgres text cannot hold it; inserting it fails the whole write.
+	if strings.IndexByte(*s, 0) >= 0 {
+		*s = strings.ReplaceAll(*s, "\x00", "")
+	}
 	if len(*s) <= max {
 		return
 	}

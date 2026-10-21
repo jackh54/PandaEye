@@ -1,5 +1,7 @@
-# shadow = observe only; live = enforcement allowed when the dashboard also enables enforcement.
+# shadow = observe only: never kicks, bans or runs commands (the unban of a ban this proxy executed excepted).
+# live   = KICK/BAN verdicts may run the proxy commands below when the dashboard also enables enforcement.
 mode: shadow
+server-name: "proxy"
 network-id: ""
 # HMAC secret for the pandaeye:session message sent to backends (must match proxy.secret on the backends).
 session-secret: ""
@@ -9,3 +11,17 @@ cloud:
   license-key: ""
   # ws:// is refused except to a loopback address unless this is true (cloud on a private network only).
   allow-insecure: false
+  batch-interval-ms: 50
+  max-buffer-mb: 64
+  max-buffer-age-minutes: 10
+# Proxy commands for verdicts (live mode only). Placeholders: %player% %uuid% %reason% %checks% %verdict_id%
+# %appeal_code% %appeal_url% %duration%; values are sanitised (no spaces in names, no line breaks or colours).
+punishments:
+  kick-command: ""                                   # empty = disconnect the player with kick-message
+  kick-message: "Unfair advantage detected"
+  ban-command: ""                                    # empty = BAN verdicts are handled by the backends only
+  unban-command: ""
+  appeal-url: ""
+  max-bans-per-hour: 3
+  max-kicks-per-10min: 5
+debug: false

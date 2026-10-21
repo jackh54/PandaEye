@@ -42,6 +42,7 @@ public final class CheckHarness {
     private final PacketState state;
     private final PacketProcessor processor;
     private long now = 1_000_000_000_000L;
+    private int pingId;
     private double x;
     private double y = 64;
     private double z;
@@ -82,7 +83,7 @@ public final class CheckHarness {
     // Packets
     // ---------------------------------------------------------------------------------------------
 
-    /** JOIN_GAME in survival, abilities (not flying), a keep-alive exchange, and one tick end. */
+    /** JOIN_GAME in survival, abilities (not flying), a ping/pong exchange, and one tick end. */
     public CheckHarness join() {
         processor.joinGame(1, GameMode.GAME_MODE_SURVIVAL, "minecraft:overworld", null, now);
         processor.serverAbilities(new Abilities(false, false, false, 0.05f), now);
@@ -93,8 +94,20 @@ public final class CheckHarness {
         return this;
     }
 
-    /** Server keep-alive now and the client's reply one tick later: everything sent so far is acknowledged. */
+    /**
+     * Server PING now and the client's PONG 1 ms later: everything sent so far is acknowledged (keep-alive
+     * replies do not prove application, see {@link #keepAlive()}).
+     */
     public CheckHarness acknowledge() {
+        int id = ++pingId;
+        processor.serverPing(id, now);
+        now += 1_000_000;
+        processor.clientPong(id, now);
+        return this;
+    }
+
+    /** Server keep-alive now and the client's reply 1 ms later (RTT only, no acknowledgement). */
+    public CheckHarness keepAlive() {
         long id = now;
         processor.serverKeepAlive(id, now);
         now += 1_000_000;

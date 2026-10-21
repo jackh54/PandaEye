@@ -164,7 +164,7 @@ func (c *Config) validateNATS() []error {
 	for _, raw := range splitList(n.URL) {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" {
-			bad("PE_NATS_URL: invalid URL %q", raw)
+			bad("PE_NATS_URL: invalid URL %q", redactURL(raw))
 			continue
 		}
 		scheme := strings.ToLower(u.Scheme)
@@ -225,4 +225,19 @@ func isLoopback(host string) bool {
 	}
 	a, err := netip.ParseAddr(host)
 	return err == nil && a.Unmap().IsLoopback()
+}
+
+// redactURL hides anything between "://" and the last "@" (credentials) of a URL that did not parse.
+func redactURL(raw string) string {
+	scheme, rest, ok := strings.Cut(raw, "://")
+	if !ok {
+		scheme, rest = "", raw
+	}
+	if at := strings.LastIndex(rest, "@"); at >= 0 {
+		rest = "REDACTED@" + rest[at+1:]
+	}
+	if scheme == "" {
+		return rest
+	}
+	return scheme + "://" + rest
 }

@@ -4,6 +4,7 @@ import "google.golang.org/protobuf/encoding/protowire"
 
 // Field numbers walked by the pre-scan (wire.proto).
 const (
+	fClientFrameHello    = 1
 	fClientFrameBatch    = 2
 	fBatchEvents         = 4
 	fEventAttack         = 13
@@ -18,12 +19,23 @@ const (
 // prescan bounds what proto.Unmarshal would allocate for a ClientFrame: the number of Batch.events
 // (summed over repeated batch fields, which protobuf merges), the size of every event, and the
 // repeated fields inside events that could otherwise multiply allocations (target_history, LocalFlag
-// data and context, StateChange effects; summed over merged occurrences). It also rejects malformed
-// wire data early.
+// data and context, StateChange effects; summed over merged occurrences) and the size of Hello. It
+// also rejects malformed wire data early.
 func prescan(b []byte, lim Limits) error {
-	events := 0
+	events, hello := 0, 0
 	return walk(b, func(num protowire.Number, typ protowire.Type, v []byte) error {
-		if num != fClientFrameBatch || typ != protowire.BytesType {
+		if typ != protowire.BytesType {
+			return nil
+		}
+		if num == fClientFrameHello {
+			// A compressed hello is rejected after decoding, but its repeated capabilities would be
+			// allocated first (an 8 MiB run of empty strings is ~300 MiB of string headers).
+			if hello += len(v); hello > lim.MaxHello {
+				return malformed("hello must be codec 0x00 and <= %d bytes", lim.MaxHello)
+			}
+			return nil
+		}
+		if num != fClientFrameBatch {
 			return nil
 		}
 		return walk(v, func(num protowire.Number, typ protowire.Type, ev []byte) error {

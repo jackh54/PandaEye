@@ -8,6 +8,9 @@ description = "PandaEye plugin for Velocity"
 dependencies {
     implementation(project(":common"))
     compileOnly(libs.velocity.api)
+
+    testImplementation(libs.velocity.api)
+    testImplementation(libs.archunit)
 }
 
 tasks.processResources {

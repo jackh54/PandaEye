@@ -56,6 +56,14 @@ func (k *keyedLimiter) allow(key string, now time.Time) (bool, time.Duration) {
 	return true, 0
 }
 
+// exhausted reports, without taking a token, whether key has no token left at now.
+func (k *keyedLimiter) exhausted(key string, now time.Time) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	b, ok := k.m[key]
+	return ok && b.lim.TokensAt(now) < 1
+}
+
 // ipKey buckets IPv6 clients by /64 (one subscriber), IPv4 by address.
 func ipKey(a netip.Addr) string {
 	if !a.IsValid() {

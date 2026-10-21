@@ -228,10 +228,12 @@ func (v *View) Apply(ev *pb.Event, offsetUs int64) {
 		v.updatePing()
 	case *pb.Event_Env:
 		e := k.Env
-		v.Env = e.GetFlags()
-		for f := e.GetFlags(); f != 0; f &= f - 1 {
+		// Samples are sent on change (and at least every 5 s), so a flag that was set in the previous
+		// sample and is clear now was true until this moment: record that as its last-set time too.
+		for f := e.GetFlags() | v.Env; f != 0; f &= f - 1 {
 			v.EnvSetAtUs[bits.TrailingZeros32(f)] = v.NowUs
 		}
+		v.Env = e.GetFlags()
 		if e.GetServerTickMs() > 0 {
 			v.ServerTickMs = float64(e.GetServerTickMs())
 		}

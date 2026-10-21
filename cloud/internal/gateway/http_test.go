@@ -1,12 +1,15 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -111,7 +114,7 @@ func TestTrustedProxyEnforcement(t *testing.T) {
 // /healthz answers 503, connections get Error{CODE_SHUTTING_DOWN} and close 1001, and their
 // PE_CONNECTIONS entries are released.
 func TestGracefulShutdown(t *testing.T) {
-	d := testkit.NewDeps(t, "PE_STATIC_LICENSES="+staticKeys)
+	d := testkit.NewDeps(t, testEnv()...)
 	o := fastOptions()
 	o.CloseTimeout = 2 * time.Second
 	g, err := NewWithOptions(d, o)
@@ -180,5 +183,51 @@ func TestGracefulShutdown(t *testing.T) {
 	}
 	if el := time.Since(start); el > app.ServiceStopTimeout {
 		t.Fatalf("shutdown took %v", el)
+	}
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// TestSecretsNeverLogged runs the gateway at debug level through handshakes, batches, failures and
+// reconnects and checks that no licence key, server secret or process key reaches the log.
+func TestSecretsNeverLogged(t *testing.T) {
+	const key = "SECRET-LICENCE-0123456789"
+	d := testkit.NewDeps(t, "PE_STATIC_LICENSES="+key+"::pro", "PE_EVENTS_MAX_BYTES=256MiB")
+	var logs lockedBuffer
+	d.Log = app.NewLogger(&logs, slog.LevelDebug)
+	e := startGateway(t, d, fastOptions())
+	s := newServer(key)
+	c, _ := e.connect(s)
+	sendBatch(t, c, testkit.Batch(1, testkit.NewPlayer("Alice").Join()))
+	pong(t, c, &pb.Ping{Nonce: 1, LastProbeRttUs: 1000})
+	e.connect(s)
+	wrong := *s
+	wrong.secret = "SECRET-WRONG-SERVER-SECRET"
+	e.rejected(&wrong, pb.Error_CODE_DUPLICATE_SERVER, 4004)
+	e.rejected(newServer("SECRET-UNKNOWN-KEY"), pb.Error_CODE_UNAUTHENTICATED, 4001)
+	e.stop()
+	out := logs.String()
+	if !strings.Contains(out, "plugin connected") {
+		t.Fatalf("debug logs not captured: %s", out)
+	}
+	for _, secret := range []string{key, s.secret, wrong.secret, "SECRET-UNKNOWN-KEY", d.Secrets.OutboundKey.Reveal(), d.Secrets.LicensePepper.Reveal()} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("a secret reached the log: %s", out)
+		}
 	}
 }

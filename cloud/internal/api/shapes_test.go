@@ -264,7 +264,7 @@ func TestWriteShapes(t *testing.T) {
 	staff := as(tenantA, "staff")
 
 	t.Run("auth license", func(t *testing.T) {
-		e.verifier.valid[testLicenseKey] = license.License{Valid: true, MaxServers: 5, Plan: "pro"}
+		e.verifier.set(testLicenseKey, license.License{Valid: true, MaxServers: 5, Plan: "pro"}, nil)
 		r := e.must(200, "POST", "/api/v1/auth/license", map[string]string{"license_key": testLicenseKey}, service())
 		m := r.json(t)
 		keys(t, "auth/license", m, []string{"tenant_id", "slug", "created"})
@@ -287,14 +287,14 @@ func TestWriteShapes(t *testing.T) {
 		if r := e.do("POST", "/api/v1/auth/license", map[string]string{"license_key": "nope"}, service()); r.status != 401 || r.code(t) != codeInvalidLicense {
 			t.Fatalf("invalid licence: %d %s", r.status, r.body)
 		}
-		e.verifier.err = errors.New("verifier unreachable")
+		e.verifier.set("", license.License{}, errors.New("verifier unreachable"))
 		if r := e.do("POST", "/api/v1/auth/license", map[string]string{"license_key": testLicenseKey}, service()); r.status != 503 {
 			t.Fatalf("verifier down must be 503 (retry), got %d", r.status)
 		}
-		e.verifier.err = nil
+		e.verifier.set("", license.License{}, nil)
 	})
 	t.Run("auth rebind", func(t *testing.T) {
-		e.verifier.valid["NEW-KEY"] = license.License{Valid: true, MaxServers: 2}
+		e.verifier.set("NEW-KEY", license.License{Valid: true, MaxServers: 2}, nil)
 		r := e.must(200, "POST", "/api/v1/auth/rebind", map[string]any{"license_key": "NEW-KEY", "revoke_others": true}, owner)
 		keys(t, "rebind", r.json(t), []string{"tenant_id", "slug", "revoked"})
 		golden(t, "auth_rebind", r.body)

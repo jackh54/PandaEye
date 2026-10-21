@@ -284,3 +284,21 @@ func TestRateLimit(t *testing.T) {
 	_, other := e.apiKey(tenantA, store.ScopeRead)
 	e.must(200, "GET", "/api/v1/verdicts", nil, bearer(other))
 }
+
+func TestLicenseFailureLimit(t *testing.T) {
+	e := newEnv(t)
+	for i := 0; i < licenseFailuresPerIP; i++ {
+		if r := e.do("POST", "/api/v1/auth/license", map[string]string{"license_key": "bad"}, service()); r.status != 401 {
+			t.Fatalf("attempt %d: %d", i, r.status)
+		}
+	}
+	calls := e.verifier.callCount()
+	r := e.do("POST", "/api/v1/auth/license", map[string]string{"license_key": "bad"}, service())
+	if r.status != 429 || e.verifier.callCount() != calls {
+		t.Fatalf("over the failure budget: %d, verifier called %d more times", r.status, e.verifier.callCount()-calls)
+	}
+	// Another client IP is unaffected.
+	if r := e.do("POST", "/api/v1/auth/license", map[string]string{"license_key": "bad"}, service(), header("X-PandaEye-Client-IP", "192.0.2.9")); r.status != 401 {
+		t.Fatalf("other IP: %d", r.status)
+	}
+}

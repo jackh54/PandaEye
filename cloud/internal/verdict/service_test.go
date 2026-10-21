@@ -63,7 +63,8 @@ type live struct {
 }
 
 func newDeps(t *testing.T) *app.Deps {
-	return testkit.NewDeps(t, "PE_PUBLIC_URL=https://dash.example")
+	// A small PE_EVENTS reservation keeps JetStream within the free disk of CI sandboxes.
+	return testkit.NewDeps(t, "PE_PUBLIC_URL=https://dash.example", "PE_EVENTS_MAX_BYTES=256MiB")
 }
 
 func startService(t *testing.T, d *app.Deps, sink *recordingSink, n *fakeNotifier) func() {

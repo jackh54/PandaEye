@@ -9,10 +9,11 @@ import dev.pandascript.pandaeye.paper.check.ConfirmContext;
 import dev.pandascript.pandaeye.paper.check.Confirmation;
 import dev.pandascript.pandaeye.paper.check.WorldView;
 import dev.pandascript.pandaeye.paper.env.BukkitWorldView;
+import dev.pandascript.pandaeye.paper.env.ChunkAccess;
 import dev.pandascript.pandaeye.paper.platform.Schedulers;
 import dev.pandascript.pandaeye.paper.session.Session;
-import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -24,7 +25,8 @@ import java.util.function.BooleanSupplier;
 
 /**
  * The confirmation step (CHECKS 1.1): one tick after a candidate, on the player's entity thread, discard it
- * unless the world still matches, every position is in a loaded chunk owned by the current region, and (for
+ * unless the world still matches, every position is within 8 blocks of the player and every chunk around
+ * the positions is loaded and owned by the current region ({@link ConfirmationGuard}), and (for
  * movement candidates) the authoritative exemptions do not apply; then run the check's confirmer. At most 4
  * outstanding and 2 per second per player, 200 per second server-wide; extra candidates are dropped and
  * counted.
@@ -104,15 +106,12 @@ public final class ConfirmationScheduler {
         if (!world.getUID().equals(candidate.worldUid())) {
             return Confirmation.discarded("world changed");
         }
-        for (ConfirmContext.Position position : candidate.positions()) {
-            int chunkX = (int) Math.floor(position.x()) >> 4;
-            int chunkZ = (int) Math.floor(position.z()) >> 4;
-            if (!world.isChunkLoaded(chunkX, chunkZ)) {
-                return Confirmation.discarded("chunk not loaded");
-            }
-            if (!Bukkit.isOwnedByCurrentRegion(world, chunkX, chunkZ)) {
-                return Confirmation.discarded("position outside the player's region");
-            }
+        ChunkAccess chunks = ChunkAccess.currentRegion(world);
+        Location location = player.getLocation();
+        String unsafe = ConfirmationGuard.check(candidate.positions(), location.getX(), location.getY(),
+                location.getZ(), chunks);
+        if (unsafe != null) {
+            return Confirmation.discarded(unsafe);
         }
         if (candidate.movement()) {
             GameMode mode = player.getGameMode();
@@ -126,8 +125,8 @@ public final class ConfirmationScheduler {
         }
         AttributeInstance scale = player.getAttribute(Attribute.SCALE);
         double scaleValue = scale == null ? 1 : scale.getValue();
-        WorldView view = new BukkitWorldView(world, player);
-        return candidate.confirmer().confirm(new ConfirmContext() {
+        BukkitWorldView view = new BukkitWorldView(world, player, chunks);
+        Confirmation result = candidate.confirmer().confirm(new ConfirmContext() {
             @Override
             public WorldView world() {
                 return view;
@@ -143,5 +142,6 @@ public final class ConfirmationScheduler {
                 return scaleValue;
             }
         });
+        return view.incomplete() ? Confirmation.discarded("world data outside the loaded region") : result;
     }
 }

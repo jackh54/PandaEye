@@ -103,6 +103,14 @@ class EnforcerArchitectureTest {
     };
 
     private static final String RUNTIME = "dev.pandascript.pandaeye.paper.runtime.Runtime";
+    private static final String VERDICT_PLATFORM = "dev.pandascript.pandaeye.paper.verdict.PaperVerdictPlatform";
+
+    static final DescribedPredicate<JavaMethodCall> CORRECTIVE_UNBAN = new DescribedPredicate<>("Enforcement.correctiveUnban") {
+        @Override
+        public boolean test(JavaMethodCall call) {
+            return call.getTargetOwner().isEquivalentTo(Enforcement.class) && call.getName().equals("correctiveUnban");
+        }
+    };
 
     static final DescribedPredicate<JavaMethodCall> LAST_USED_WRAPPER = new DescribedPredicate<>("setLastUsedWrapper") {
         @Override
@@ -168,6 +176,12 @@ class EnforcerArchitectureTest {
         assertEquals(Set.of("cancel", "setDamage", "setVelocity"), viaLive);
         assertTrue(classes.get(LiveEnforcer.class).getConstructorCallsFromSelf().stream().anyMatch(NEW_MITIGATION_LISTENER::test));
         assertTrue(classes.get(LiveEnforcer.class).getMethodCallsFromSelf().stream().anyMatch(LISTENER_REGISTRATION::test));
+    }
+
+    @Test
+    void onlyTheVerdictPlatformUsesTheUnbanException() {
+        noClasses().that().doNotHaveFullyQualifiedName(VERDICT_PLATFORM)
+                .should().callMethodWhere(CORRECTIVE_UNBAN).check(PLUGIN);
     }
 
     @Test

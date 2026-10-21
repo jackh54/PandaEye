@@ -5,9 +5,11 @@ import java.util.Iterator;
 
 /**
  * Passive client acknowledgement (CHECKS 1.1): remembers every server KEEP_ALIVE and PING (sent by anyone)
- * and matches the client's replies. {@link #ackedUpTo()} is the send time of the newest server packet the
- * client has provably processed. Entries expire after 30 s; a keep-alive id sent twice within 30 s is
- * marked as plugin-injected (its RTT is not a clean sample). Netty thread only.
+ * and matches the client's replies. Only PONG proves application: the vanilla client answers PING on its main
+ * thread in order with the packets before it, but answers KEEP_ALIVE on its netty thread before earlier
+ * packets are applied, so keep-alive replies feed RTT only. {@link #ackedUpTo()} is the send time of the
+ * newest server PING the client has answered. Entries expire after 30 s; a keep-alive id sent twice within
+ * 30 s is marked as plugin-injected (its RTT is not a clean sample). Netty thread only.
  */
 public final class AckTracker {
 
@@ -34,6 +36,7 @@ public final class AckTracker {
 
     private final ArrayDeque<Sent> sent = new ArrayDeque<>();
     private long ackedUpTo;
+    private long lastPongNanos;
     private boolean anyAck;
 
     void serverKeepAlive(long id, long nanos) {
@@ -61,11 +64,17 @@ public final class AckTracker {
         return reply(true, id, nanos);
     }
 
-    /** Send time of the newest server keep-alive/ping the client has answered; only valid if {@link #hasAck()}. */
+    /** Send time of the newest server PING the client has answered; only valid if {@link #hasAck()}. */
     public long ackedUpTo() {
         return ackedUpTo;
     }
 
+    /** Arrival time of the newest matched PONG; only valid if {@link #hasAck()}. */
+    public long lastPongNanos() {
+        return lastPongNanos;
+    }
+
+    /** True once any PONG matched a server PING. */
     public boolean hasAck() {
         return anyAck;
     }
@@ -91,8 +100,11 @@ public final class AckTracker {
                 break;
             }
         }
-        if (!anyAck || match.nanos - ackedUpTo > 0) {
-            ackedUpTo = match.nanos;
+        if (ping) {
+            if (!anyAck || match.nanos - ackedUpTo > 0) {
+                ackedUpTo = match.nanos;
+            }
+            lastPongNanos = nowNanos;
             anyAck = true;
         }
         return new Reply(true, nowNanos - match.nanos, match.injected);

@@ -8,12 +8,14 @@ import dev.pandascript.pandaeye.paper.enforce.Enforcer;
 import dev.pandascript.pandaeye.paper.enforce.MitigationSource;
 import dev.pandascript.pandaeye.paper.session.MitigationState;
 import dev.pandascript.pandaeye.paper.session.Session;
-import dev.pandascript.pandaeye.paper.session.SessionRegistry;
 import org.bukkit.entity.Player;
 
+import java.util.Collection;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -27,7 +29,8 @@ public final class MitigationController implements MitigationSource {
 
     private final Enforcement enforcement;
     private final Supplier<PluginConfig> config;
-    private final Supplier<SessionRegistry> sessions;
+    private final Function<UUID, Session> sessionOf;
+    private final Supplier<? extends Collection<Session>> allSessions;
     private final Consumer<Runnable> globalThread;
     private final BooleanSupplier active;
     private final Log log;
@@ -37,11 +40,13 @@ public final class MitigationController implements MitigationSource {
     private boolean scheduled;
     private volatile boolean closed;
 
-    public MitigationController(Enforcement enforcement, Supplier<PluginConfig> config, Supplier<SessionRegistry> sessions,
-                                Consumer<Runnable> globalThread, BooleanSupplier active, Log log, RateLimitedLog errors) {
+    public MitigationController(Enforcement enforcement, Supplier<PluginConfig> config, Function<UUID, Session> sessionOf,
+                                Supplier<? extends Collection<Session>> allSessions, Consumer<Runnable> globalThread,
+                                BooleanSupplier active, Log log, RateLimitedLog errors) {
         this.enforcement = enforcement;
         this.config = config;
-        this.sessions = sessions;
+        this.sessionOf = sessionOf;
+        this.allSessions = allSessions;
         this.globalThread = globalThread;
         this.active = active;
         this.log = log;
@@ -88,8 +93,7 @@ public final class MitigationController implements MitigationSource {
         if (!active.getAsBoolean() || !allowed()) {
             return null;
         }
-        SessionRegistry registry = sessions.get();
-        Session session = registry == null ? null : registry.get(player.getUniqueId());
+        Session session = sessionOf.apply(player.getUniqueId());
         if (session == null) {
             return null;
         }
@@ -131,11 +135,7 @@ public final class MitigationController implements MitigationSource {
     }
 
     private void clearAll() {
-        SessionRegistry registry = sessions.get();
-        if (registry == null) {
-            return;
-        }
-        for (Session session : registry.all()) {
+        for (Session session : allSessions.get()) {
             if (session.mitigation().active()) {
                 session.mitigation(null);
             }

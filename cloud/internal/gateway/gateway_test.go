@@ -29,6 +29,12 @@ const (
 	staticKeys = keyPro + "::pro," + keyTwo + ":2:pro," + keyFree + "::free," + keyOther + "::pro"
 )
 
+// testEnv is the configuration of every test deployment. PE_EVENTS reserves less than the 10 GiB
+// default, which an embedded server refuses on a nearly full disk.
+func testEnv() []string {
+	return []string{"PE_STATIC_LICENSES=" + staticKeys, "PE_EVENTS_MAX_BYTES=256MiB"}
+}
+
 // env is a running gateway on a `pandaeye all` dependency set.
 type env struct {
 	t    *testing.T
@@ -47,7 +53,7 @@ func fastOptions() Options {
 
 func newEnv(t *testing.T, o Options, extraEnv ...string) *env {
 	t.Helper()
-	d := testkit.NewDeps(t, append([]string{"PE_STATIC_LICENSES=" + staticKeys}, extraEnv...)...)
+	d := testkit.NewDeps(t, append(testEnv(), extraEnv...)...)
 	return startGateway(t, d, o)
 }
 

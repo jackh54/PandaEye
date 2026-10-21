@@ -335,7 +335,7 @@ func TestDatabaseName(t *testing.T) {
 }
 
 func TestNewIsNopWithoutDSN(t *testing.T) {
-	d := testkit.NewDeps(t)
+	d := testkit.NewDeps(t, "PE_EVENTS_MAX_BYTES=256MiB")
 	s, err := New(d)
 	if err != nil {
 		t.Fatal(err)

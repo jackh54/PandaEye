@@ -59,6 +59,16 @@ public final class EffectTracker {
         tracked.sent(amplifier, nanos);
     }
 
+    /** RESPAWN: the client's new player entity has no effects; each known effect becomes pending-absent. */
+    void sentAllCleared(long nanos) {
+        for (Tracked<Integer> tracked : effects.values()) {
+            Integer latest = tracked.latest();
+            if (latest == null || latest >= 0) {
+                tracked.sent(-1, nanos);
+            }
+        }
+    }
+
     void promote(AckClock clock) {
         for (Tracked<Integer> value : effects.values()) {
             value.promote(clock);

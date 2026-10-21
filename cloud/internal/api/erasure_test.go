@@ -45,8 +45,8 @@ func TestErasure(t *testing.T) {
 	if _, err := e.d.Bus.Erasures.Get(ctx, k); err != nil {
 		t.Fatalf("no erasure tombstone: %v", err)
 	}
-	if len(e.sink.calls) != 1 || e.sink.calls[0] != tenantA+"/"+player2 {
-		t.Fatalf("analytics erasure: %v", e.sink.calls)
+	if calls := e.sink.snapshot(); len(calls) != 1 || calls[0] != tenantA+"/"+player2 {
+		t.Fatalf("analytics erasure: %v", e.sink.snapshot())
 	}
 	job, err := st.GetErasure(ctx, tenantA, player2)
 	check(t, err)
@@ -76,14 +76,14 @@ func TestErasure(t *testing.T) {
 	}
 
 	// A failing analytics store leaves the job incomplete (503) and a retry completes it.
-	e.sink.err = errors.New("clickhouse down")
+	e.sink.fail(errors.New("clickhouse down"))
 	if r := e.do("DELETE", "/api/v1/players/"+player2, nil, as(tenantA, "admin")); r.status != 503 {
 		t.Fatalf("analytics failure: %d", r.status)
 	}
 	if job, _ := st.GetErasure(ctx, tenantA, player2); !job.CompletedAt.IsZero() {
 		t.Fatal("erasure marked complete although analytics deletion failed")
 	}
-	e.sink.err = nil
+	e.sink.fail(nil)
 	e.must(200, "DELETE", "/api/v1/players/"+player2, nil, as(tenantA, "admin"))
 	if job, _ := st.GetErasure(ctx, tenantA, player2); job.CompletedAt.IsZero() {
 		t.Fatal("retry did not complete the erasure")
@@ -127,11 +127,13 @@ func TestPlayerReputation(t *testing.T) {
 		t.Fatalf("two tenants (one capped at weight 1): %v", rep)
 	}
 	// Not shown when the player did not join this tenant in the last 24 h, or without opt-in.
-	e.s.now = func() time.Time { return fixedNow.Add(26 * time.Hour) }
-	if _, ok := e.must(200, "GET", "/api/v1/players/"+player1, nil, as(tenantA, "viewer")).json(t)["reputation"]; ok {
+	later := fixedNow.Add(26 * time.Hour)
+	e.setNow(later)
+	if _, ok := e.must(200, "GET", "/api/v1/players/"+player1, nil,
+		withClaims(testAssertionKey, claimsFor(tenantA, "viewer", "GET", "/api/v1/players/"+player1, later.Add(45*time.Second)))).json(t)["reputation"]; ok {
 		t.Fatal("reputation shown for a player who did not join in the last 24 h")
 	}
-	e.s.now = func() time.Time { return fixedNow }
+	e.setNow(fixedNow)
 	off := false
 	_, err := e.d.Store.UpdateTenant(ctx, tenantA, store.TenantPatch{ReputationOptIn: &off}, fixedNow)
 	check(t, err)

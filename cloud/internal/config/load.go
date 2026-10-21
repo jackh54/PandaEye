@@ -206,16 +206,25 @@ func ownerIDChar(ch byte) bool {
 
 // parseYAML flattens a YAML document into dotted lower-case keys. Lists become comma-separated values.
 func parseYAML(data []byte) (map[string]string, error) {
-	var doc map[string]any
+	// Walk the node tree rather than decoding into any: decoding turns "0123" into 83 and long digit
+	// strings into floats, which would silently change peppers and ids. Scalars keep their source text.
+	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
 	out := map[string]string{}
-	var flatten func(prefix string, v any) error
-	flatten = func(prefix string, v any) error {
-		switch t := v.(type) {
-		case map[string]any:
-			for k, sub := range t {
+	if len(doc.Content) == 0 {
+		return out, nil
+	}
+	var flatten func(prefix string, n *yaml.Node) error
+	flatten = func(prefix string, n *yaml.Node) error {
+		if n.Kind == yaml.AliasNode {
+			n = n.Alias
+		}
+		switch n.Kind {
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				k := n.Content[i].Value
 				if k != strings.ToLower(k) {
 					return fmt.Errorf("key %q must be lower case", k)
 				}
@@ -223,27 +232,52 @@ func parseYAML(data []byte) (map[string]string, error) {
 				if prefix != "" {
 					key = prefix + "." + k
 				}
-				if err := flatten(key, sub); err != nil {
+				if err := flatten(key, n.Content[i+1]); err != nil {
 					return err
 				}
 			}
-		case []any:
-			parts := make([]string, len(t))
-			for i, e := range t {
-				parts[i] = fmt.Sprint(e)
+		case yaml.SequenceNode:
+			parts := make([]string, 0, len(n.Content))
+			for _, e := range n.Content {
+				if e.Kind == yaml.AliasNode {
+					e = e.Alias
+				}
+				if e.Kind != yaml.ScalarNode {
+					return fmt.Errorf("key %q: lists may only hold scalars", prefix)
+				}
+				parts = append(parts, e.Value)
 			}
-			out[prefix] = strings.Join(parts, ",")
-		case nil:
-			out[prefix] = ""
+			return set(out, prefix, strings.Join(parts, ","))
+		case yaml.ScalarNode:
+			if n.Tag == "!!null" {
+				return set(out, prefix, "")
+			}
+			return set(out, prefix, n.Value)
 		default:
-			out[prefix] = fmt.Sprint(t)
+			return fmt.Errorf("key %q: unsupported YAML node", prefix)
 		}
 		return nil
 	}
-	if err := flatten("", doc); err != nil {
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil, errors.New("the top level must be a mapping")
+	}
+	if err := flatten("", root); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// set records a flattened key, rejecting a key given twice ("nats: {dir: a}" and "nats.dir: b").
+func set(out map[string]string, key, v string) error {
+	if key == "" {
+		return errors.New("a value needs a key")
+	}
+	if _, dup := out[key]; dup {
+		return fmt.Errorf("key %q is set more than once", key)
+	}
+	out[key] = v
+	return nil
 }
 
 func parsePrefixes(v string) ([]netip.Prefix, error) {
@@ -301,8 +335,8 @@ func parseLeases(v string) (LeaseSelection, error) {
 		if err == nil && isRange {
 			b, err = strconv.Atoi(hi)
 		}
-		if err != nil || a < 0 || b < a {
-			return LeaseSelection{}, fmt.Errorf("want auto, all or a partition list like 0-3,7: %q", v)
+		if err != nil || a < 0 || b < a || b >= MaxPartitions {
+			return LeaseSelection{}, fmt.Errorf("want auto, all or a partition list like 0-3,7 (below %d): %q", MaxPartitions, v)
 		}
 		for p := a; p <= b; p++ {
 			seen[p] = true

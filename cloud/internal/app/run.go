@@ -35,7 +35,9 @@ func Run(ctx context.Context, d *Deps, services ...Named) error {
 		}
 		services = append(services, Named{Name: "metrics", Service: srv})
 	}
-	runCtx, cancel := context.WithCancel(ctx)
+	// Services are cancelled by us, after Stopping is closed, not directly by ctx: they can tell a
+	// shutdown from a failure, and /healthz turns 503 before listeners close.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	type result struct {
 		name string

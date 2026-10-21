@@ -5,8 +5,9 @@ import java.util.Iterator;
 
 /**
  * Pending velocities (CHECKS 1.1): own ENTITY_VELOCITY, EXPLOSION knockback and Bukkit PlayerVelocityEvents.
- * A velocity stays pending until a movement matches it, or until it is applied by the client plus 2
- * movement packets, with a 5 s fallback. Netty thread only.
+ * A velocity stays pending until the client has applied it (per the {@link AckClock}, which includes the 5 s
+ * fallback) and then either a movement matches it or 2 more movement packets arrived. A pending velocity is
+ * the lenient state, so it is never dropped on time alone. Netty thread only.
  */
 public final class VelocityTracker {
 
@@ -16,7 +17,6 @@ public final class VelocityTracker {
         BUKKIT
     }
 
-    static final long FALLBACK_NANOS = 5_000_000_000L;
     private static final double MATCH_EPSILON = 0.012;
     private static final int MAX_PENDING = 32;
 
@@ -59,8 +59,9 @@ public final class VelocityTracker {
             if (applied) {
                 velocity.movesAfterApplied++;
             }
-            boolean matched = hasPosition && Math.abs(velocity.vy) > 0.003 && Math.abs(dy - velocity.vy) < MATCH_EPSILON;
-            if (matched || velocity.movesAfterApplied > 2 || nowNanos - velocity.sentNanos >= FALLBACK_NANOS) {
+            boolean matched = applied && hasPosition && Math.abs(velocity.vy) > 0.003
+                    && Math.abs(dy - velocity.vy) < MATCH_EPSILON;
+            if (matched || velocity.movesAfterApplied > 2) {
                 it.remove();
             }
         }

@@ -214,8 +214,9 @@ func TestScaffoldLegitInsideBlock(t *testing.T) {
 }
 
 func TestScaffoldLegitSneakToggledInTheSameTick(t *testing.T) {
-	// Speed bridging: shift is tapped and the block placed in the same tick. The client's ray starts at
-	// the sneaking eye, but the plugin's sneaking state (and eye) still says standing.
+	// Shift is pressed and the block placed in the same tick. The client's ray starts at the sneaking
+	// eye, but the plugin's sneaking state (and eye) still says standing. The player stands still, so no
+	// movement packet follows within 100 ms: only the event eye and its alternative are candidates.
 	r := newRig(t, rigProtocol)
 	r.tick(geom.V(0.5, 64, 0.5), geom.Rotation{})
 	for i := range 12 {
@@ -224,6 +225,9 @@ func TestScaffoldLegitSneakToggledInTheSameTick(t *testing.T) {
 		rot := aim(r.eyeOf(true), target)
 		r.tick(r.p.Pos, rot)
 		r.place(blockClick{block: b, face: pb.Face_FACE_UP, cursor: target.Sub(geom.V(float64(b[0]), 63, 1)), eye: r.eyeOf(false), rot: rot})
+		for range 3 {
+			r.idle()
+		}
 		r.flags = uint32(pb.MoveFlag_MOVE_FLAG_SNEAKING)
 		r.tick(r.p.Pos, rot)
 		r.flags = 0

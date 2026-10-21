@@ -56,6 +56,7 @@ func allConfig(t *testing.T, extra ...string) *config.Config {
 	env := append([]string{
 		"PE_DB_DSN=" + filepath.Join(dir, "pe.db"),
 		"PE_NATS_DIR=" + filepath.Join(dir, "nats"),
+		"PE_EVENTS_MAX_BYTES=256MiB",
 		"PE_METRICS_LISTEN=",
 		"PE_OWNER_ID=all-test",
 	}, extra...)
@@ -180,7 +181,7 @@ func TestTenantSettingsCacheRebuild(t *testing.T) {
 }
 
 func TestShared(t *testing.T) {
-	d := &Deps{shared: map[string]any{}}
+	d := &Deps{}
 	calls := 0
 	build := func() (any, error) {
 		calls++
@@ -200,7 +201,7 @@ func TestShared(t *testing.T) {
 }
 
 func TestRunGracefulShutdown(t *testing.T) {
-	d := &Deps{Config: &config.Config{}, Log: slog.New(slog.DiscardHandler), shared: map[string]any{}}
+	d := &Deps{Config: &config.Config{}, Log: slog.New(slog.DiscardHandler)}
 	var closed atomic.Bool
 	d.OnClose(func() error { closed.Store(true); return nil })
 	var stopped atomic.Int32
@@ -240,7 +241,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 }
 
 func TestRunStopsAllWhenOneFails(t *testing.T) {
-	d := &Deps{Config: &config.Config{}, Log: slog.New(slog.DiscardHandler), shared: map[string]any{}}
+	d := &Deps{Config: &config.Config{}, Log: slog.New(slog.DiscardHandler)}
 	boom := errors.New("boom")
 	var otherStopped atomic.Bool
 	err := Run(context.Background(), d,
@@ -254,7 +255,7 @@ func TestRunStopsAllWhenOneFails(t *testing.T) {
 }
 
 func TestRunServesMetrics(t *testing.T) {
-	d := &Deps{Config: &config.Config{MetricsListen: "127.0.0.1:0"}, Log: slog.New(slog.DiscardHandler), shared: map[string]any{}}
+	d := &Deps{Config: &config.Config{MetricsListen: "127.0.0.1:0"}, Log: slog.New(slog.DiscardHandler)}
 	d.Metrics = metrics.New()
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()

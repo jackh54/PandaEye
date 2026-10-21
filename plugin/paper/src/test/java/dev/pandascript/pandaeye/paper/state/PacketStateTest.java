@@ -40,13 +40,41 @@ class PacketStateTest {
     }
 
     @Test
-    void withoutAnAcknowledgementChangesApplyAfterFiveSeconds() {
+    void timeAloneNeverPromotesAChange() {
         CheckHarness h = harness().stand(1);
-        h.processor().gameMode(GameMode.GAME_MODE_CREATIVE, h.now());
+        long changed = h.now();
+        h.processor().gameMode(GameMode.GAME_MODE_CREATIVE, changed);
         h.stand(10);
         assertTrue(h.state().gameMode().isPending());
+        h.advance(60_000 * MS).keepAlive().stand(3);
+        assertTrue(h.state().gameMode().isPending(), "no PONG after the change: stays pending (lenient)");
+        assertFalse(h.state().appliedByClient(changed));
+    }
+
+    @Test
+    void theFiveSecondFallbackNeedsAPongThatArrivedAfterTheChange() {
+        CheckHarness h = harness().stand(1);
+        PacketProcessor p = h.processor();
+        p.serverPing(500, h.now());
+        h.advance(MS);
+        p.gameMode(GameMode.GAME_MODE_CREATIVE, h.now());
+        h.stand(2);
+        p.clientPong(500, h.now());
+        h.stand(2);
+        assertTrue(h.state().gameMode().isPending(), "the PONG answers a PING sent before the change");
         h.advance(5_000 * MS).stand(1);
-        assertEquals(GameMode.GAME_MODE_CREATIVE, h.state().gameMode().applied());
+        assertEquals(GameMode.GAME_MODE_CREATIVE, h.state().gameMode().applied(), "5 s and a later PONG");
+    }
+
+    @Test
+    void keepAliveRepliesDoNotAcknowledgeChanges() {
+        CheckHarness h = harness().stand(1);
+        h.processor().attributes(Map.of(AttributeTracker.MOVEMENT_SPEED, 0.05), h.now());
+        h.keepAlive().stand(5);
+        assertTrue(h.state().attributes().get(AttributeTracker.MOVEMENT_SPEED).isPending());
+        assertEquals(0.1, h.state().attributes().lenientMax(AttributeTracker.MOVEMENT_SPEED), 1e-9);
+        h.acknowledge().stand(1);
+        assertEquals(0.05, h.state().attributes().lenientMax(AttributeTracker.MOVEMENT_SPEED), 1e-9);
     }
 
     @Test
@@ -59,13 +87,14 @@ class PacketStateTest {
         AckTracker.Reply first = acks.clientKeepAlive(1, 150 * MS);
         assertTrue(first.matched());
         assertTrue(first.injected());
-        assertEquals(50 * MS, first.rttNanos());
-        assertEquals(100 * MS, acks.ackedUpTo(), "the older send of a duplicated id is the conservative boundary");
+        assertEquals(50 * MS, first.rttNanos(), "the older send of a duplicated id is the conservative match");
+        assertFalse(acks.hasAck(), "keep-alive replies are answered before earlier packets are applied");
         assertTrue(acks.clientPong(9, 160 * MS).matched());
         assertEquals(110 * MS, acks.ackedUpTo());
+        assertEquals(160 * MS, acks.lastPongNanos());
         assertFalse(acks.clientKeepAlive(77, 170 * MS).matched());
         assertTrue(acks.clientKeepAlive(2, 180 * MS).matched());
-        assertEquals(130 * MS, acks.ackedUpTo());
+        assertEquals(110 * MS, acks.ackedUpTo(), "only PONG advances the boundary");
         acks.serverKeepAlive(5, 200 * MS);
         acks.serverKeepAlive(6, 40_000 * MS);
         assertFalse(acks.clientKeepAlive(5, 40_001 * MS).matched(), "entries expire after 30 s");
@@ -156,6 +185,7 @@ class PacketStateTest {
         h.processor().velocity(0, 0.42, 0, VelocityTracker.Source.PACKET, h.now());
         h.stand(1);
         assertTrue(state.velocities().pending());
+        h.acknowledge();
         h.step(0, 0.42, 0, false);
         assertFalse(state.velocities().pending(), "consumed by the matching movement");
 
@@ -163,6 +193,19 @@ class PacketStateTest {
         h.acknowledge();
         h.stand(3);
         assertFalse(state.velocities().pending(), "applied plus two movements");
+    }
+
+    @Test
+    void aMovementBeforeTheVelocityCouldBeAppliedNeverConsumesIt() {
+        CheckHarness h = harness().stand(1);
+        PacketState state = h.state();
+        h.processor().velocity(1.2, 0.42, 0, VelocityTracker.Source.PACKET, h.now());
+        h.step(0.3, 0.42, 0, false);
+        assertTrue(state.velocities().pending(), "an unrelated sprint-jump before the acknowledgement");
+        h.advance(30_000 * MS).stand(10);
+        assertTrue(state.velocities().pending(), "never dropped on time alone");
+        h.acknowledge().stand(3);
+        assertFalse(state.velocities().pending());
     }
 
     @Test

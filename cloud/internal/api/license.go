@@ -34,6 +34,9 @@ func (s *Service) verifyLicense(ctx context.Context, key string, rc *reqCtx) (li
 		return license.License{}, badRequest("license_key is required")
 	}
 	ipk := ipKey(rc.p.clientIP)
+	if s.licenseFails.exhausted(ipk, rc.now) {
+		return license.License{}, &apiError{status: http.StatusTooManyRequests, code: codeRateLimited, msg: "too many invalid licence keys", retryAfter: time.Minute}
+	}
 	vctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	l, err := s.verifier.Verify(vctx, key)

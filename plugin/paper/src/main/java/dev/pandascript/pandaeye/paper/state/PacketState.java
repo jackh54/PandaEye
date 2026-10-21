@@ -12,10 +12,17 @@ import dev.pandascript.pandaeye.protocol.v1.MoveFlag;
  */
 public final class PacketState {
 
-    /** Fallback after which a server change counts as applied without an acknowledgement. */
+    /**
+     * Fallback after which a server change counts as applied although no PING sent after it was answered. It
+     * still needs a PONG that arrived after the change: stricter values are never promoted on time alone.
+     */
     public static final long APPLY_FALLBACK_NANOS = 5_000_000_000L;
     /** Movement packets needed after join/seed before local movement checks run. */
     public static final int WARMUP_MOVES = 40;
+
+    /** RESPAWN data-kept bits (vanilla ClientboundRespawnPacket.KEEP_ATTRIBUTE_MODIFIERS / KEEP_ENTITY_DATA). */
+    public static final int KEEP_ATTRIBUTES = 0x01;
+    public static final int KEEP_ENTITY_DATA = 0x02;
 
     static final int ENTITY_FLAG_SNEAKING = 0x02;
     static final int ENTITY_FLAG_SPRINTING = 0x08;
@@ -34,19 +41,29 @@ public final class PacketState {
             | EnvFlag.ENV_FLAG_IN_POWDER_SNOW_VALUE | EnvFlag.ENV_FLAG_ON_HONEY_VALUE | EnvFlag.ENV_FLAG_STUCK_VALUE
             | EnvFlag.ENV_FLAG_NEAR_ENTITY_VALUE;
 
-    /** Promotion clock for one movement packet: applied when acknowledged before the packet, or after 5 s. */
+    /**
+     * Promotion clock for one movement packet: applied when a PING sent at or after the change was answered
+     * before the packet, or 5 s after the change once any PONG arrived after it. Without PONGs nothing is
+     * promoted and checks keep using the lenient values until JOIN/RESPAWN replaces them.
+     */
     private final class MoveClock implements AckClock {
         long boundary;
+        long lastPong;
         boolean valid;
         long now;
 
         @Override
         public boolean applied(long sentNanos) {
-            return (valid && boundary - sentNanos >= 0) || now - sentNanos >= APPLY_FALLBACK_NANOS;
+            return acknowledged(valid, boundary, lastPong, now, sentNanos);
         }
     }
 
-    /** Applied when acknowledged at all (any time up to now), or after 5 s. */
+    static boolean acknowledged(boolean anyPong, long ackedUpTo, long lastPong, long now, long sentNanos) {
+        return anyPong && (ackedUpTo - sentNanos >= 0
+                || (now - sentNanos >= APPLY_FALLBACK_NANOS && lastPong - sentNanos >= 0));
+    }
+
+    /** Applied when acknowledged at all (any time up to now). */
     private final AckClock currentClock = this::appliedByClient;
     private final MoveClock moveClock = new MoveClock();
 
@@ -149,13 +166,27 @@ public final class PacketState {
         resetMovement();
     }
 
-    /** S RESPAWN. Returns true when the dimension (world) changed. */
-    boolean respawn(GameMode mode, String world, long nanos) {
+    /**
+     * S RESPAWN. The client builds a new player entity: without {@link #KEEP_ATTRIBUTES} it drops every
+     * attribute modifier, without {@link #KEEP_ENTITY_DATA} its entity flags and hand state start from the
+     * defaults, and it never carries effects over (the server re-sends the ones that remain). Those resets are
+     * pending changes, so checks stay lenient until the client has provably applied them. Returns true when
+     * the dimension (world) changed.
+     */
+    boolean respawn(GameMode mode, String world, int keptData, long nanos) {
         boolean changed = world == null || !world.equals(worldName);
         worldName = world == null ? "" : world;
         if (mode != null) {
             gameMode.sent(mode, nanos);
         }
+        if ((keptData & KEEP_ATTRIBUTES) == 0) {
+            attributes.sentDefaults(nanos);
+        }
+        if ((keptData & KEEP_ENTITY_DATA) == 0) {
+            entityFlags.sent(0, nanos);
+            handState.sent(0, nanos);
+        }
+        effects.sentAllCleared(nanos);
         dead = false;
         inVehicle.sent(Boolean.FALSE, nanos);
         vehicleId = -1;
@@ -208,6 +239,7 @@ public final class PacketState {
                 boolean packetOnGround, boolean horizontalCollision, boolean cancelled, long nanos, long eventMicros) {
         moveClock.valid = acks.hasAck();
         moveClock.boundary = acks.ackedUpTo();
+        moveClock.lastPong = acks.lastPongNanos();
         moveClock.now = nanos;
         boolean teleport = false;
         if (hasPos) {
@@ -644,10 +676,12 @@ public final class PacketState {
         return acks;
     }
 
-    /** True when a change the server sent at {@code sentNanos} has been acknowledged by the client (or 5 s passed). */
+    /**
+     * True when a change the server sent at {@code sentNanos} has been acknowledged by a PONG (or 5 s passed and
+     * a PONG arrived after it).
+     */
     public boolean appliedByClient(long sentNanos) {
-        return (acks.hasAck() && acks.ackedUpTo() - sentNanos >= 0)
-                || moveClock.now - sentNanos >= APPLY_FALLBACK_NANOS;
+        return acknowledged(acks.hasAck(), acks.ackedUpTo(), acks.lastPongNanos(), moveClock.now, sentNanos);
     }
 
     public AckClock ackClock() {

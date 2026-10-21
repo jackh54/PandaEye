@@ -83,7 +83,9 @@ func TestViewApply(t *testing.T) {
 		t.Fatal("ticks 12 -> 13 with positions are consecutive")
 	}
 	v.Apply(&pb.Event{TimeUs: 14 * 50_000, Kind: &pb.Event_Env{Env: &pb.EnvSample{Flags: uint32(pb.EnvFlag_ENV_FLAG_IN_WATER), ServerTickMs: 61}}}, 0)
+	// The clearing sample at tick 20 means the player was in water until then.
 	v.Apply(&pb.Event{TimeUs: 20 * 50_000, Kind: &pb.Event_Env{Env: &pb.EnvSample{}}}, 0)
+	v.Apply(move(26, 1.4, 64, 1, true), 0) // 300 ms later
 	if !v.EnvRecently(pb.EnvFlag_ENV_FLAG_IN_WATER, 400_000) || v.EnvRecently(pb.EnvFlag_ENV_FLAG_IN_WATER, 200_000) {
 		t.Fatal("EnvRecently window wrong")
 	}

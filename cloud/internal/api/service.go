@@ -156,7 +156,7 @@ func (s *Service) Run(ctx context.Context) error {
 		s.tenantsMu.Lock()
 		s.tenants = w
 		s.tenantsMu.Unlock()
-	} else {
+	} else if gctx.Err() == nil {
 		s.log.Warn("tenant settings watch failed; metering reads the database", "err", err)
 	}
 	g.Go(func() error {

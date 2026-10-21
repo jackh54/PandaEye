@@ -134,8 +134,8 @@ public final class Runtime {
         lifecycle = new SessionLifecycle(schedulers, gate, sampler, alerts, telemetry, entities,
                 watches, this::config, errors);
         sessions = new SessionRegistry(entities, factory, lifecycle);
-        mitigations = new MitigationController(enforcement, this::config, () -> sessions, schedulers::runGlobal,
-                gate::active, log, errors);
+        mitigations = new MitigationController(enforcement, this::config, sessions::get, sessions::all,
+                schedulers::runGlobal, gate::active, log, errors);
         CloudClient client = cloud;
         verdicts = new VerdictHandler(this::config, enforcement, PlayerLookup.sessions(() -> sessions), mitigations,
                 alerts, logs, log, dataDir, client == null ? (id, executed, note) -> { } : client::ackVerdict);

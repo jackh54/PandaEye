@@ -214,8 +214,8 @@ type blockQueue struct {
 func (q *blockQueue) add(c *Ctx, a blockAction) {
 	v := c.View
 	if !v.Judgeable() || v.PingMs > 600 || v.Since(v.LastTeleportUs) < time1s || !a.eye.IsFinite() ||
-		v.Flags&uint32(pb.MoveFlag_MOVE_FLAG_SERVER_ROTATION) != 0 {
-		return
+		!geom.V(a.rot.Yaw, a.rot.Pitch, 0).IsFinite() || v.Flags&uint32(pb.MoveFlag_MOVE_FLAG_SERVER_ROTATION) != 0 {
+		return // NaN rotations are protocol.position's business (local)
 	}
 	a.atUs, a.tick = v.NowUs, v.Tick
 	if c.event != nil {

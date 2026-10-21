@@ -34,11 +34,11 @@ func TestPatchTenantWebhookAndConfigPush(t *testing.T) {
 		t.Fatal("test message sent to an invalid webhook")
 	}
 	// A failing test message refuses the save.
-	e.webhooks.err = errors.New("discord: webhook 123456789012345678: HTTP 404")
+	e.webhooks.fail(errors.New("discord: webhook 123456789012345678: HTTP 404"))
 	if r := e.do("PATCH", "/api/v1/tenant", map[string]any{"discord_webhook": testWebhookURL}, owner); r.status != 400 || r.code(t) != codeWebhookTest {
 		t.Fatalf("failed test message: %d %s", r.status, r.body)
 	}
-	e.webhooks.err = nil
+	e.webhooks.fail(nil)
 
 	r := e.must(200, "PATCH", "/api/v1/tenant", map[string]any{"discord_webhook": testWebhookURL, "leniency": 2, "autokick": true}, owner)
 	m := r.json(t)
@@ -94,12 +94,12 @@ func TestPatchTenantWebhookAndConfigPush(t *testing.T) {
 func TestSecretsNeverLogged(t *testing.T) {
 	e := newEnv(t)
 	e.seed()
-	e.verifier.valid[testLicenseKey] = license.License{Valid: true, MaxServers: 1}
+	e.verifier.set(testLicenseKey, license.License{Valid: true, MaxServers: 1}, nil)
 	_, apiKey := e.apiKey(tenantA, store.ScopeRead, store.ScopeSettingsWrite)
 	e.must(200, "POST", "/api/v1/auth/license", map[string]string{"license_key": testLicenseKey}, service())
 	e.do("POST", "/api/v1/auth/license", map[string]string{"license_key": testLicenseKey + "-wrong"}, service())
 	e.must(200, "PATCH", "/api/v1/tenant", map[string]any{"discord_webhook": testWebhookURL}, as(tenantA, "owner"))
-	e.webhooks.err = errors.New("discord: webhook 123456789012345678: HTTP 500")
+	e.webhooks.fail(errors.New("discord: webhook 123456789012345678: HTTP 500"))
 	e.do("PATCH", "/api/v1/tenant", map[string]any{"discord_webhook": strings.Replace(testWebhookURL, "Tok3n", "Tok4n", 1)}, as(tenantA, "owner"))
 	e.must(200, "GET", "/api/v1/tenant", nil, bearer(apiKey))
 	e.do("GET", "/api/v1/tenant", nil, bearer(apiKey+"x"))
@@ -107,7 +107,8 @@ func TestSecretsNeverLogged(t *testing.T) {
 	e.do("GET", "/api/v1/tenant", nil, withClaims(testAssertionKeyNext, claimsFor(tenantA, "owner", "GET", "/api/v1/tenant", fixedNow.Add(time.Minute))))
 	e.do("GET", "/api/v1/tenant", nil, bearer(testServiceTokenNext), header("X-PandaEye-Assertion", "garbage"))
 	created := e.must(201, "POST", "/api/v1/apikeys", map[string]any{"name": "n"}, as(tenantA, "owner")).json(t)["key"].(string)
-	e.must(202, "POST", "/api/v1/public/appeals", appealBody(vBan, appealCodeFor(vBan)), service())
+	e.do("POST", "/api/v1/public/appeals", appealBody(vBan, appealCodeFor(vBan)), service())
+	e.do("POST", "/api/v1/public/appeals", appealBody(vB, appealCodeFor(vB)), service())
 	e.must(200, "GET", "/api/v1/verdicts/"+vBan, nil, as(tenantA, "viewer"))
 
 	logs := e.logs.String()

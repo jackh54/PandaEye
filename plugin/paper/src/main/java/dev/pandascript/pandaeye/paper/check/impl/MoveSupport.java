@@ -33,9 +33,9 @@ final class MoveSupport {
     }
 
     /**
-     * The common exemption of CHECKS 1.1 plus a short grace after it ends. Pending state is promoted when the
-     * client acknowledged it, and a keep-alive reply leaves the client before it applied the packets queued
-     * ahead of it, so the first packets after an exemption may still carry its effect.
+     * The common exemption of CHECKS 1.1 plus a short grace after it ends. A client that runs several ticks per
+     * frame (low FPS) sends the movement packets of a whole frame before it handles the packets that arrived
+     * during it, so the first packets after a promotion may still carry the old state.
      */
     static final class ExemptionGate {
 

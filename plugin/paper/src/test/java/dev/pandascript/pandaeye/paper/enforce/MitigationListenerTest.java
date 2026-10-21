@@ -67,6 +67,7 @@ class MitigationListenerTest {
         assertFalse(MitigationMath.roll(0.3, 0.3));
     }
 
+    @SuppressWarnings("removal")
     private EntityDamageByEntityEvent hit(Entity damager, double damage) {
         return new EntityDamageByEntityEvent(damager, victim, EntityDamageEvent.DamageCause.ENTITY_ATTACK,
                 TestProxies.of(DamageSource.class, Map.of()), damage);

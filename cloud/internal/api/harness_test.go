@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,6 +76,21 @@ func (f *fakeVerifier) Verify(_ context.Context, key string) (license.License, e
 	return f.valid[key], nil
 }
 
+func (f *fakeVerifier) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *fakeVerifier) set(key string, l license.License, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if key != "" {
+		f.valid[key] = l
+	}
+	f.err = err
+}
+
 type fakeSink struct {
 	mu    sync.Mutex
 	calls []string
@@ -88,11 +104,22 @@ func (f *fakeSink) ErasePlayer(_ context.Context, tenantID, player string) error
 	return f.err
 }
 
+func (f *fakeSink) snapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func (f *fakeSink) fail(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
 type fakeWebhooks struct {
-	mu    sync.Mutex
-	sent  []string
-	err   error
-	block bool
+	mu   sync.Mutex
+	sent []string
+	err  error
 }
 
 func (f *fakeWebhooks) SendTest(_ context.Context, url string) error {
@@ -100,6 +127,12 @@ func (f *fakeWebhooks) SendTest(_ context.Context, url string) error {
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, url)
 	return f.err
+}
+
+func (f *fakeWebhooks) fail(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
 }
 
 func (f *fakeWebhooks) count() int {
@@ -117,7 +150,11 @@ type env struct {
 	verifier *fakeVerifier
 	sink     *fakeSink
 	webhooks *fakeWebhooks
+	clock    atomic.Int64 // unix microseconds of the service clock
 }
+
+// setNow moves the service clock (safe while requests run).
+func (e *env) setNow(t time.Time) { e.clock.Store(t.UnixMicro()) }
 
 type syncBuffer struct {
 	mu sync.Mutex
@@ -146,6 +183,7 @@ func newEnv(t *testing.T, extraEnv ...string) *env {
 		"PE_ASSERTION_KEY=" + testAssertionKey, "PE_ASSERTION_KEY_NEXT=" + testAssertionKeyNext,
 		"PE_OUTBOUND_KEY=" + testOutboundKey, "PE_LICENSE_PEPPER=" + testPepper,
 		"PE_PUBLIC_URL=https://dash.example.test", "PE_REGION=test-region",
+		"PE_EVENTS_MAX_BYTES=64MiB", // JetStream reserves it on disk per test server
 	}
 	d := testkit.NewDeps(t, append(base, extraEnv...)...)
 	logs := &syncBuffer{}
@@ -156,7 +194,8 @@ func newEnv(t *testing.T, extraEnv ...string) *env {
 	}
 	e := &env{t: t, d: d, s: s, logs: logs, verifier: &fakeVerifier{valid: map[string]license.License{}},
 		sink: &fakeSink{}, webhooks: &fakeWebhooks{}}
-	s.now = func() time.Time { return fixedNow }
+	e.setNow(fixedNow)
+	s.now = func() time.Time { return time.UnixMicro(e.clock.Load()).UTC() }
 	s.verifier, s.erasure, s.webhooks = e.verifier, e.sink, e.webhooks
 	e.srv = httptest.NewServer(s.Handler())
 	t.Cleanup(e.srv.Close)

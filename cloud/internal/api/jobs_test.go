@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -119,8 +121,12 @@ func TestMetering(t *testing.T) {
 	}
 }
 
-func TestMeteringAndJanitorAreLeased(t *testing.T) {
-	e := newEnv(t, "PE_API_LISTEN=127.0.0.1:0")
+func TestRunServesAndLeasesJobs(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	check(t, err)
+	addr := ln.Addr().String()
+	ln.Close()
+	e := newEnv(t, "PE_API_LISTEN="+addr)
 	e.s.meterEvery, e.s.janitorEvery = 50*time.Millisecond, time.Hour
 	e.connect(tenantC, srvID(7), stream.ConnectionInfo{Platform: pb.Platform_PLATFORM_PAPER, OnlinePlayers: 4})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -136,6 +142,13 @@ func TestMeteringAndJanitorAreLeased(t *testing.T) {
 			t.Fatal("metering did not run under its lease")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	// Run serves the same handler on PE_API_LISTEN.
+	res, err := http.Get("http://" + addr + "/status")
+	check(t, err)
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("GET /status on %s: %d", addr, res.StatusCode)
 	}
 	for _, key := range []string{stream.LeaseMetering, stream.LeaseJanitor} {
 		if _, err := e.d.Bus.Leases.Get(context.Background(), key); err != nil {

@@ -56,10 +56,20 @@ type Deps struct {
 	Started time.Time
 
 	sharedMu sync.Mutex
-	shared   map[string]any
-	closers  []func() error
+	shared   map[string]*sharedEntry
 	stopping chan struct{}
 	stopOnce sync.Once
+
+	closeMu sync.Mutex
+	closers []func() error
+}
+
+// sharedEntry serialises the builds of one Shared key, so a build may call Shared for other keys
+// and OnClose without deadlocking.
+type sharedEntry struct {
+	mu   sync.Mutex
+	v    any
+	done bool
 }
 
 // Stopping is closed when shutdown begins, before services are cancelled (e.g. /healthz answers 503
@@ -97,7 +107,7 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (*Deps, error) {
 	if log == nil {
 		log = NewLogger(os.Stderr, cfg.LogLevel)
 	}
-	d := &Deps{Config: cfg, Log: log, Metrics: metrics.New(), Version: opts.Version, Started: time.Now(), shared: map[string]any{}}
+	d := &Deps{Config: cfg, Log: log, Metrics: metrics.New(), Version: opts.Version, Started: time.Now()}
 	ok := false
 	defer func() {
 		if !ok {
@@ -204,32 +214,42 @@ func (s Secrets) OutboundKeys() [][]byte {
 // the next call.
 func (d *Deps) Shared(key string, build func() (any, error)) (any, error) {
 	d.sharedMu.Lock()
-	defer d.sharedMu.Unlock()
-	if v, ok := d.shared[key]; ok {
-		return v, nil
+	if d.shared == nil {
+		d.shared = map[string]*sharedEntry{}
+	}
+	e := d.shared[key]
+	if e == nil {
+		e = &sharedEntry{}
+		d.shared[key] = e
+	}
+	d.sharedMu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.done {
+		return e.v, nil
 	}
 	v, err := build()
 	if err != nil {
 		return nil, err
 	}
-	d.shared[key] = v
+	e.v, e.done = v, true
 	return v, nil
 }
 
 // OnClose registers fn to run in Close (before the bus and store close, in reverse order).
 func (d *Deps) OnClose(fn func() error) {
-	d.sharedMu.Lock()
-	defer d.sharedMu.Unlock()
+	d.closeMu.Lock()
+	defer d.closeMu.Unlock()
 	d.closers = append(d.closers, fn)
 }
 
 // Close releases everything in reverse order of creation: registered closers, then the bus (drained)
 // and the store.
 func (d *Deps) Close() error {
-	d.sharedMu.Lock()
+	d.closeMu.Lock()
 	closers := d.closers
 	d.closers = nil
-	d.sharedMu.Unlock()
+	d.closeMu.Unlock()
 	var errs []error
 	for i := len(closers) - 1; i >= 0; i-- {
 		errs = append(errs, closers[i]())
