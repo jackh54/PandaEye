@@ -29,4 +29,13 @@ public interface WorldView {
 
     /** Any pushable or collidable entity other than the player within {@code radius} of the box. */
     boolean collidableEntityNear(Box box, double radius);
+
+    /**
+     * The movement-input multiplier of the item the player is using right now (0.2 in vanilla; 1.21.11+ items
+     * may override it with the {@code use_effects} component). NaN when the player is not using an item or the
+     * multiplier cannot be determined.
+     */
+    default double usingItemSpeedMultiplier() {
+        return Double.NaN;
+    }
 }

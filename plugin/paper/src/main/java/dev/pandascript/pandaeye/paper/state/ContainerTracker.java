@@ -17,6 +17,7 @@ public final class ContainerTracker {
     private final BitSet everOpened = new BitSet(256);
     private final Map<Integer, Long> closedAt = new HashMap<>();
     private boolean known;
+    private long knownSinceNanos;
     private int openId;
     private String openType = "";
     private long lastActivityNanos;
@@ -30,7 +31,7 @@ public final class ContainerTracker {
         openType = type;
         closedAt.remove(id);
         everOpened.set(id & 0xff);
-        known = true;
+        becomeKnown(nanos);
         touch(nanos);
     }
 
@@ -41,7 +42,7 @@ public final class ContainerTracker {
             openId = 0;
             openType = "";
         }
-        known = true;
+        becomeKnown(nanos);
         touch(nanos);
     }
 
@@ -54,7 +55,7 @@ public final class ContainerTracker {
         if (id != 0) {
             closedAt.put(id, Long.MIN_VALUE);
         }
-        known = true;
+        becomeKnown(Long.MIN_VALUE);
         touch(nanos);
     }
 
@@ -72,6 +73,15 @@ public final class ContainerTracker {
 
     public boolean known() {
         return known;
+    }
+
+    /**
+     * When the state last became known (the open/close that ended an unknown period), {@link Long#MIN_VALUE}
+     * when the client itself caused it. Until the client has applied that packet, clicks may still come from a
+     * window opened before. Only meaningful while {@link #known()}.
+     */
+    public long knownSinceNanos() {
+        return knownSinceNanos;
     }
 
     /** The open non-player container id, 0 for none. */
@@ -100,6 +110,13 @@ public final class ContainerTracker {
 
     public boolean anyActivity() {
         return anyActivity;
+    }
+
+    private void becomeKnown(long nanos) {
+        if (!known) {
+            known = true;
+            knownSinceNanos = nanos;
+        }
     }
 
     private void close(int id, long nanos) {

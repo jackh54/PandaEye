@@ -1,11 +1,13 @@
 package dev.pandascript.pandaeye.paper.cloud;
 
 import dev.pandascript.pandaeye.common.transport.CloudListener;
+import dev.pandascript.pandaeye.common.transport.RemoteSettings;
 import dev.pandascript.pandaeye.common.util.Uuids;
 import dev.pandascript.pandaeye.paper.log.AlertService;
 import dev.pandascript.pandaeye.paper.session.Session;
 import dev.pandascript.pandaeye.paper.session.SessionRegistry;
 import dev.pandascript.pandaeye.paper.telemetry.WatchRegistry;
+import dev.pandascript.pandaeye.paper.verdict.VerdictHandler;
 import dev.pandascript.pandaeye.protocol.v1.PlayerRisk;
 import dev.pandascript.pandaeye.protocol.v1.Verdict;
 import dev.pandascript.pandaeye.protocol.v1.WatchRequest;
@@ -13,7 +15,10 @@ import dev.pandascript.pandaeye.protocol.v1.WatchRequest;
 import java.util.Locale;
 import java.util.UUID;
 
-/** Routes cloud messages (on the PandaEye-Cloud thread) to the plugin: verdicts, watch requests, risk alerts. */
+/**
+ * Routes cloud messages (on the PandaEye-Cloud thread) to the plugin: verdicts, tenant settings (which gate
+ * enforcement), watch requests (clamped by {@link WatchRegistry}), reputation risk alerts.
+ */
 public final class CloudBridge implements CloudListener {
 
     private final SessionRegistry sessions;
@@ -31,6 +36,11 @@ public final class CloudBridge implements CloudListener {
     @Override
     public void onVerdict(Verdict verdict) {
         verdicts.handle(verdict);
+    }
+
+    @Override
+    public void onRemoteSettings(RemoteSettings settings) {
+        verdicts.remoteSettingsChanged();
     }
 
     @Override

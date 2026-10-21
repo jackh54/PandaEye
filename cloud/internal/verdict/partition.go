@@ -284,7 +284,9 @@ func (p *partition) applyMarker(m *pb.SessionMarker, seq uint64, live bool) (fx 
 	switch m.Kind {
 	case pb.SessionMarker_KIND_JOIN:
 		s := pl.join(m, startT, fresh)
-		if !fresh || s.exempt || s.taken(pb.Action_ACTION_MITIGATE) {
+		pl.score.advance(startT) // in every mode, so a rebuild decays exactly like the live run
+		// Mitigations are applied by backends; a proxy session never gets one.
+		if !fresh || s.exempt || s.taken(pb.Action_ACTION_MITIGATE) || o.Platform == pb.Platform_PLATFORM_VELOCITY {
 			return
 		}
 		// A rejoin with a still-high score re-issues MITIGATE for the new session.
@@ -293,7 +295,6 @@ func (p *partition) applyMarker(m *pb.SessionMarker, seq uint64, live bool) (fx 
 			return
 		}
 		th := ThresholdsFor(ts.Leniency)
-		pl.score.advance(startT)
 		sc := pl.score.snapshot()
 		if sc.S >= th.Mitigate {
 			s.actions |= actionBit(pb.Action_ACTION_MITIGATE)

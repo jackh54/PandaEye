@@ -6,23 +6,37 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
+import org.bukkit.event.HandlerList;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.util.Vector;
 
+import java.util.function.Consumer;
+import java.util.function.DoubleSupplier;
+
 /**
  * Live mode: performs the side effects. The only class allowed to call teleport, kick, dispatchCommand,
- * setCancelled, setDamage and setVelocity (enforced by {@code EnforcerArchitectureTest}).
+ * setCancelled, setDamage and setVelocity, and the only one that creates and registers the
+ * {@link MitigationListener} (enforced by {@code EnforcerArchitectureTest}). It is handed out by
+ * {@link Enforcement} only in live mode with enforcement, except for the UNBAN exception
+ * ({@link Enforcement#correctiveUnban()}).
  */
 public final class LiveEnforcer implements Enforcer {
 
     private final Plugin plugin;
+    private final Consumer<Runnable> globalRegion;
     private final EnforcerCounters counters = new EnforcerCounters();
 
     public LiveEnforcer(Plugin plugin) {
+        this(plugin, task -> Bukkit.getGlobalRegionScheduler().execute(plugin, task));
+    }
+
+    /** {@code globalRegion} runs a task on the global region thread (tests record instead). */
+    public LiveEnforcer(Plugin plugin, Consumer<Runnable> globalRegion) {
         this.plugin = plugin;
+        this.globalRegion = globalRegion;
     }
 
     @Override
@@ -51,8 +65,7 @@ public final class LiveEnforcer implements Enforcer {
     @Override
     public void dispatchCommand(String command) {
         counters.count(EnforcerCounters.Action.COMMAND);
-        Bukkit.getGlobalRegionScheduler().execute(plugin,
-                () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command));
+        globalRegion.accept(() -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command));
     }
 
     @Override
@@ -71,6 +84,29 @@ public final class LiveEnforcer implements Enforcer {
     public void setVelocity(PlayerVelocityEvent event, Vector velocity) {
         counters.count(EnforcerCounters.Action.VELOCITY);
         event.setVelocity(velocity);
+    }
+
+    @Override
+    public Registration registerMitigations(MitigationSource source, DoubleSupplier random) {
+        counters.count(EnforcerCounters.Action.LISTENERS);
+        MitigationListener listener = new MitigationListener(this, source, random);
+        Bukkit.getPluginManager().registerEvents(listener, plugin);
+        return new Registration() {
+            private volatile boolean active = true;
+
+            @Override
+            public boolean active() {
+                return active;
+            }
+
+            @Override
+            public void close() {
+                if (active) {
+                    active = false;
+                    HandlerList.unregisterAll(listener);
+                }
+            }
+        };
     }
 
     @Override

@@ -15,6 +15,7 @@ public final class BukkitWorldView implements WorldView {
     private static final double BELOW = 0.5000001;
     /** Boxes covering more blocks than this are treated as exempt rather than scanned. */
     private static final int MAX_SCANNED_BLOCKS = 256;
+    private static final UseEffects USE_EFFECTS = UseEffects.detect();
 
     private final World world;
     private final Player player;
@@ -92,6 +93,14 @@ public final class BukkitWorldView implements WorldView {
         BoundingBox search = bukkit(box.expand(radius));
         return !world.getNearbyEntities(search, entity -> entity != player && Collidables.pushesOrCollides(entity))
                 .isEmpty();
+    }
+
+    @Override
+    public double usingItemSpeedMultiplier() {
+        if (!player.hasActiveItem()) {
+            return Double.NaN;
+        }
+        return USE_EFFECTS.multiplier(player.getActiveItem());
     }
 
     private Material[] footprint(double x, double y, double z) {

@@ -350,6 +350,19 @@ func TestVelocityLegitSpeedIIIntoAttacker(t *testing.T) {
 	es := r.run("velocity")
 	expectCount(t, es, "velocity.vertical", 0)
 	expectCount(t, es, "velocity.horizontal", 0)
+
+	// A much faster player (movement_speed 0.2, e.g. Speed V) sprint-jumping into a 0.6 knockback keeps
+	// only 0.14 of it: legit with the attribute, a shortfall of 0.21 with the default speed.
+	fast := newRig(t, rigProtocol)
+	fast.state(func(s *pb.StateChange) { s.MovementSpeed = 0.2 })
+	fvi := newVictim(fast)
+	for range 12 {
+		fvi.knockback(geom.V(0, 0.4, -0.6), nil, tickOpts{jump: true, boost: geom.V(0, 0, 0.2), accel: geom.V(0, 0, 0.26)},
+			tickOpts{accel: geom.V(0, 0, 0.026)})
+	}
+	es = fast.run("velocity")
+	expectCount(t, es, "velocity.vertical", 0)
+	expectCount(t, es, "velocity.horizontal", 0)
 }
 
 func TestVelocityLegitExplosionWhileFalling(t *testing.T) {
@@ -448,7 +461,9 @@ func TestVelocityNotJudged(t *testing.T) {
 			r.flags = uint32(pb.MoveFlag_MOVE_FLAG_GLIDING)
 			r.step(geom.V(0, 0, 0))
 		},
-		"creative":  func(r *rig, vi *victim) { r.state(func(s *pb.StateChange) { s.GameMode = pb.GameMode_GAME_MODE_CREATIVE }) },
+		"creative": func(r *rig, vi *victim) {
+			r.state(func(s *pb.StateChange) { s.GameMode = pb.GameMode_GAME_MODE_CREATIVE })
+		},
 		"flying":    func(r *rig, vi *victim) { r.state(func(s *pb.StateChange) { s.Flying, s.AllowFlight = true, true }) },
 		"small vy":  nil,
 		"teleports": nil,

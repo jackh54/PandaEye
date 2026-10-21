@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackh54/PandaEye/cloud/internal/gateway"
 	"github.com/jackh54/PandaEye/cloud/internal/store"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
 )
@@ -127,32 +128,20 @@ func (s *Service) handleUsage(w http.ResponseWriter, r *http.Request, rc *reqCtx
 	return nil
 }
 
-// statusJSON is the public /status document (ARCHITECTURE 5.3), the same as the gateway's.
-type statusJSON struct {
-	Region           string `json:"region"`
-	Version          string `json:"version"`
-	UptimeS          int64  `json:"uptime_s"`
-	ConnectedServers int    `json:"connected_servers"`
-	ProbeRTT         struct {
-		P50Us int64 `json:"p50_us"`
-		P95Us int64 `json:"p95_us"`
-		P99Us int64 `json:"p99_us"`
-	} `json:"probe_rtt"`
-	SLO sloJSON `json:"slo"`
-}
-
 type statusCache struct {
 	mu      sync.Mutex
-	doc     *statusJSON
+	doc     *gateway.Status
 	expires time.Time
 }
 
-// handleStatus serves the public status document, computed from the store's merged plugin probe
-// histograms of the last hour (GlobalProbeSummary) and cached for 30 s; uptime is always current.
+// handleStatus serves the public status document: exactly the gateway's (gateway.BuildStatus, from
+// the store's merged plugin probe histograms of the last hour), cached for 30 s (the last good one
+// on errors); uptime is always current.
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request, rc *reqCtx) error {
 	doc, err := s.statusDoc(r.Context(), rc.now)
 	if err != nil {
-		return err
+		s.log.Warn("building /status failed", "err", err)
+		return unavailable("status unavailable")
 	}
 	out := *doc
 	if !s.d.Started.IsZero() {
@@ -163,23 +152,22 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request, rc *reqCt
 	return nil
 }
 
-func (s *Service) statusDoc(ctx context.Context, now time.Time) (*statusJSON, error) {
+func (s *Service) statusDoc(ctx context.Context, now time.Time) (*gateway.Status, error) {
 	c := &s.status
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.doc != nil && now.Before(c.expires) {
 		return c.doc, nil
 	}
-	sum, err := s.d.Store.GlobalProbeSummary(ctx, store.ProbeSourcePlugin, now.Add(-time.Hour))
+	bctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	doc, err := gateway.BuildStatus(bctx, s.d)
 	if err != nil {
+		if c.doc != nil {
+			return c.doc, nil
+		}
 		return nil, err
 	}
-	conns, err := s.d.Bus.ListConnections(ctx, "")
-	if err != nil {
-		return nil, err
-	}
-	doc := &statusJSON{Region: s.d.Config.Region, Version: s.d.Version, ConnectedServers: len(conns), SLO: sloOf(sum)}
-	doc.ProbeRTT.P50Us, doc.ProbeRTT.P95Us, doc.ProbeRTT.P99Us = sum.P50, sum.P95, sum.P99
-	c.doc, c.expires = doc, now.Add(statusCacheTime)
-	return doc, nil
+	c.doc, c.expires = &doc, now.Add(statusCacheTime)
+	return c.doc, nil
 }

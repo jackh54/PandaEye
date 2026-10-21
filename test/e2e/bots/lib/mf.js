@@ -38,11 +38,15 @@ async function createMf ({ username, host = '127.0.0.1', port, log = () => {}, t
   return bot
 }
 
+/** n physics ticks; never hangs: mineflayer stops ticking while its chunk is not loaded (or after disconnect). */
 function ticks (bot, n) {
   return new Promise((resolve) => {
     let i = 0
-    const f = () => { if (++i >= n) { bot.removeListener('physicsTick', f); resolve() } }
+    const done = () => { clearTimeout(to); bot.removeListener('physicsTick', f); bot.removeListener('end', done); resolve() }
+    const f = () => { if (++i >= n) done() }
+    const to = setTimeout(done, Math.max(1000, n * 150))
     bot.on('physicsTick', f)
+    bot.once('end', done)
   })
 }
 

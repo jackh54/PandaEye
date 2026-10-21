@@ -1,0 +1,10 @@
+{
+  "created_at": "2025-06-15T12:00:00Z",
+  "id": "\u003cvolatile\u003e",
+  "key": "\u003cvolatile\u003e",
+  "name": "ci",
+  "scopes": [
+    "read",
+    "verdicts:write"
+  ]
+}

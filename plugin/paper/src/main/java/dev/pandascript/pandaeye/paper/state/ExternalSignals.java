@@ -21,6 +21,14 @@ public interface ExternalSignals {
     /** True when a server stall (ARCHITECTURE 4.5) overlapped the interval; it excuses timer bins. */
     boolean stallOverlaps(long fromNanos, long toNanos);
 
+    /**
+     * The oldest recent {@link DigProbe} for the block at (x, y, z) taken at or after {@code sinceNanos} (the
+     * netty arrival of the START it answers), or null when the region thread has not handled that START yet.
+     */
+    default DigProbe digProbe(int x, int y, int z, long sinceNanos) {
+        return null;
+    }
+
     /** The world the player was in at the latest environment sample, or null. */
     default java.util.UUID worldUid() {
         EnvSnapshot env = env();

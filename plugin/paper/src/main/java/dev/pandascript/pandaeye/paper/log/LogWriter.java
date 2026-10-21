@@ -4,12 +4,15 @@ import dev.pandascript.pandaeye.common.Log;
 import dev.pandascript.pandaeye.common.util.DaemonThreads;
 import dev.pandascript.pandaeye.common.util.TokenBucket;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -22,10 +25,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Consumer;
 
 /**
  * The bounded local logs (ARCHITECTURE 4.9): {@code logs/flags-YYYY-MM-DD.jsonl} aggregated per player and
- * check per 5 s, and {@code logs/peaks-YYYY-MM-DD.jsonl} with the 5-minute check statistics. One daemon
+ * check per 5 s, {@code logs/peaks-YYYY-MM-DD.jsonl} with the 5-minute check statistics and
+ * {@code logs/verdicts-YYYY-MM-DD.jsonl} with every verdict and what was done with it. One daemon
  * thread ({@code PandaEye-Log}) writes; producers only offer to a bounded queue (10 000). Global cap 50
  * lines/s (then one summary line), 256 MiB per file per day, no writes while free disk is below 1 GiB,
  * files kept 14 days.
@@ -46,6 +51,13 @@ public final class LogWriter {
     }
 
     private record Line(String kind, String json) {
+    }
+
+    /** What {@link #forget} removed. */
+    public record ForgetResult(int files, long lines, boolean failed) {
+    }
+
+    private record Forget(UUID player, Consumer<ForgetResult> done) {
     }
 
     private static final class Aggregate {
@@ -110,6 +122,20 @@ public final class LogWriter {
         offer(new Line("peaks", line.toString()));
     }
 
+    /** A handled verdict. */
+    public void verdict(Json line) {
+        offer(new Line("verdicts", line.toString()));
+    }
+
+    /**
+     * {@code /pandaeye forget <uuid>}: removes every line about the player from the local log files (and drops
+     * the player's pending aggregates) on the writer thread, then calls {@code done} there. Returns false when
+     * the request could not be queued (writer stopped or queue full).
+     */
+    public boolean forget(UUID player, Consumer<ForgetResult> done) {
+        return running && queue.offer(new Forget(player, done));
+    }
+
     /** Lines (or flags) dropped because the queue was full, the rate cap hit, the disk is full or the file is full. */
     public long dropped() {
         return dropped.sum();
@@ -131,6 +157,8 @@ public final class LogWriter {
                     aggregate(flag);
                 } else if (item instanceof Line line) {
                     write(line, now);
+                } else if (item instanceof Forget forget) {
+                    forget(forget);
                 }
                 flushAggregates(now, false);
             }
@@ -206,6 +234,74 @@ public final class LogWriter {
         } catch (IOException e) {
             dropped.increment();
             log.warn("could not write " + file.getFileName() + ": " + e);
+        }
+    }
+
+    private void forget(Forget request) {
+        aggregates.values().removeIf(aggregate -> aggregate.first.player().equals(request.player()));
+        String needle = "\"player\":\"" + request.player() + "\"";
+        int files = 0;
+        long lines = 0;
+        boolean failed = false;
+        if (Files.isDirectory(dir)) {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.jsonl")) {
+                for (Path file : stream) {
+                    long removed = removeLines(file, needle);
+                    if (removed < 0) {
+                        failed = true;
+                    } else if (removed > 0) {
+                        files++;
+                        lines += removed;
+                    }
+                }
+            } catch (IOException e) {
+                failed = true;
+                log.warn("could not list " + dir + " to forget a player: " + e);
+            }
+        }
+        try {
+            request.done().accept(new ForgetResult(files, lines, failed));
+        } catch (Throwable t) {
+            log.warn("forget callback failed", t);
+        }
+    }
+
+    /** Rewrites {@code file} without the lines containing {@code needle}; returns how many, or -1 on failure. */
+    private long removeLines(Path file, String needle) {
+        Path tmp = file.resolveSibling(file.getFileName() + ".forget.tmp");
+        long removed = 0;
+        try {
+            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8);
+                 BufferedWriter writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8,
+                         StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.contains(needle)) {
+                        removed++;
+                    } else {
+                        writer.write(line);
+                        writer.write('\n');
+                    }
+                }
+            }
+            if (removed > 0) {
+                try {
+                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } else {
+                Files.deleteIfExists(tmp);
+            }
+            return removed;
+        } catch (IOException e) {
+            log.warn("could not remove a player's lines from " + file.getFileName() + ": " + e);
+            try {
+                Files.deleteIfExists(tmp);
+            } catch (IOException ignored) {
+                // best effort
+            }
+            return -1;
         }
     }
 

@@ -57,7 +57,7 @@ public final class Session {
     private volatile boolean publishedInVehicle;
     private volatile double publishedScale = 1;
     private volatile boolean publishedSeeded;
-    private volatile Set<Mitigation> mitigations = Set.of();
+    private volatile MitigationState mitigation = MitigationState.NONE;
 
     public Session(User user, UUID uuid, String name, boolean hotLoaded, ClientInfo client, SessionSignals signals,
                    long nowNanos) {
@@ -273,10 +273,22 @@ public final class Session {
     }
 
     public Set<Mitigation> mitigations() {
-        return mitigations;
+        return mitigation.mitigations();
     }
 
     public void mitigations(Set<Mitigation> value) {
-        mitigations = Set.copyOf(value);
+        MitigationState current = mitigation;
+        mitigation = value.isEmpty() ? MitigationState.NONE
+                : new MitigationState(value, current.strength(), current.verdictId());
+    }
+
+    /** Any thread: the active mitigations (MITIGATE verdict), {@link MitigationState#NONE} when none. */
+    public MitigationState mitigation() {
+        return mitigation;
+    }
+
+    /** Any thread: replaces the active mitigations as a whole (null clears them). */
+    public void mitigation(MitigationState state) {
+        mitigation = state == null ? MitigationState.NONE : state;
     }
 }

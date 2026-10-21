@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,23 +16,26 @@ import (
 	"github.com/jackh54/PandaEye/cloud/internal/stream"
 	"github.com/jackh54/PandaEye/cloud/internal/testkit"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // Static licences of every test deployment.
 const (
-	keyPro     = "test-key-pro"     // unlimited servers, plan pro (no tenant event budget)
-	keyTwo     = "test-key-two"     // 2 servers, plan pro
-	keyFree    = "test-key-free"    // plan free (3 000 events/s per tenant)
-	keyOther   = "test-key-other"   // another tenant, plan pro
+	keyPro     = "test-key-pro"   // unlimited servers, plan pro (no tenant event budget)
+	keyTwo     = "test-key-two"   // 2 servers, plan pro
+	keyFree    = "test-key-free"  // plan free (3 000 events/s per tenant)
+	keyOther   = "test-key-other" // another tenant, plan pro
 	staticKeys = keyPro + "::pro," + keyTwo + ":2:pro," + keyFree + "::free," + keyOther + "::pro"
 )
 
 // env is a running gateway on a `pandaeye all` dependency set.
 type env struct {
-	t   *testing.T
-	d   *app.Deps
-	g   *Service
-	url string
+	t    *testing.T
+	d    *app.Deps
+	g    *Service
+	url  string
+	stop func() // stops the gateway and waits for Run to return
 }
 
 // fastOptions are short timings for tests.
@@ -67,18 +72,22 @@ func startGateway(t *testing.T, d *app.Deps, o Options) *env {
 	case <-time.After(30 * time.Second):
 		t.Fatal("gateway did not start")
 	}
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Errorf("gateway Run: %v", err)
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Errorf("gateway Run: %v", err)
+				}
+			case <-time.After(15 * time.Second):
+				t.Error("gateway did not stop")
 			}
-		case <-time.After(15 * time.Second):
-			t.Error("gateway did not stop")
-		}
-	})
-	return &env{t: t, d: d, g: g, url: "ws://" + g.Addr().String() + "/v1/connect"}
+		})
+	}
+	t.Cleanup(stop)
+	return &env{t: t, d: d, g: g, url: "ws://" + g.Addr().String() + "/v1/connect", stop: stop}
 }
 
 func ctxT(t *testing.T, d time.Duration) context.Context {
@@ -201,4 +210,44 @@ func sendBatch(t *testing.T, c *testkit.Client, b *pb.Batch) {
 	if err := c.WaitBatchAck(ctx, b.Seq); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func mustAddr(s string) netip.Addr { return netip.MustParseAddr(s) }
+
+func testVerdict(a pb.Action) *pb.Verdict {
+	return &pb.Verdict{VerdictId: identity.NewUUID().String(), Player: testkit.NewPlayerID(), PlayerName: "Cheater", Action: a,
+		Reason: "test", Score: 80, Confidence: 0.95, Checks: []string{"killaura.hitbox"}, CreatedUnixMs: uint64(time.Now().UnixMilli())}
+}
+
+// publishVerdict sends a verdict as the verdict service does: signed, on pe.out.<tenant>.<server>.
+func publishVerdict(t *testing.T, e *env, tenantID, serverID string, v *pb.Verdict) {
+	t.Helper()
+	publishOutbound(t, e, &pb.Outbound{TenantId: tenantID, ServerId: serverID, Kind: &pb.Outbound_Verdict{Verdict: v}})
+}
+
+func publishOutbound(t *testing.T, e *env, out *pb.Outbound) {
+	t.Helper()
+	if err := e.d.Bus.PublishOutbound(e.d.Secrets.OutboundKey.Bytes(), out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// expectNoFrame fails if a frame matching match arrives within d. The client connection is closed
+// afterwards (the read deadline ends it).
+func expectNoFrame(t *testing.T, c *testkit.Client, d time.Duration, match func(*pb.ServerFrame) bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	if f, err := c.ReadUntil(ctx, match); err == nil {
+		t.Fatalf("unexpected frame %v", f)
+	}
+}
+
+// counterValue reads a counter.
+func counterValue(c prometheus.Counter) float64 {
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		return -1
+	}
+	return m.GetCounter().GetValue()
 }

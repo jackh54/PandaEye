@@ -1,0 +1,15 @@
+{
+  "autoban": false,
+  "autokick": false,
+  "discord_min_action": "kick",
+  "discord_webhook": "https://discord.com/api/webhooks/123456789012345678/****",
+  "enforcement": true,
+  "id": "t_aaaaaaaaaaaaaaaaaaaa",
+  "leniency": 3,
+  "mitigations": true,
+  "name": "Alpha",
+  "over_limit_since": null,
+  "plan": "free",
+  "reputation_opt_in": false,
+  "slug": "alpha"
+}

@@ -44,8 +44,9 @@ function legacy (version, name, laneIdx) {
 }
 
 module.exports = [
+  // 1.20.4 through ViaBackwards. Pre-1.18 clients cannot be used on this world: its surface is at y = -60 and
+  // clients before 1.18 only know y 0..255 (mineflayer 1.12.2 never loads a chunk; checked 2026-10-21).
   legacy('1.20.4', 'lg_mf1204', 13),
-  legacy('1.12.2', 'lg_mf1122', 14),
   {
     name: 'legit/mf-walk',
     kind: 'legit',

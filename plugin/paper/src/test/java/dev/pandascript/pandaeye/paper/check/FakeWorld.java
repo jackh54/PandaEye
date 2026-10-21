@@ -11,6 +11,8 @@ public final class FakeWorld implements WorldView {
     public Predicate<Box> collisions = box -> false;
     public Predicate<Box> exemptNear = box -> false;
     public boolean entityNear;
+    /** {@link WorldView#usingItemSpeedMultiplier()}: vanilla's 0.2 unless a test changes it (NaN = not using). */
+    public double usingItemSpeedMultiplier = 0.2;
 
     @Override
     public double maxFriction(double x, double y, double z) {
@@ -40,5 +42,10 @@ public final class FakeWorld implements WorldView {
     @Override
     public boolean collidableEntityNear(Box box, double radius) {
         return entityNear;
+    }
+
+    @Override
+    public double usingItemSpeedMultiplier() {
+        return usingItemSpeedMultiplier;
     }
 }

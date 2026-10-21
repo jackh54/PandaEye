@@ -28,8 +28,28 @@ public final class Enforcement {
         return liveMode.getAsBoolean() && remote.get().enforcement();
     }
 
+    /** Local {@code mode: live}. */
+    public boolean liveMode() {
+        return liveMode.getAsBoolean();
+    }
+
+    /** The last-known (persisted) {@code RemoteConfig.enforcement}; false until a Welcome has said otherwise. */
+    public boolean cloudEnforcement() {
+        return remote.get().enforcement();
+    }
+
     public Enforcer forFeature(boolean featureEnabled) {
         return enabled() && featureEnabled ? live : shadow;
+    }
+
+    /**
+     * The documented exception to the shadow invariants (ARCHITECTURE 1.1 rule 4, 4.7): the unban command for a
+     * ban this server executed runs in any mode, because it only removes PandaEye's own enforcement. Only the
+     * verdict handler may use it, and only for an UNBAN whose {@code supersedes} is a ban recorded in
+     * {@code executed.json}.
+     */
+    public Enforcer correctiveUnban() {
+        return live;
     }
 
     public ShadowEnforcer shadow() {

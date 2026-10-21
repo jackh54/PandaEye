@@ -1,0 +1,15 @@
+{
+  "days": [
+    {
+      "day": "2025-06-14",
+      "peak_players": 12
+    },
+    {
+      "day": "2025-06-15",
+      "peak_players": 20
+    }
+  ],
+  "free_tier_limit": 30,
+  "over_limit_since": null,
+  "plan": "free"
+}

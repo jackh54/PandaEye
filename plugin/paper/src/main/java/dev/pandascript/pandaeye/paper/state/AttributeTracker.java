@@ -16,6 +16,10 @@ public final class AttributeTracker {
     public static final String SCALE = "scale";
     public static final String ENTITY_REACH = "entity_interaction_range";
     public static final String BLOCK_REACH = "block_interaction_range";
+    /** Mining attributes (dig.speed only needs to know whether they changed or are pending). */
+    public static final String BLOCK_BREAK_SPEED = "block_break_speed";
+    public static final String MINING_EFFICIENCY = "mining_efficiency";
+    public static final String SUBMERGED_MINING_SPEED = "submerged_mining_speed";
 
     /** Vanilla player defaults, which a freshly joined client starts with. */
     public static final Map<String, Double> DEFAULTS = Map.of(
@@ -25,7 +29,10 @@ public final class AttributeTracker {
             STEP_HEIGHT, 0.6,
             SCALE, 1.0,
             ENTITY_REACH, 3.0,
-            BLOCK_REACH, 4.5);
+            BLOCK_REACH, 4.5,
+            BLOCK_BREAK_SPEED, 1.0,
+            MINING_EFFICIENCY, 0.0,
+            SUBMERGED_MINING_SPEED, 0.2);
 
     private final Map<String, Tracked<Double>> values = new LinkedHashMap<>();
 

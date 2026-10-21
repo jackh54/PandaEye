@@ -1,0 +1,52 @@
+{
+  "end_us": 1749981600000000,
+  "events": [
+    {
+      "move": {
+        "has_pos": true,
+        "has_rot": true,
+        "on_ground": true,
+        "pitch": 10,
+        "x": 1.5,
+        "y": 64,
+        "yaw": 90,
+        "z": -3.25
+      },
+      "player": "aaaaaaaa-0000-4000-8000-000000000001",
+      "tick": 10,
+      "time_us": "1749981575000000"
+    },
+    {
+      "player": "aaaaaaaa-0000-4000-8000-000000000001",
+      "swing": {},
+      "tick": 11,
+      "time_us": "1749981575050000"
+    },
+    {
+      "attack": {
+        "eye": {
+          "x": 1.5,
+          "y": 65.62,
+          "z": -3.25
+        },
+        "target_entity_id": 7,
+        "target_history": [
+          {
+            "time_us": "1749981575090000",
+            "x": 3,
+            "y": 64,
+            "z": -3
+          }
+        ],
+        "target_player": "aaaaaaaa-0000-4000-8000-000000000002",
+        "target_type": "minecraft:player"
+      },
+      "player": "aaaaaaaa-0000-4000-8000-000000000001",
+      "tick": 12,
+      "time_us": "1749981575100000"
+    }
+  ],
+  "player": "aaaaaaaa-0000-4000-8000-000000000001",
+  "player_name": "Steve",
+  "start_us": 1749981575000000
+}

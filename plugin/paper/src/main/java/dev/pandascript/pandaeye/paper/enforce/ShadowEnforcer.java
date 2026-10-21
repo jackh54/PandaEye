@@ -8,6 +8,8 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.util.Vector;
 
+import java.util.function.DoubleSupplier;
+
 /** Shadow mode: does nothing, counts what would have been done. */
 public final class ShadowEnforcer implements Enforcer {
 
@@ -46,6 +48,12 @@ public final class ShadowEnforcer implements Enforcer {
     @Override
     public void setVelocity(PlayerVelocityEvent event, Vector velocity) {
         counters.count(EnforcerCounters.Action.VELOCITY);
+    }
+
+    @Override
+    public Registration registerMitigations(MitigationSource source, DoubleSupplier random) {
+        counters.count(EnforcerCounters.Action.LISTENERS);
+        return Registration.NONE;
     }
 
     @Override

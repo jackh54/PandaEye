@@ -13,7 +13,8 @@ public final class EnforcerCounters {
         COMMAND,
         CANCEL,
         DAMAGE,
-        VELOCITY
+        VELOCITY,
+        LISTENERS
     }
 
     private final Map<Action, LongAdder> counts = new EnumMap<>(Action.class);

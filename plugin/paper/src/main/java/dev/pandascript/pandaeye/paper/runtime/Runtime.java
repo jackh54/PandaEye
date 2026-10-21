@@ -14,7 +14,6 @@ import dev.pandascript.pandaeye.common.util.Fingerprint;
 import dev.pandascript.pandaeye.common.util.RateLimitedLog;
 import dev.pandascript.pandaeye.paper.check.CheckRegistry;
 import dev.pandascript.pandaeye.paper.cloud.CloudBridge;
-import dev.pandascript.pandaeye.paper.cloud.VerdictHandler;
 import dev.pandascript.pandaeye.paper.command.PandaEyeCommand;
 import dev.pandascript.pandaeye.paper.config.ConfigLoader;
 import dev.pandascript.pandaeye.paper.config.PluginConfig;
@@ -48,6 +47,9 @@ import dev.pandascript.pandaeye.paper.stall.StallDetector;
 import dev.pandascript.pandaeye.paper.state.CompositeEvents;
 import dev.pandascript.pandaeye.paper.telemetry.Telemetry;
 import dev.pandascript.pandaeye.paper.telemetry.WatchRegistry;
+import dev.pandascript.pandaeye.paper.verdict.MitigationController;
+import dev.pandascript.pandaeye.paper.verdict.PlayerLookup;
+import dev.pandascript.pandaeye.paper.verdict.VerdictHandler;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Player;
@@ -89,6 +91,9 @@ public final class Runtime {
     private EnvSampler sampler;
     private WatchRegistry watches;
     private AlertService alerts;
+    private SessionLifecycle lifecycle;
+    private MitigationController mitigations;
+    private VerdictHandler verdicts;
     private PacketListenerCommon packetListener;
     private String cloudDetail = "disabled";
 
@@ -126,13 +131,16 @@ public final class Runtime {
                 session -> new CompositeEvents(List.of(telemetry.forSession(session),
                         new SessionHooks(session, provisional))),
                 (site, error) -> errors.warn(site, "check failed", error));
-        SessionLifecycle lifecycle = new SessionLifecycle(schedulers, gate, sampler, alerts, telemetry, entities,
+        lifecycle = new SessionLifecycle(schedulers, gate, sampler, alerts, telemetry, entities,
                 watches, this::config, errors);
         sessions = new SessionRegistry(entities, factory, lifecycle);
+        mitigations = new MitigationController(enforcement, this::config, () -> sessions, schedulers::runGlobal,
+                gate::active, log, errors);
+        CloudClient client = cloud;
+        verdicts = new VerdictHandler(this::config, enforcement, PlayerLookup.sessions(() -> sessions), mitigations,
+                alerts, logs, log, dataDir, client == null ? (id, executed, note) -> { } : client::ackVerdict);
         if (cloud != null) {
-            CloudClient client = cloud;
-            relay.target(new CloudBridge(sessions, watches, alerts, new VerdictHandler(this::config,
-                    this::remoteSettings, alerts, client::ackVerdict)));
+            relay.target(new CloudBridge(sessions, watches, alerts, verdicts));
         }
 
         gate.open();
@@ -153,6 +161,12 @@ public final class Runtime {
         if (cloud != null) {
             cloud.start();
         }
+        mitigations.refresh();
+        schedulers.runGlobal(() -> {
+            if (gate.active()) {
+                verdicts.checkCommands(Bukkit.getCommandMap()::getCommand);
+            }
+        });
         int hotLoaded = hotLoad(System.nanoTime());
         log.info(String.format(Locale.ROOT,
                 "PandaEye %s enabled in %d ms: mode %s, %s, cloud %s, %d online players hot-loaded, "
@@ -178,6 +192,9 @@ public final class Runtime {
             packetListener = null;
         }
         boolean drained = gate.close(IN_FLIGHT_WAIT_NANOS);
+        if (mitigations != null) {
+            mitigations.close();
+        }
         HandlerList.unregisterAll(plugin);
         if (schedulers != null) {
             schedulers.cancelAll();
@@ -261,6 +278,18 @@ public final class Runtime {
 
     public AlertService alerts() {
         return alerts;
+    }
+
+    public Schedulers schedulers() {
+        return schedulers;
+    }
+
+    public SessionLifecycle lifecycle() {
+        return lifecycle;
+    }
+
+    public VerdictHandler verdicts() {
+        return verdicts;
     }
 
     public RateLimitedLog errors() {

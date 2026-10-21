@@ -67,7 +67,9 @@ func (a *seqAdvancer) flush(ctx context.Context, db bool) {
 		_, err := s.g.d.Bus.AdvanceServerSeq(kctx, s.tenantID, s.serverID, acked)
 		cancel()
 		if err != nil {
-			s.log.Warn("advancing the acked seq in PE_SERVERS failed", "seq", acked, "err", err)
+			if ctx.Err() == nil {
+				s.log.Warn("advancing the acked seq in PE_SERVERS failed", "seq", acked, "err", err)
+			}
 		} else {
 			a.mu.Lock()
 			a.kv = max(a.kv, acked)

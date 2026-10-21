@@ -1,0 +1,44 @@
+{
+  "last_24h": {
+    "by_action": {
+      "alert": 1,
+      "ban": 2,
+      "kick": 0,
+      "mitigate": 0,
+      "unban": 0,
+      "unmitigate": 0
+    },
+    "by_category": {
+      "AUTO_CLICKER": 0,
+      "HEURISTICS": 3,
+      "INVALID_PROTOCOL": 0,
+      "INVENTORY": 0,
+      "LATENCY_ABUSE": 0,
+      "MOVEMENT": 0,
+      "TICK_SPEED": 0,
+      "WORLD_INTERACTION": 0
+    },
+    "shadow": 1
+  },
+  "last_7d": {
+    "by_action": {
+      "alert": 1,
+      "ban": 2,
+      "kick": 0,
+      "mitigate": 1,
+      "unban": 0,
+      "unmitigate": 0
+    },
+    "by_category": {
+      "AUTO_CLICKER": 0,
+      "HEURISTICS": 3,
+      "INVALID_PROTOCOL": 0,
+      "INVENTORY": 0,
+      "LATENCY_ABUSE": 0,
+      "MOVEMENT": 1,
+      "TICK_SPEED": 0,
+      "WORLD_INTERACTION": 0
+    },
+    "shadow": 1
+  }
+}

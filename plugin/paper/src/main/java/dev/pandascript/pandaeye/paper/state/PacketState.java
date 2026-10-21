@@ -734,6 +734,14 @@ public final class PacketState {
         return hands != null && (hands & HAND_ACTIVE) != 0;
     }
 
+    /**
+     * Hand active in the applied metadata and in every change sent since: the server has not ended the item use
+     * (completion, slot change), so the client, whose use the server's metadata controls, is still using it.
+     */
+    public boolean handActiveSteady() {
+        return handActiveApplied() && !handState.anyMatch(h -> (h & HAND_ACTIVE) == 0);
+    }
+
     /** Tick of the last C USE_ITEM, {@link Integer#MIN_VALUE} if none. */
     public int useItemTick() {
         return useItemTick;

@@ -1,0 +1,19 @@
+{
+  "bans": [
+    {
+      "active": true,
+      "created_at": "2025-06-15T10:00:02Z",
+      "overturn_note": "",
+      "overturned_at": null,
+      "overturned_by": "",
+      "player_name": "Steve",
+      "player_uuid": "aaaaaaaa-0000-4000-8000-000000000001",
+      "reason": "Combat heuristics (killaura.hitbox x7, reach.distance x3)",
+      "server_id": "11111111-1111-4111-8111-111111111111",
+      "unban_state": "none",
+      "unban_verdict_id": "",
+      "verdict_id": "0b000000-0000-5000-8000-000000000001"
+    }
+  ],
+  "next_cursor": ""
+}

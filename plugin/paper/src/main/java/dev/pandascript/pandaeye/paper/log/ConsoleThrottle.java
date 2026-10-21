@@ -12,6 +12,7 @@ public final class ConsoleThrottle {
 
     static final long PER_KEY_NANOS = 5_000_000_000L;
     static final double GLOBAL_PER_SECOND = 20;
+    static final int MAX_SLOTS = 10_000;
 
     private static final class Slot {
         long lastNanos;
@@ -28,6 +29,9 @@ public final class ConsoleThrottle {
 
     /** Returns -1 when the line must be dropped, else the number of lines suppressed since the last one. */
     public int admit(String key, long nowNanos) {
+        if (slots.size() >= MAX_SLOTS && !slots.containsKey(key)) {
+            prune(nowNanos);
+        }
         Slot slot = slots.computeIfAbsent(key, k -> new Slot());
         synchronized (slot) {
             if (slot.used && nowNanos - slot.lastNanos < PER_KEY_NANOS) {
@@ -48,6 +52,23 @@ public final class ConsoleThrottle {
             slot.suppressed = 0;
             return suppressed;
         }
+    }
+
+    /** Keys are per player and check (or per verdict): forget the idle ones so the map stays bounded. */
+    private void prune(long nowNanos) {
+        slots.entrySet().removeIf(entry -> {
+            Slot slot = entry.getValue();
+            synchronized (slot) {
+                return !slot.used || nowNanos - slot.lastNanos >= PER_KEY_NANOS;
+            }
+        });
+        if (slots.size() >= MAX_SLOTS) {
+            slots.clear();
+        }
+    }
+
+    int size() {
+        return slots.size();
     }
 
     public void forget(String keyPrefix) {

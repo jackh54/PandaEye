@@ -49,6 +49,19 @@ public final class AlertService {
         }
     }
 
+    /**
+     * Something staff must know about (circuit breaker): always logged as a console warning, whatever
+     * {@code alerts.console} says, and sent to in-game recipients; not throttled.
+     */
+    public void urgent(String text) {
+        logger.warning("[alert] " + text);
+        Component message = Component.text("[PandaEye] ", NamedTextColor.RED)
+                .append(Component.text(text, NamedTextColor.YELLOW));
+        for (Player staff : recipients.all()) {
+            schedulers.runOnEntity(staff, staff.getUniqueId(), task -> staff.sendMessage(message), null, 0);
+        }
+    }
+
     public void forget(UUID player) {
         throttle.forget(player + "|");
     }

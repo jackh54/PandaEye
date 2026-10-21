@@ -1,10 +1,13 @@
 package dev.pandascript.pandaeye.paper.session;
 
 import dev.pandascript.pandaeye.paper.config.PluginConfig;
+import dev.pandascript.pandaeye.paper.state.DigProbe;
 import dev.pandascript.pandaeye.paper.state.EnvSnapshot;
 import dev.pandascript.pandaeye.paper.state.ExternalSignals;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Supplier;
 
 /**
@@ -18,11 +21,16 @@ public final class SessionSignals implements ExternalSignals {
         boolean overlaps(long fromNanos, long toNanos);
     }
 
+    /** Recent dig probes kept (a nuker sends several STARTs before the region thread handles the first). */
+    private static final int DIG_PROBES = 4;
+
     private final boolean bedrock;
     private final Supplier<PluginConfig> config;
     private final StallClock stalls;
     private final AtomicLongArray envLastSet = new AtomicLongArray(32);
     private final ProvisionalGuard provisional = new ProvisionalGuard();
+    private final AtomicReferenceArray<DigProbe> digProbes = new AtomicReferenceArray<>(DIG_PROBES);
+    private final AtomicInteger digProbeNext = new AtomicInteger();
     private volatile EnvSnapshot env;
     private volatile Boolean bypass;
 
@@ -40,6 +48,11 @@ public final class SessionSignals implements ExternalSignals {
             }
         }
         env = snapshot;
+    }
+
+    /** Region thread: the server's view of a dig START (dig.speed). */
+    public void digProbe(DigProbe probe) {
+        digProbes.set(Math.floorMod(digProbeNext.getAndIncrement(), DIG_PROBES), probe);
     }
 
     /** Entity thread: the cached result of {@code hasPermission("pandaeye.bypass")}. */
@@ -107,5 +120,18 @@ public final class SessionSignals implements ExternalSignals {
     @Override
     public boolean stallOverlaps(long fromNanos, long toNanos) {
         return stalls.overlaps(fromNanos, toNanos);
+    }
+
+    @Override
+    public DigProbe digProbe(int x, int y, int z, long sinceNanos) {
+        DigProbe match = null;
+        for (int i = 0; i < DIG_PROBES; i++) {
+            DigProbe probe = digProbes.get(i);
+            if (probe != null && probe.at(x, y, z) && probe.nanos() - sinceNanos >= 0
+                    && (match == null || probe.nanos() - match.nanos() < 0)) {
+                match = probe;
+            }
+        }
+        return match;
     }
 }

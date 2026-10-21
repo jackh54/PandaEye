@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -108,6 +109,12 @@ func (s *session) run() {
 		return
 	}
 	defer s.cleanup()
+	defer func() {
+		if p := recover(); p != nil {
+			s.log.Error("connection handler panicked", "panic", p, "stack", string(debug.Stack()))
+			s.terminate("internal", fatal(pb.Error_CODE_INTERNAL, "internal error", 5_000))
+		}
+	}()
 	go s.readLoop()
 	if !s.handshake() {
 		return

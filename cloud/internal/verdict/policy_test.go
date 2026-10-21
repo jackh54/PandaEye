@@ -12,6 +12,7 @@ import (
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
 	"github.com/jackh54/PandaEye/cloud/internal/store"
 	"github.com/jackh54/PandaEye/cloud/internal/stream"
+	"github.com/jackh54/PandaEye/cloud/internal/testkit"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
 )
 
@@ -527,4 +528,34 @@ func TestEvidenceShape(t *testing.T) {
 	if _, err := time.Parse(time.RFC3339, ev["session"].(map[string]any)["started_at"].(string)); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestDiscordThreshold(t *testing.T) {
+	ts := stream.TenantSettings{DiscordWebhookEnc: []byte{1}}
+	if discordWanted(aA, ts) || !discordWanted(aM, ts) || !discordWanted(aB, ts) {
+		t.Fatal("default min action is MITIGATE")
+	}
+	ts.DiscordMinAction = aB
+	if discordWanted(aK, ts) || !discordWanted(aB, ts) {
+		t.Fatal("min action BAN")
+	}
+	ts.DiscordMinAction = aA
+	if !discordWanted(aA, ts) || discordWanted(pb.Action_ACTION_UNBAN, ts) {
+		t.Fatal("min action ALERT")
+	}
+	if discordWanted(aB, stream.TenantSettings{}) {
+		t.Fatal("no webhook, no post")
+	}
+}
+
+func TestProxySessionsGetNoMitigation(t *testing.T) {
+	h := newHarness(t)
+	tp := h.player(h.tenant())
+	h.apply(tp.marker(pb.SessionMarker_KIND_JOIN))
+	h.apply(tp.signal("killaura.hitbox", 50))
+	proxy := *tp
+	proxy.server, proxy.session = testkit.NewServerID(), identity.NewUUID().String()
+	m := proxy.marker(pb.SessionMarker_KIND_JOIN)
+	m.GetSession().Origin.Platform = pb.Platform_PLATFORM_VELOCITY
+	expect(t, "proxy join", h.apply(m))
 }

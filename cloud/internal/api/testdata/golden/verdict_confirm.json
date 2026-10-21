@@ -1,0 +1,29 @@
+{
+  "ack_note": "",
+  "acked_at": null,
+  "action": "alert",
+  "category": "HEURISTICS",
+  "checks": [
+    "killaura.hitbox",
+    "reach.distance"
+  ],
+  "clip_ids": [],
+  "confidence": 0.5,
+  "created_at": "2025-06-15T09:00:00Z",
+  "delivered_at": null,
+  "executed": false,
+  "id": "0a000000-0000-5000-8000-000000000002",
+  "mitigations": [],
+  "network_id": "net-a",
+  "player_name": "Steve",
+  "player_uuid": "aaaaaaaa-0000-4000-8000-000000000001",
+  "reason": "Combat heuristics (killaura.hitbox x7, reach.distance x3)",
+  "score": 16,
+  "server_id": "11111111-1111-4111-8111-111111111111",
+  "server_name": "Survival",
+  "session_id": "5e550000-0000-4000-8000-000000000001",
+  "shadow": false,
+  "status": "confirmed",
+  "strength": 0,
+  "supersedes": ""
+}

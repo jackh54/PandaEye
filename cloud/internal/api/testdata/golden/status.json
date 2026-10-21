@@ -1,0 +1,21 @@
+{
+  "connected_servers": 1,
+  "generated_at": "\u003cvolatile\u003e",
+  "probe_rtt": {
+    "p50_us": 32832,
+    "p95_us": 250000,
+    "p99_us": 250000,
+    "samples": 4,
+    "window_s": 3600
+  },
+  "region": "test-region",
+  "slo": {
+    "met": false,
+    "p95_met": false,
+    "p99_met": false,
+    "target_p95_ms": 100,
+    "target_p99_ms": 250
+  },
+  "uptime_s": "\u003cvolatile\u003e",
+  "version": "test"
+}

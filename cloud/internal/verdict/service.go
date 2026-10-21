@@ -57,6 +57,7 @@ type options struct {
 	leases   *config.LeaseSelection
 	noWriter bool
 	rebuild  time.Duration
+	probes   time.Duration // probe_stats flush interval (tests)
 }
 
 // WithClock replaces the wall clock.
@@ -88,6 +89,9 @@ func New(d *app.Deps, opts ...Option) (*Service, error) {
 	}
 	if s.opts.rebuild <= 0 {
 		s.opts.rebuild = RebuildWindow
+	}
+	if s.opts.probes <= 0 {
+		s.opts.probes = probeFlushInterval
 	}
 	return s, nil
 }
@@ -267,7 +271,7 @@ func (s *Service) rebuild(ctx context.Context, p *partition, e *stream.Epoch) (l
 
 // flushProbes writes aggregated probe timings every few seconds and once more at shutdown.
 func (s *Service) flushProbes(ctx context.Context) {
-	t := time.NewTicker(probeFlushInterval)
+	t := time.NewTicker(s.opts.probes)
 	defer t.Stop()
 	for {
 		select {

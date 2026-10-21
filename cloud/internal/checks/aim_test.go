@@ -29,7 +29,9 @@ func (m *cfMouse) frame(dx, dy float64) {
 	m.pitch = float32(math.Max(-90, math.Min(90, float64(m.pitch))))
 }
 
-func (m *cfMouse) rot() geom.Rotation { return geom.Rotation{Yaw: float64(m.yaw), Pitch: float64(m.pitch)} }
+func (m *cfMouse) rot() geom.Rotation {
+	return geom.Rotation{Yaw: float64(m.yaw), Pitch: float64(m.pitch)}
+}
 
 // tick moves the mouse over 1-4 frames by integer counts (or, with fractional, by trackpad deltas).
 func (m *cfMouse) tick(rng *rand.Rand, maxCounts int, fractional bool) {

@@ -163,7 +163,7 @@ func (d *autoclickerDetector) evaluate(c *Ctx) {
 	w := d.window
 	n := len(w)
 	span := float64(w[n-1] - w[0])
-	cps := float64(n-1) / (math.Max(span, 1) * 0.05)
+	cps := float64(n-1) * 20 / math.Max(span, 1) // intervals per second of client ticks
 	iv := make([]float64, n-1)
 	for i := range iv {
 		iv[i] = float64(w[i+1] - w[i])

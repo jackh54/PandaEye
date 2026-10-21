@@ -7,6 +7,8 @@ import org.bukkit.event.Cancellable;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerVelocityEvent;
 
+import java.util.function.DoubleSupplier;
+
 /**
  * Every side effect that could affect a player goes through this interface (ARCHITECTURE 1.1 and 4.2). The
  * shadow implementation only counts attempted calls; the live implementation performs them and is handed
@@ -36,5 +38,31 @@ public interface Enforcer {
     /** Changes the velocity of a PlayerVelocityEvent (VELOCITY_BOOST). Event thread only. */
     void setVelocity(PlayerVelocityEvent event, org.bukkit.util.Vector velocity);
 
+    /**
+     * Registers the mitigation listeners (ARCHITECTURE 4.8). Only the live enforcer registers anything; the
+     * shadow enforcer counts the attempt and returns {@link Registration#NONE}. Global region thread.
+     */
+    Registration registerMitigations(MitigationSource source, DoubleSupplier random);
+
     EnforcerCounters counters();
+
+    /** Registered listeners; {@link #close} unregisters them. */
+    interface Registration extends AutoCloseable {
+
+        Registration NONE = new Registration() {
+            @Override
+            public boolean active() {
+                return false;
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+
+        boolean active();
+
+        @Override
+        void close();
+    }
 }

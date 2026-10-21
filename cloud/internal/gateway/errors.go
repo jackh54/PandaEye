@@ -52,4 +52,6 @@ func fatal(code pb.Error_Code, msg string, retryAfterMs uint32) *pb.Error {
 	return &pb.Error{Code: code, Message: msg, Fatal: true, RetryAfterMs: retryAfterMs}
 }
 
-func errorFrame(e *pb.Error) *pb.ServerFrame { return &pb.ServerFrame{Kind: &pb.ServerFrame_Error{Error: e}} }
+func errorFrame(e *pb.Error) *pb.ServerFrame {
+	return &pb.ServerFrame{Kind: &pb.ServerFrame_Error{Error: e}}
+}

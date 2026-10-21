@@ -158,7 +158,12 @@ async function runScenario (mod, { server, log, seed, quick, trace = false, lane
   const traceSecs = Math.ceil((mod.traceSeconds || 240))
   try {
     if (trace) for (const p of res.players) await server.probe(`trace ${p} ${traceSecs}`)
-    await mod.run(ctx)
+    const limit = mod.timeoutMs || (ctx.quick ? 150000 : 240000)
+    let timer
+    await Promise.race([
+      mod.run(ctx),
+      new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error(`scenario timeout after ${limit} ms`)), limit) })
+    ]).finally(() => clearTimeout(timer))
   } catch (e) {
     res.ok = false
     res.error = String(e && e.stack ? e.stack : e)

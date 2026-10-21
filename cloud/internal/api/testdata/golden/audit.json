@@ -1,0 +1,93 @@
+{
+  "entries": [
+    {
+      "action": "apikey.create",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:owner-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "apikey.revoke",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:owner-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "appeal.create",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "public",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "appeal.decide",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:staff-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "checks.update",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:admin-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "license.rebind",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:owner-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "player.erase",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:admin-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "player.watch",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:staff-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "tenant.update",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:owner-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "verdict.confirm",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:staff-user",
+      "target": "\u003cvolatile\u003e"
+    },
+    {
+      "action": "verdict.overturn",
+      "created_at": "2025-06-15T12:00:00Z",
+      "detail": "\u003cvolatile\u003e",
+      "id": "\u003cvolatile\u003e",
+      "principal": "user:staff-user",
+      "target": "\u003cvolatile\u003e"
+    }
+  ],
+  "next_cursor": ""
+}

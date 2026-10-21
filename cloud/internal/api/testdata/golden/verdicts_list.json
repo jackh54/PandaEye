@@ -1,0 +1,125 @@
+{
+  "next_cursor": "",
+  "verdicts": [
+    {
+      "ack_note": "banned",
+      "acked_at": "2025-06-15T10:00:02Z",
+      "action": "ban",
+      "category": "HEURISTICS",
+      "checks": [
+        "killaura.hitbox",
+        "reach.distance"
+      ],
+      "clip_ids": [
+        "c1000000-0000-4000-8000-000000000001"
+      ],
+      "confidence": 0.93,
+      "created_at": "2025-06-15T10:00:00Z",
+      "delivered_at": "2025-06-15T10:00:01Z",
+      "executed": true,
+      "id": "0b000000-0000-5000-8000-000000000001",
+      "mitigations": [],
+      "network_id": "net-a",
+      "player_name": "Steve",
+      "player_uuid": "aaaaaaaa-0000-4000-8000-000000000001",
+      "reason": "Combat heuristics (killaura.hitbox x7, reach.distance x3)",
+      "score": 125.5,
+      "server_id": "11111111-1111-4111-8111-111111111111",
+      "server_name": "Survival",
+      "session_id": "5e550000-0000-4000-8000-000000000001",
+      "shadow": false,
+      "status": "open",
+      "strength": 0,
+      "supersedes": ""
+    },
+    {
+      "ack_note": "",
+      "acked_at": null,
+      "action": "alert",
+      "category": "HEURISTICS",
+      "checks": [
+        "killaura.hitbox",
+        "reach.distance"
+      ],
+      "clip_ids": [],
+      "confidence": 0.5,
+      "created_at": "2025-06-15T09:00:00Z",
+      "delivered_at": null,
+      "executed": false,
+      "id": "0a000000-0000-5000-8000-000000000002",
+      "mitigations": [],
+      "network_id": "net-a",
+      "player_name": "Steve",
+      "player_uuid": "aaaaaaaa-0000-4000-8000-000000000001",
+      "reason": "Combat heuristics (killaura.hitbox x7, reach.distance x3)",
+      "score": 16,
+      "server_id": "11111111-1111-4111-8111-111111111111",
+      "server_name": "Survival",
+      "session_id": "5e550000-0000-4000-8000-000000000001",
+      "shadow": false,
+      "status": "open",
+      "strength": 0,
+      "supersedes": ""
+    },
+    {
+      "ack_note": "",
+      "acked_at": null,
+      "action": "ban",
+      "category": "HEURISTICS",
+      "checks": [
+        "killaura.hitbox",
+        "reach.distance"
+      ],
+      "clip_ids": [],
+      "confidence": 0.93,
+      "created_at": "2025-06-15T08:00:00Z",
+      "delivered_at": null,
+      "executed": false,
+      "id": "0c000000-0000-5000-8000-000000000003",
+      "mitigations": [],
+      "network_id": "net-a",
+      "player_name": "Alex",
+      "player_uuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "reason": "Combat heuristics (killaura.hitbox x7, reach.distance x3)",
+      "score": 125.5,
+      "server_id": "22222222-2222-4222-8222-222222222222",
+      "server_name": "Lobby",
+      "session_id": "5e550000-0000-4000-8000-000000000001",
+      "shadow": true,
+      "status": "open",
+      "strength": 0,
+      "supersedes": ""
+    },
+    {
+      "ack_note": "",
+      "acked_at": null,
+      "action": "mitigate",
+      "category": "MOVEMENT",
+      "checks": [
+        "killaura.hitbox",
+        "reach.distance"
+      ],
+      "clip_ids": [],
+      "confidence": 0.93,
+      "created_at": "2025-06-14T06:00:00Z",
+      "delivered_at": null,
+      "executed": false,
+      "id": "0d000000-0000-5000-8000-000000000004",
+      "mitigations": [
+        "setback"
+      ],
+      "network_id": "net-a",
+      "player_name": "Alex",
+      "player_uuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "reason": "Combat heuristics (killaura.hitbox x7, reach.distance x3)",
+      "score": 125.5,
+      "server_id": "22222222-2222-4222-8222-222222222222",
+      "server_name": "Lobby",
+      "session_id": "5e550000-0000-4000-8000-000000000001",
+      "shadow": false,
+      "status": "open",
+      "strength": 0.5,
+      "supersedes": ""
+    }
+  ]
+}

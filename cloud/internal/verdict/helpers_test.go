@@ -94,7 +94,7 @@ func (h *harness) tenant(mod ...func(*stream.TenantSettings)) string {
 
 // tplayer is a test player on one server.
 type tplayer struct {
-	h       *harness
+	clock   func() time.Time
 	tenant  string
 	id      identity.UUID
 	name    string
@@ -108,7 +108,7 @@ type tplayer struct {
 }
 
 func (h *harness) player(tenant string) *tplayer {
-	return &tplayer{h: h, tenant: tenant, id: identity.NewUUID(), name: "Steve", server: testkit.NewServerID(),
+	return &tplayer{clock: h.clk.now, tenant: tenant, id: identity.NewUUID(), name: "Steve", server: testkit.NewServerID(),
 		network: "net-1", session: identity.NewUUID().String()}
 }
 
@@ -118,16 +118,16 @@ func (tp *tplayer) origin() *pb.Origin {
 }
 
 // nowUs is the harness clock in plugin time (normalised = plugin + offset).
-func (tp *tplayer) pluginNow() uint64 { return uint64(tp.h.clk.now().UnixMicro() - tp.offset) }
+func (tp *tplayer) pluginNow() uint64 { return uint64(tp.clock().UnixMicro() - tp.offset) }
 
 func (tp *tplayer) marker(kind pb.SessionMarker_Kind) *pb.SignalEnvelope {
 	return &pb.SignalEnvelope{Kind: &pb.SignalEnvelope_Session{Session: &pb.SessionMarker{Origin: tp.origin(), Player: tp.id.Bytes(),
 		PlayerName: tp.name, Kind: kind, SessionId: tp.session, SessionStartUs: tp.pluginNow(), HotLoaded: tp.hot, Exempt: tp.exempt,
-		GatewayRecvUnixUs: uint64(tp.h.clk.now().UnixMicro())}}}
+		GatewayRecvUnixUs: uint64(tp.clock().UnixMicro())}}}
 }
 
 func (tp *tplayer) signal(check string, points float64, mod ...func(*pb.Signal)) *pb.SignalEnvelope {
-	now := tp.h.clk.now()
+	now := tp.clock()
 	s := &pb.Signal{Origin: tp.origin(), Player: tp.id.Bytes(), PlayerName: tp.name, CheckId: check, Points: points,
 		EventTimeUs: tp.pluginNow(), GatewayRecvUnixUs: uint64(now.UnixMicro()), WorkerUnixUs: uint64(now.UnixMicro()),
 		SessionId: tp.session, HotLoaded: tp.hot, Info: "test", Data: map[string]float64{"x": 1}}

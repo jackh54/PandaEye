@@ -225,6 +225,8 @@ Confirm/adjust these in `orchestrator/cloud.js` once `cloud/internal/api` exists
   vanilla on stairs/slabs/water/edges. Exact movement assertions therefore use the `vm-*` scenarios.
 * vanilla-mover models open flat ground only (no walls, step-up, liquids, ice, sneaking edges, effects other than
   movement speed); diagonal input uses the 1.21.5+ square-movement formula (forward-only is exact).
+* Legacy clients: `legit/mf-legacy-1204` runs mineflayer 1.20.4 through ViaBackwards. Clients before 1.18 cannot
+  be tested on this world (surface at y = -60, they only know y 0..255; mineflayer 1.12.2 never loads a chunk).
 * mineflayer vehicle control is partial: the minecart is mounted with `bot.mount`, the boat is spawned and mounted
   server-side by the probe; paddling input may not move the boat.
 * Wire byte-identity across runs is not achievable (entity ids, positions, keep-alive ids, timing), so the shadow

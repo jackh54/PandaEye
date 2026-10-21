@@ -16,6 +16,9 @@ public final class EffectTracker {
     public static final String LEVITATION = "levitation";
     public static final String SLOW_FALLING = "slow_falling";
     public static final String DOLPHINS_GRACE = "dolphins_grace";
+    public static final String HASTE = "haste";
+    public static final String MINING_FATIGUE = "mining_fatigue";
+    public static final String CONDUIT_POWER = "conduit_power";
 
     private static final int MAX_EFFECTS = 64;
 

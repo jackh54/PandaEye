@@ -1,0 +1,111 @@
+{
+  "checks": [
+    {
+      "enabled": false,
+      "id": "reach.distance",
+      "overrides": {
+        "max_reach": 3.2
+      }
+    },
+    {
+      "enabled": true,
+      "id": "killaura.hitbox",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "killaura.multi",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "killaura.noswing",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "aim.gcd",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "aim.snap",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "aim.precision",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "velocity.vertical",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "velocity.horizontal",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "autoclicker.consistency",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "autoclicker.pattern",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "autoclicker.cps",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "scaffold.face",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "scaffold.ray",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "scaffold.cursor",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "scaffold.reach",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "dig.ray",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "inventory.move",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "inventory.rotate",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "latency.pingspoof",
+      "overrides": {}
+    },
+    {
+      "enabled": true,
+      "id": "latency.blink",
+      "overrides": {}
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.paper.check;
 
+import dev.pandascript.pandaeye.paper.state.DigProbe;
 import dev.pandascript.pandaeye.paper.state.EnvSnapshot;
 import dev.pandascript.pandaeye.paper.state.ExternalSignals;
 
@@ -13,6 +14,7 @@ public final class FakeSignals implements ExternalSignals {
     public static final UUID WORLD = new UUID(7, 7);
 
     private final List<long[]> stalls = new ArrayList<>();
+    private final List<DigProbe> digProbes = new ArrayList<>();
     private final long[] lastSet = new long[32];
     private int envFlags;
     private boolean exempt;
@@ -40,6 +42,11 @@ public final class FakeSignals implements ExternalSignals {
 
     public void provisionalAllowed(boolean value) {
         provisionalAllowed = value;
+    }
+
+    /** The region thread handled a dig START (see {@code SessionSignals#digProbe}). */
+    public void digProbe(DigProbe probe) {
+        digProbes.add(probe);
     }
 
     public void stall(long fromNanos, long toNanos) {
@@ -82,5 +89,16 @@ public final class FakeSignals implements ExternalSignals {
             }
         }
         return false;
+    }
+
+    @Override
+    public DigProbe digProbe(int x, int y, int z, long sinceNanos) {
+        DigProbe match = null;
+        for (DigProbe probe : digProbes) {
+            if (probe.at(x, y, z) && probe.nanos() >= sinceNanos && (match == null || probe.nanos() < match.nanos())) {
+                match = probe;
+            }
+        }
+        return match;
     }
 }

@@ -135,6 +135,10 @@ func (s *Service) handleAuthRebind(w http.ResponseWriter, r *http.Request, rc *r
 	}
 	lic, err := s.verifyLicense(ctx, req.LicenseKey, rc)
 	if err != nil {
+		var ae *apiError
+		if errors.As(err, &ae) && ae.code == codeInvalidLicense {
+			ae.status = http.StatusBadRequest // the caller is authenticated; the key is what is wrong
+		}
 		return err
 	}
 	hmac := identity.LicenseKeyHMAC(s.d.Secrets.LicensePepper.Bytes(), strings.TrimSpace(req.LicenseKey))

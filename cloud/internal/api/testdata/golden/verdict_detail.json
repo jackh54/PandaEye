@@ -1,0 +1,80 @@
+{
+  "ack_note": "banned",
+  "acked_at": "2025-06-15T10:00:02Z",
+  "action": "ban",
+  "category": "HEURISTICS",
+  "checks": [
+    "killaura.hitbox",
+    "reach.distance"
+  ],
+  "clip_ids": [
+    "c1000000-0000-4000-8000-000000000001"
+  ],
+  "confidence": 0.93,
+  "created_at": "2025-06-15T10:00:00Z",
+  "delivered_at": "2025-06-15T10:00:01Z",
+  "evidence": {
+    "checks": [
+      {
+        "cap": 80,
+        "check": "killaura.hitbox",
+        "confidence": 0.85,
+        "contribution": 80,
+        "count": 7
+      }
+    ],
+    "confidence": 0.93,
+    "families": [
+      {
+        "cap": 120,
+        "contribution": 80,
+        "family": "killaura"
+      }
+    ],
+    "leniency": 4,
+    "score": 125.5,
+    "session": {
+      "exempt": false,
+      "hot_loaded": false,
+      "server_id": "11111111-1111-4111-8111-111111111111",
+      "session_id": "5e550000-0000-4000-8000-000000000001",
+      "started_at": "2025-06-15T09:00:00Z"
+    },
+    "signals": [
+      {
+        "category": "HEURISTICS",
+        "check": "killaura.hitbox",
+        "clip_id": "",
+        "confidence": 0.85,
+        "data": {
+          "angle": 42.5
+        },
+        "info": "hitbox miss",
+        "local": false,
+        "points": 12,
+        "time": "2025-06-15T09:55:00Z"
+      }
+    ],
+    "thresholds": {
+      "alert": 15,
+      "ban": 120,
+      "kick": 70,
+      "mitigate": 30
+    }
+  },
+  "executed": true,
+  "id": "0b000000-0000-5000-8000-000000000001",
+  "mitigations": [],
+  "network_id": "net-a",
+  "player_name": "Steve",
+  "player_uuid": "aaaaaaaa-0000-4000-8000-000000000001",
+  "reason": "Combat heuristics (killaura.hitbox x7, reach.distance x3)",
+  "score": 125.5,
+  "server_id": "11111111-1111-4111-8111-111111111111",
+  "server_name": "Survival",
+  "session_id": "5e550000-0000-4000-8000-000000000001",
+  "shadow": false,
+  "status": "open",
+  "strength": 0,
+  "supersedes": ""
+}

@@ -140,7 +140,9 @@ func (s *session) pending(ctx context.Context, fresh bool) {
 	}
 	vs, err := s.g.d.Store.PendingVerdicts(ctx, s.tenantID, q)
 	if err != nil {
-		s.log.Warn("reading pending verdicts failed", "err", err)
+		if s.ctx.Err() == nil {
+			s.log.Warn("reading pending verdicts failed", "err", err)
+		}
 		return
 	}
 	for i := range vs {

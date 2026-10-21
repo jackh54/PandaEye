@@ -140,7 +140,10 @@ func (s *session) admit(h *pb.Hello, at time.Time) bool {
 	} else {
 		s.touchServer(srv, rec)
 	}
-	lastAcked := max(rec.LastAckedSeq, srv.LastBatchSeq)
+	lastAcked := rec.LastAckedSeq
+	if srv != nil {
+		lastAcked = max(lastAcked, srv.LastBatchSeq)
+	}
 	s.seq.init(lastAcked)
 
 	subj, err := stream.OutSubject(s.tenantID, s.serverID)
