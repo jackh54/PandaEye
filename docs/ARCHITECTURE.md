@@ -72,7 +72,8 @@ docs/                     ARCHITECTURE, CHECKS, PROTOCOL, OPERATIONS, PRIVACY, S
 Naming: Java base package `dev.pandascript.pandaeye`; shaded libraries relocate to
 `dev.pandascript.pandaeye.libs.<lib>`. Product code, configs and docs never name a specific customer network.
 
-Toolchains (pinned): Java 21 (`--release 21`), Gradle 8.14, `com.gradleup.shadow` 9.x, protobuf gradle plugin
+Toolchains (pinned): Java 21 (`--release 21`), Gradle 8.14, `com.gradleup.shadow` 9.2.2 (the last 9.x that runs on
+Gradle 8), protobuf gradle plugin
 0.9.5, protoc + protobuf-javalite 4.36.2, aircompressor 0.27 (pure-Java zstd, with a DEFLATE fallback),
 paper-api `1.21.4-R0.1-SNAPSHOT` (compileOnly), packetevents-spigot `2.13.0` (compileOnly; runtime = the
 server's PacketEvents plugin, 2.13.x), velocity-api `3.4.0` (compileOnly). Go 1.26 (`toolchain go1.26.10`),
@@ -145,8 +146,11 @@ Authoritative field list: wire.proto. Key rules:
   registers the player in the EntityIndex; and sends PlayerJoin + StateChange. Until the snapshot is
   published the session is unseeded: all local checks and id-based logic are off and unknown state means
   exempt, never a default value. Preload every class used on netty/region paths during enable.
-- **Disable (bounded, <= 300 ms)**: set `active = false` first (every callback starts with
-  `if (!active) return;`); unregister the PacketEvents listener and Bukkit listeners; cancel all tasks;
+- **Disable (bounded, <= 300 ms)**: unregister the PacketEvents listener, set `active = false` (every
+  callback starts with `if (!active) return;` and maintains an in-flight counter), wait up to 100 ms for
+  in-flight callbacks to finish; unregister Bukkit listeners; cancel all tasks (entity and region
+  schedulers have no `cancelTasks(Plugin)`, so every `ScheduledTask` handle is kept per player and
+  cancelled on quit and disable; global/async schedulers use `cancelTasks(plugin)`);
   hand the transport a stop request (4.6) and wait at most 200 ms; spool unacked batches and undrained events
   to `plugins/PandaEye/spool/` (size-capped 64 MiB); clear all maps. No ThreadLocals on foreign threads, no
   executor-less `CompletableFuture.*Async`, no shutdown hooks, no JUL handlers. After unload no
@@ -165,6 +169,18 @@ Authoritative field list: wire.proto. Key rules:
   and wrapped only if the id is the player's own (or a tracked vehicle). CLIENT_TICK_END and ANIMATION
   need no wrapper at all. A JUnit test asserts that `getLastUsedWrapper()` and the buffer reader index are
   unchanged after PandaEye's listener for every packet type it handles.
+- PacketEvents facts the code relies on (verified against 2.13.0): `ClientVersion.getById` clamps unknown
+  protocols to the newest known version and -1 to 1.7.2, so tick clients are
+  `user.getClientVersion().isNewerThanOrEquals(ClientVersion.V_1_21_2)` and `PlayerJoin.protocol_version`
+  is -1 when the version is UNKNOWN; `WrapperPlayClientPlayerFlying.getLocation()` returns 0 for parts the
+  packet does not carry, so position/rotation are carried forward unless `hasPositionChanged()` /
+  `hasRotationChanged()`; the collision getter is `isHorizontalCollision()`; `WrapperPlayServerOpenWindow`
+  gives a raw menu-type id (mapped with a 1.21.x table); `WrapperPlayServerExplosion.getKnockback()` is
+  nullable; ENTITY_VELOCITY is a `Vector3d` in blocks/tick; attribute modifiers are identified by
+  `PropertyModifier.getName()` (`minecraft:sprinting`); sneaking on 1.21.6+ comes only from
+  `PLAYER_INPUT.isShift()`; spear attacks are `PLAYER_DIGGING` `DiggingAction.STAB` (+ swing), never
+  INTERACT_ENTITY; horse/llama/camel inventories open with `OPEN_HORSE_WINDOW`; the entity-id peek uses
+  `ByteBufHelper.readerIndex/readVarInt`.
 - Server-bound packets are processed whether or not another plugin cancelled them (the client still sent
   them); the cancelled bit is recorded (`MOVE_FLAG_CANCELLED`). Cancelled client-bound packets are ignored.
 - Data read across threads (another player's position history, env flags, VLs, mitigation flags) uses
@@ -173,6 +189,10 @@ Authoritative field list: wire.proto. Key rules:
   confirmation step (CHECKS 1.1) and the hot-load snapshot.
 - Transport runs on its own daemon threads (4.6). Verdict commands run on the global region scheduler;
   per-player actions on the player's scheduler.
+- **Enforcer**: every side effect that could affect a player (sending a packet, cancelling anything,
+  `teleportAsync`, `setVelocity`, `dispatchCommand`, `kick`, mitigation listeners) goes through one
+  `Enforcer` interface. The shadow implementation is a no-op that counts attempted calls (shown in
+  `/pandaeye status`). An ArchUnit test asserts that no other class calls those APIs.
 - Every callback catches Throwable -> rate-limited warning (max 1 per 10 s per site, using only JDK or
   preloaded classes) and continues.
 
@@ -204,7 +224,7 @@ Authoritative field list: wire.proto. Key rules:
 | C `PLAYER_LOADED` (1.21.4+) | end of the loading-screen exemption |
 | C `ENTITY_ACTION`, C `PLAYER_INPUT` | sprint, sneak, elytra start (provisional gliding exemption) |
 | S `SET_PASSENGERS`, C `VEHICLE_MOVE`, C `STEER_VEHICLE` | in vehicle |
-| S `OPEN_WINDOW`, S/C `CLOSE_WINDOW` | open container id + type, replaced/closed ids with ack grace |
+| S `OPEN_WINDOW`, S `OPEN_HORSE_WINDOW`, S/C `CLOSE_WINDOW` | open container id + type, replaced/closed ids with ack grace; unknown after RESPAWN/JOIN_GAME until the next open/close |
 | S/C `KEEP_ALIVE`, S `PING` / C `PONG` | passive acknowledgement + RTT (per-id FIFO, 30 s expiry) |
 | S/C `HELD_ITEM_CHANGE` | carriedIndex mirror, expected echoes |
 | C `INTERACT_ENTITY`, C `ATTACK` (26.1+ if the type exists), C `ANIMATION`, C `PLAYER_BLOCK_PLACEMENT`, C `PLAYER_DIGGING` (incl. RELEASE_USE_ITEM, STAB), C `CLICK_WINDOW`, C `USE_ITEM`, C `PLUGIN_MESSAGE` (`minecraft:brand`, `pandaeye:session`) | events for the cloud and protocol checks |
@@ -228,7 +248,9 @@ Authoritative field list: wire.proto. Key rules:
 One repeating task per player (`runAtFixedRate(plugin, task, retired, 10, 10)`). `EnvFlag` bits from cheap
 API calls: `isInWater`, `isInLava`, `isClimbing`, `isGliding`, `isRiptiding`, `isSwimming`,
 `isInsideVehicle`, `isInBubbleColumn`; at most 3 `getBlockAt` (feet, below, `y - 0.5`) for ice/slime/honey/
-soul/cobweb/sweet berry/powder snow; NEAR_SOLID = `world.hasCollisionsIn(hitbox.expand(1))`; LOW_CEILING =
+soul/cobweb/sweet berry/powder snow (powder snow only from block types: the 1.21.4 API has no
+`isInPowderSnow`); block collision shapes are block-local, so overlap tests use
+`shape.overlaps(box.clone().shift(-bx, -by, -bz))`; NEAR_SOLID = `world.hasCollisionsIn(hitbox.expand(1))`; LOW_CEILING =
 `hasCollisionsIn` on a 0.6x1.0 box above the head; NEAR_ENTITY = any collidable/pushable entity within 1.5;
 EXTENDED_REACH_ITEM = the main-hand item is a spear or has an `attack_range` data component (reflection;
 false on older APIs). `server_tick_ms` = measured interval between runs / 10. Publishes an `EnvSnapshot`
@@ -238,12 +260,17 @@ false on older APIs). `server_tick_ms` = measured interval between runs / 10. Pu
 ### 4.5 Local checks, stall detector, flags
 
 - Local checks (CHECKS section 1): `timer.balance`, `movement.speed`, `movement.fly`, `movement.step`,
-  `movement.groundspoof`, `protocol.pitch`, `protocol.position`, `protocol.slot`, `protocol.selfhit`,
+  `movement.groundspoof`, `movement.noslow`, `dig.speed`, `protocol.pitch`, `protocol.position`, `protocol.slot`, `protocol.selfhit`,
   `protocol.cursor`, `protocol.flood`, `protocol.abilities`, `inventory.closed`.
 - A confirmed violation increases the check's VL, is logged, alerts (4.9), and is sent as a `LocalFlag`
   with the player's last <= 40 movement packets as context. In live mode with enforcement, a confirmed
   movement violation at or above the check's setback VL (or any, while SETBACK mitigation is active) sets
   the player back to the last legitimate position with `player.teleportAsync`.
+- Tuning data: every local check exposes its test statistic. Per player per check per 5 minutes the plugin
+  aggregates (max statistic, evaluated, candidates, discarded by confirmation, confirmed), writes it to
+  `logs/peaks-YYYY-MM-DD.jsonl` (same bounds as the flag log) and sends a `CheckStats` event. Gate 2
+  (local false positives) is defined in SLO.md: >= 7 days and >= 1000 player-hours with <= 1 confirmed flag
+  per 50 player-hours per check, and no staff-verified legitimate player ever reaching a setback VL.
 - Stall detector (daemon thread, 50 ms period): a stall is in progress when >= 20% of active players (min 3)
   have sent nothing for 400 ms, or the global-region heartbeat (a 1-tick repeating task) is > 400 ms late.
   Stalls are sent as `ServerStall` events and excuse blink and timer bins.
@@ -251,7 +278,9 @@ false on older APIs). `server_tick_ms` = measured interval between runs / 10. Pu
 ### 4.6 Telemetry and transport (`plugin/common`)
 
 - Event selection: `MoveSample` for every flying packet while the player is in focus (attacked or was
-  attacked in the last 5 s, took velocity in the last 3 s, a local flag in the last 30 s, a `WatchRequest`
+  attacked in the last 5 s, took velocity or explosion knockback in the last 3 s, placed or dug a block in
+  the last 3 s, clicked in a window or had a container open in the last 3 s, a local flag in the last
+  30 s, a `WatchRequest`
   active (clamped to <= 300 s, <= 20 concurrent), or `telemetry.full`); otherwise at 2 Hz
   (`ticks_since_last` tells the cloud how many ticks were skipped). All other event kinds are always sent.
   A per-player ring of the last 40 movement packets is kept for LocalFlag context.
@@ -261,7 +290,10 @@ false on older APIs). `server_tick_ms` = measured interval between runs / 10. Pu
   only ever called from `PandaEye-Cloud`):
   - every `batch-interval-ms` (default 50) drains events into a `Batch` (<= `max_batch_events` events and
     <= 512 KiB raw), serialises it, compresses it (zstd; DEFLATE if aircompressor fails to initialise or
-    throws, permanently, logged once) and sends. One WebSocket send outstanding at a time.
+    throws, permanently, logged once) and sends. One WebSocket send outstanding at a time. Incoming
+    messages arrive in parts (`onBinary(..., last)`): parts are accumulated up to 1 MiB and
+    `ws.request(1)` is called after each callback. Decompression checks the declared size first
+    (`ZstdDecompressor.getDecompressedSize` must be 0..8 MiB) before allocating.
   - `PendingBuffer` keeps unacked batches, bounded by `max-buffer-mb` (64) and `max-buffer-age-minutes` (10);
     overflow drops the oldest and counts.
   - reconnects with exponential backoff 1 s -> 60 s +-20% jitter (honours `retry_after_ms`); after
@@ -314,8 +346,8 @@ player name cannot be resolved locally, or the circuit breaker is open. Otherwis
 ### 4.9 Alerts and logs (bounded)
 
 - Console: per player per check max 1 line per 5 s (with suppressed counts), globally max 20 lines/s.
-- In game: holders of `pandaeye.alerts` who toggled alerts on (`/pandaeye alerts`); default on in live mode,
-  off in shadow mode. Recipients are kept in a set updated on join/quit/toggle (no per-flag permission scan).
+- In game: holders of `pandaeye.alerts` who toggled alerts on (`/pandaeye alerts`); `alerts.in-game-default:
+  auto` = on in live mode, off in shadow mode. Recipients are kept in a set updated on join/quit/toggle (no per-flag permission scan).
 - Flag log `plugins/PandaEye/logs/flags-YYYY-MM-DD.jsonl`: aggregated per player+check per 5 s (count, max
   severity, first/last info); global cap 50 lines/s then one summary line; bounded writer queue (10k);
   daily size cap 256 MiB; writing stops while free disk < 1 GiB; files kept 14 days. Drops are shown in
@@ -354,6 +386,8 @@ checks:                    # enabled + thresholds from CHECKS.md, per check id
   movement.fly: { enabled: true }
   movement.step: { enabled: true }
   movement.groundspoof: { enabled: true }
+  movement.noslow: { enabled: true }
+  dig.speed: { enabled: true }
   protocol.pitch: { enabled: true }
   protocol.position: { enabled: true }
   protocol.slot: { enabled: true }
@@ -364,7 +398,7 @@ checks:                    # enabled + thresholds from CHECKS.md, per check id
   inventory.closed: { enabled: true }
 alerts:
   console: true
-  in-game-default: false
+  in-game-default: auto        # auto | on | off
   log-file: true
 exempt:
   bedrock: true
@@ -464,7 +498,10 @@ internal/testkit           fake plugin client, event builders, helpers
   counts top-level `events` and rejects more than `max_batch_events` or any event > 64 KiB. After decoding,
   field limits: strings <= 256 B (info <= 512), target_history <= 64, data map <= 32, effects <= 32,
   capabilities <= 32, context <= 40; invalid UTF-8 is replaced.
-- Hello: validate fields -> license (5.9; failures limited per IPv4 /32 and IPv6 /64: 5 per 10 min, then
+- Hello: validate fields -> license (5.9; the last successful verification is persisted on the tenant row
+  (`license_verified_at`, `license_valid_until` = +24 h, `max_servers`) and used when the verifier is
+  unreachable; verifier unavailability is `Error{CODE_INTERNAL, retry_after_ms=30000}`, never
+  UNAUTHENTICATED; failures limited per IPv4 /32 and IPv6 /64: 5 per 10 min, then
   1 h block) -> tenant from cache (refreshed from DB, stale-OK on DB errors) -> server identity (3) ->
   register the connection in KV `PE_CONNECTIONS` (`<tenant>.<server>` = {connection_id, gateway_id,
   instance_id, online_players}, TTL 30 s, renewed every 10 s with revision checks; a revision mismatch
@@ -485,7 +522,14 @@ internal/testkit           fake plugin client, event builders, helpers
   `PE_TENANTS`), delivered verdicts are forced to `shadow = true`. `close_connection_id` closes that
   connection.
 - Verdict delivery sweep every 10 s per connection: re-send verdicts with status `open`, not acked,
-  `delivered_at` older than 15 s, created < 24 h ago (KICK < 5 min), ordered by created_at.
+  `delivered_at` older than 15 s, created < 24 h ago (KICK < 5 min; UNBAN/UNMITIGATE never expire),
+  ordered by created_at. At delivery every pending verdict is re-validated against the tenant's current
+  flags (autoban/autokick/mitigations/enforcement): a verdict no longer allowed is delivered with
+  `shadow = true` (KICK/BAN) or marked `expired`. Per connection the gateway also drops a verdict_id it
+  already delivered in the last 15 s.
+- PlayerRisk: after a PlayerJoin (not update) for a tenant with `reputation_opt_in`, the gateway looks up
+  the player's reputation (5.11) and sends `PlayerRisk` when risk > 0 (lookup budget applies). The plugin
+  only shows it to staff.
   `VerdictAck` -> publish `AckRecord` to `pe.acks.<tenant>`.
 - Clock offset estimate per connection (3) goes into Origin.
 - `/status` (public JSON): region, version, uptime, connected servers (count), probe RTT p50/p95/p99 over the
@@ -521,7 +565,10 @@ internal/testkit           fake plugin client, event builders, helpers
   DeliverAll). Graceful shutdown deletes its own leases (revision-checked). In `all` mode a restarted
   process adopts leases whose value has its stable owner id.
 - **Consumption.** `Consume()` streaming (no fetch waits), `PullMaxMessages` 100, `AckPolicy=All`,
-  `AckWait=30s`, `MaxAckPending=10000`. Each consumer skips messages whose stream sequence is <= the last
+  `AckWait=30s`, `MaxAckPending=10000`, and `PriorityPolicy=Pinned` with one priority group and
+  `PinnedTTL=15s`, so the server itself allows only one active puller per partition in addition to the
+  lease. Publishing waits on each `PubAckFuture` of the batch (never `PublishAsyncComplete`), with
+  `WithPublishAsyncTimeout(5s)` and a max-pending sized for 16 partitions x 20 batches/s per server. Each consumer skips messages whose stream sequence is <= the last
   applied one. A worker acks position N only after the PubAcks of every signal derived from messages <= N
   have returned; it never blocks the loop on the DB (slow work calls `msg.InProgress()`).
 - Retention/erasure: JetStream expiry (24 h events, 7 d signals, 30 d verdict records) is the maximum
@@ -537,6 +584,12 @@ internal/testkit           fake plugin client, event builders, helpers
   events are buffered for at most 5 s (bounded) and otherwise dropped — checks never run without session
   info, and never for bedrock/exempt sessions.
 - Dedup: last stream sequence per consumer + last batch seq per (tenant, server, partition).
+- Warm start: on lease acquisition the worker first replays the last 60 s of `pe.events.<NN>` before its
+  start sequence with an ordered ephemeral consumer in "warm" mode (state only, no signals), so windows and
+  sessions are not empty after a handover.
+- Per-tenant check configuration (`tenant_checks`: enabled, threshold overrides) is read from KV
+  `PE_TENANTS` and applied by the worker and the verdict service (disabled checks emit nothing; local
+  checks are configured in the plugin's config.yml).
 - For each event: update derived state (moves, rotations, ticks, env flags, game mode, attributes, combat
   timestamps, latency, stalls), then call the checks registered for that event kind
   (`ctx.Emit(check, points, confidence, info, data)`). Signals go to `pe.signals.<NN>` with msg id
@@ -562,6 +615,14 @@ internal/testkit           fake plugin client, event builders, helpers
   confidence `C = 1 - prod_c (1 - conf_c)` over checks with `acc_c >= 1`.
 - Thresholds (base, leniency 3): ALERT 15, MITIGATE 30, KICK 70, BAN 120; leniency multipliers L1 0.6,
   L2 0.8, L3 1.0, L4 1.3, L5 1.7; default leniency 4.
+- Rebuild: on lease acquisition the verdict service replays the last 2 h of `pe.signals.<NN>` with an
+  ordered ephemeral consumer in "rebuild" mode (scores and sessions only, no actions), derives "actions
+  taken this session" from stored verdicts by session_id, then switches to its durable consumer.
+- The full ladder is always evaluated. When a tenant flag forbids an action (autoban/autokick/mitigations
+  off), the verdict is still produced and stored with `shadow = true` ("would have banned"), never
+  delivered as enforceable, so the shadow rollout measures what auto-actions would do.
+- WatchRequest: when S >= ALERT/2 for an online session, publish `WatchRequest{60 s}` (max once per
+  2 min per player); the API offers `POST /api/v1/players/{uuid}/watch`.
 - Action policy (once per session except ALERT; `session_id` keyed):
   - ALERT when S crosses ALERT, then each time S grows 50%, max 1/min.
   - MITIGATE when S >= MITIGATE, tenant `mitigations`, session open. Mitigations by dominant category:
@@ -586,11 +647,14 @@ internal/testkit           fake plugin client, event builders, helpers
   `shadow_mode`. Routing: KICK/MITIGATE/ALERT to the open session's server; BAN to the open session's
   server, else any connected server of the same network_id, else the server of the newest signal
   (pending until it reconnects).
-- Store writer (one leased instance, `writer` lease): consumes `PE_VERDICTS`, upserts verdicts by id,
-  applies AckRecords (`acked_at`, `executed`, `note`), creates `bans` rows on executed BAN acks, updates
-  `reputation_contrib` (5.11).
-- Probe signals: publish `Outbound{probe_result}` immediately (they pass through the same consumer queue as
-  real signals, so the probe measures the real verdict path).
+- Store writer (one leased instance, `writer` lease): consumes `PE_VERDICTS`, upserts verdicts by id
+  (including the serialized Verdict in `verdicts.payload` for redelivery), applies AckRecords (`acked_at`,
+  `executed`, `note`), creates `bans` rows only on executed (ack executed=true) non-shadow BANs, records
+  the executing server (`bans.server_id`), updates `reputation_contrib` (5.11).
+- Probe signals: written like a verdict (a `probe_stats` minute-bucket update through the store writer
+  path) and answered with `Outbound{probe_result}`; they pass through the same consumer queue as real
+  signals, so the probe measures the real verdict path. The gateway assigns probes to partitions
+  round-robin (`probe_id % PE_PARTITIONS`) so every partition owner is measured.
 - Discord: tenant webhook (validated 5.12) gets an embed for verdicts >= `discord_min_action` (default
   MITIGATE): player, server, action, score, confidence, top 5 checks, evidence link; no IPs;
   `allowed_mentions: {parse: []}`; markdown escaped; max 10 posts/min per tenant; 429-aware; failures logged
@@ -606,12 +670,13 @@ it. Tables:
 |---|---|
 | `schema_migrations` | version pk, applied_at |
 | `meta` | key pk, value (license pepper in `all` mode) |
-| `tenants` | id pk (random `t_` + 20 base32 chars), name, slug unique, leniency 4, autoban false, autokick false, mitigations true, enforcement false, reputation_opt_in false, discord_webhook_enc, discord_min_action 2, plan 'free', created_at, updated_at |
+| `tenants` | id pk (random `t_` + 20 base32 chars), name, slug unique, leniency 4, autoban false, autokick false, mitigations true, enforcement false, reputation_opt_in false, discord_webhook_enc, discord_min_action 2, plan 'free', max_servers, license_verified_at, license_valid_until, over_limit_since, created_at, updated_at |
+| `tenant_checks` | (tenant_id, check_id) pk, enabled, overrides (json) |
 | `licenses` | key_hmac pk, tenant_id, created_at, revoked_at |
 | `servers` | (tenant_id, id) pk, name, network_id, platform, platform_version, plugin_version, minecraft_version, secret_hash, instance_id, last_seen_at, last_batch_seq, created_at |
 | `players` | (tenant_id, uuid) pk, last_name, first_seen_at, last_seen_at, last_server_id |
 | `player_names` | (tenant_id, uuid, name) pk, seen_at |
-| `verdicts` | id pk, tenant_id, server_id, network_id, player_uuid, player_name, session_id, action, category, score, confidence, reason, checks (json), evidence (json), clip_ids (json), shadow, status ('open','confirmed','overturned','expired','superseded'), supersedes, appeal_code, created_at, delivered_at, acked_at, executed, ack_note |
+| `verdicts` | id pk, tenant_id, server_id, network_id, player_uuid, player_name, session_id, action, category, score, confidence, reason, checks (json), evidence (json), clip_ids (json), shadow, status ('open','confirmed','overturned','expired','superseded'), supersedes, appeal_code, mitigations (json), strength, ban_duration_s, payload (serialized Verdict), created_at, delivered_at, acked_at, executed, ack_note |
 | `bans` | verdict_id pk, tenant_id, server_id, player_uuid, active, reason, created_at, overturned_at, overturned_by, overturn_note, unban_verdict_id, unban_state ('none','pending','done') |
 | `appeals` | id pk, tenant_id, verdict_id, player_uuid, message (<= 2000), contact (<= 200), status, created_at, decided_at, decided_by, decision_note |
 | `labels` | id pk, tenant_id, player_uuid, verdict_id, label ('cheat','legit'), source ('confirmed','overturned','manual'), window_start, window_end, created_at |
@@ -667,7 +732,12 @@ Authentication:
 | `POST/GET/DELETE /api/v1/apikeys` (owner) | plaintext returned once |
 | `GET /api/v1/export/labels?since=` (read) | NDJSON of labels + evidence for ML, erased subjects excluded |
 | `GET /api/v1/audit` (admin) | audit log |
+| `GET/PUT /api/v1/checks` (admin / settings:write) | per-tenant cloud check configuration (`tenant_checks`), written to KV |
+| `POST /api/v1/players/{uuid}/watch` (staff) | full-rate telemetry for 60-300 s |
 | `GET /status` (no auth) | public status document (5.3) |
+
+Free tier: 30 peak players. Over the limit for 3 days, the tenant's verdicts are capped at ALERT and the
+dashboard shows a banner; players are never affected by billing state.
 
 Metering loop (one leased `api` instance, every minute): sums `online_players` from live `PE_CONNECTIONS`
 values per tenant (per network_id: the proxy's count when a proxy is connected, else the sum of backends) and
@@ -781,6 +851,14 @@ until unbanned (documented in PRIVACY.md). JetStream expiry bounds residual data
 - Java: JUnit 5 for every local check (legit and cheat sequences, including the cases above that apply
   locally), wrapper hygiene (lastUsedWrapper and reader index unchanged), codec fixtures shared with Go
   (`test/fixtures/`), pending buffer, seq blocks, spool, circuit breaker, placeholder sanitising.
+- Shadow invariant: the ArchUnit Enforcer test; in e2e a probe plugin with a raw netty outbound counter and
+  LOWEST/MONITOR listeners runs identical bot scripts with and without PandaEye; per-type outbound packet
+  counts must be identical and no event may be cancelled or modified by PandaEye.
+- Load: 200 simulated players at the production event mix across 10 servers against `pandaeye all`:
+  probe RTT p95 < 100 ms and p99 < 250 ms in-region; packet handler < 2% of a core (JMH or load bench).
+- Detection matrix (docs/DETECTION_MATRIX.md): Meteor/Wurst modules and ghost configurations mapped to the
+  checks that cover them (and honestly, the ones not covered in v1: elytra/vehicle physics, criticals
+  beyond packet mode, legit-rotation scaffolds), with cheat-client harness scenarios for the covered ones.
 - E2E (`test/e2e`): cloud `all` + real Folia 1.21.11 and Paper 1.21.11 servers with PacketEvents 2.13.x
   (reEncodeByDefault as shipped), ViaVersion/ViaBackwards and PlugManX; legit bots: no confirmed flags, never
   kicked; wire bytes identical with and without PandaEye for a scripted session; cheat clients detected per

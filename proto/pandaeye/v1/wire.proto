@@ -245,6 +245,7 @@ message Event {
     UseItem use_item = 25;
     ServerSwitch server_switch = 26;  // sent by the proxy plugin only
     ServerStall stall = 27;           // server-level (player empty): the plugin saw a server-side stall
+    CheckStats check_stats = 28;      // per player per local check, every 5 min: test statistics for tuning
   }
 }
 
@@ -304,6 +305,7 @@ message MoveSample {
   uint32 ticks_since_last = 10;       // client ticks since the previous MoveSample that was SENT to the cloud
   bool focus = 11;                    // true = full-rate (every packet sent); false = down-sampled idle sample
   bool horizontal_collision = 12;     // 1.21.2+ clients report it in the movement packet
+  uint32 packets_since_last = 13;     // movement packets since the previous MoveSample that was SENT (all clients)
 }
 
 // The player attacked an entity (INTERACT_ENTITY action ATTACK).
@@ -355,11 +357,16 @@ message BlockDig {
     ACTION_START = 0;
     ACTION_CANCEL = 1;
     ACTION_FINISH = 2;
-    ACTION_OTHER = 3;
+    ACTION_OTHER = 3;                 // e.g. spear STAB, item drop/swap actions are not sent at all
   }
   Action action = 1;
   Vec3i block = 2;
   Face face = 3;
+  Vec3 eye = 4;                       // eye position at the packet
+  float yaw = 5;                      // last rotation received before the packet
+  float pitch = 6;
+  uint32 ticks_since_start = 7;       // FINISH/CANCEL: client ticks since the matching START (0 = unknown)
+  float block_reach = 8;
 }
 
 message InventoryClick {
@@ -380,6 +387,8 @@ message VelocityApplied {
   double vx = 2;                      // blocks per tick
   double vy = 3;
   double vz = 4;
+  bool on_ground_before = 5;          // onGround of the player's last movement packet before the velocity
+  double dy_before = 6;               // dy of that movement packet
 }
 
 message LatencySample {
@@ -402,6 +411,17 @@ message LocalFlag {
   map<string, double> data = 7;
   bool confirmed = 8;                 // the world-state confirmation step ran and agreed
   repeated ContextMove context = 9;   // the player's last <= 40 movement packets before the flag (full rate)
+  string variant = 10;                // check-specific variant (e.g. protocol.slot "range" | "redundant")
+}
+
+message CheckStats {
+  string check_id = 1;
+  double max_stat = 2;                // max of the check's test statistic (e.g. speed excess, fly diff)
+  uint32 evaluated = 3;               // packets/events the check evaluated
+  uint32 candidates = 4;
+  uint32 discarded = 5;               // candidates discarded by the confirmation step
+  uint32 confirmed = 6;
+  uint32 window_s = 7;
 }
 
 message ContextMove {
@@ -477,6 +497,8 @@ message StateChange {
   repeated PotionLevel effects = 12;
   bool in_vehicle = 13;
   int32 held_slot = 14;
+  bool exempt = 15;                   // bypass permission (exemption from detection) currently applies
+  bool bedrock = 16;
 }
 
 // Phase-1 "dummy check": the plugin sends a probe, the whole pipeline (gateway -> stream -> worker ->
@@ -510,6 +532,8 @@ message ServerSwitch {
 // Cloud -> plugin
 // ---------------------------------------------------------------------------------------------
 
+// Severity order for ">=" comparisons is ALERT < MITIGATE < KICK < BAN; UNMITIGATE and UNBAN are
+// corrective actions outside that order.
 enum Action {
   ACTION_UNSPECIFIED = 0;
   ACTION_ALERT = 1;                   // tell staff, change nothing

@@ -167,6 +167,26 @@ Consecutive packets n-1 and n both claim `onGround = true` while `dy[n-1] < -0.1
 Confirmation: no supporting block or entity. Severity `min(1, |dy[n]|)`. VL +1, decay 1 per 60 s.
 Points `3 + 3*severity`, confidence 0.8.
 
+### 1.6b movement.noslow - MOVEMENT
+
+Same machinery and preconditions as movement.speed, evaluated while the player is using an item: own
+entity metadata says "hand active" (applied by the client), no C `PLAYER_DIGGING RELEASE_USE_ITEM` since,
+and at least 3 ticks since the use started. Vanilla scales movement input by 0.2 while using an item, so
+`a` is multiplied by 0.2 (`a = sprint * 0.21600002 / bf^3 * 0.2` on the ground, `0.026 * 0.2` in the air;
+the 0.2 sprint-jump term stays). Candidate when `excess > 0.03` on 5 consecutive packets; confirmation as
+movement.speed. Severity `min(1, excess / 0.15)`. VL +1, decay 1 per 30 s. Points `3 + 3*severity`,
+confidence 0.75.
+
+### 1.6c dig.speed - WORLD_INTERACTION
+
+Tick clients only, survival/adventure. On C `PLAYER_DIGGING FINISH` for the block of the last START:
+`ticks` = client ticks between START and FINISH. On the player's region thread compute
+`perTick = block.getBreakSpeed(player)` (Paper: tool, enchantments, haste/mining fatigue, water, on-ground
+and attributes) and `expected = ceil(1 / perTick)` (blocks with `perTick >= 1` break instantly and are
+skipped). Candidate when `ticks < expected * 0.7 - 1` (the player state used is the current one, so effects
+that changed during the dig and attribute changes pending at the client make the check skip). Severity
+`min(1, 1 - ticks/expected)`. VL +1, decay 1 per 60 s. Points `3 + 4*severity`, confidence 0.8.
+
 ### 1.7 protocol.pitch - INVALID_PROTOCOL (certain)
 
 A rotation-bearing packet with `|pitch| > 90.001`, not marked SERVER_ROTATION, and not after a server
@@ -290,7 +310,8 @@ deviation < 0.6 -> violation, at most once per 60 s. Points 4, confidence 0.7, c
 ### 2.9 velocity.vertical - HEURISTICS
 
 Only `VelocityApplied` with source VELOCITY_PACKET (explosions add to motion and are excluded from both
-velocity checks in v1) and `vy > 0.15`. The first consecutive move (`ticks_since_last == 1`) within
+velocity checks in v1; no velocity is judged while an explosion arrived within `rttHigh + 400 ms`) and
+`vy > 0.15`. `on_ground_before` in the event is the onGround state of the move before the velocity. The first consecutive move (`ticks_since_last == 1`) within
 `[T, T + rttHigh + 400 ms]` must satisfy one of: `|dy - vy| < 0.012`; a jump reset
 `|dy - max(vy, jumpPower)| < 0.012` when onGround on the previous move (`jumpPower` = jump_strength +
 jump boost); or `dy <= vy + 0.012` with LOW_CEILING. `|vy| < 0.003` counts as 0. A newer velocity in the
@@ -339,11 +360,21 @@ Skip placements with `inside_block` set, cursors outside [0, 1] (for scaffold.cu
 - `scaffold.reach`: distance from every eye candidate to the clicked block's cube > `block_reach + 0.6`.
   Points `3 + 5*min(excess, 1)`, confidence 0.8.
 
+### 2.12b dig.ray - WORLD_INTERACTION
+
+For BlockDig START and FINISH events (survival/adventure, not in a vehicle): miss = no (eye, rotation)
+candidate ray intersects the unit cube of the block (expanded by 0.05) within `block_reach + 1.5`, using
+the event's eye and rotation as R0 and the next move as R1. Violation when >= 4 of the last 10 digs missed
+(Nuker / break-through-walls patterns). Points 5, confidence 0.85.
+
 ### 2.13 inventory.move / inventory.rotate - INVENTORY
 
 Tick clients only. A tick counts as "screen open" only if it has a window click (window 0 or the open
 container), the previous tick also had one, and neither that tick nor the previous one has a C/S
 CLOSE_WINDOW or S OPEN_WINDOW.
+
+Focus (full-rate telemetry) starts with the first window click, so the first click tick of a burst is
+never judged.
 
 - `inventory.move`: in a screen-open tick, a consecutive position move with `h > 0.1` and
   `h > h_prev * 0.91 + 0.02` (still accelerating = movement input), no pending velocity, and no
@@ -385,6 +416,8 @@ from this document (severity-scaled where the formula says so), and the flag's c
 | movement.fly | local | MOVEMENT | 4..10 | 0.8 | 120 | 60 | |
 | movement.step | local | MOVEMENT | 4..8 | 0.8 | 120 | 50 | |
 | movement.groundspoof | local | MOVEMENT | 3..6 | 0.8 | 300 | 40 | |
+| movement.noslow | local | MOVEMENT | 3..6 | 0.75 | 120 | 40 | |
+| dig.speed | local | WORLD_INTERACTION | 3..7 | 0.8 | 300 | 50 | |
 | protocol.pitch | local | INVALID_PROTOCOL | 25 | 1.0 | 3600 | 200 | yes |
 | protocol.position | local | INVALID_PROTOCOL | 25 | 1.0 | 3600 | 200 | yes |
 | protocol.slot | local | INVALID_PROTOCOL | 10 (0 redundant) | 0.95 | 600 | 20 | |
@@ -409,13 +442,17 @@ from this document (severity-scaled where the formula says so), and the flag's c
 | scaffold.ray | cloud | WORLD_INTERACTION | 6 | 0.85 | 300 | 80 | |
 | scaffold.cursor | cloud | WORLD_INTERACTION | 5 | 0.8 | 300 | 60 | |
 | scaffold.reach | cloud | WORLD_INTERACTION | 3..8 | 0.8 | 300 | 50 | |
+| dig.ray | cloud | WORLD_INTERACTION | 5 | 0.85 | 300 | 60 | |
 | inventory.move | cloud | INVENTORY | 4 | 0.75 | 300 | 30 | |
 | inventory.rotate | cloud | INVENTORY | 3 | 0.7 | 300 | 30 | |
 | latency.pingspoof | cloud | LATENCY_ABUSE | 3 | 0.8 | 600 | 18 | |
 | latency.blink | cloud | LATENCY_ABUSE | 3 | 0.6 | 300 | 18 | |
 
 Family caps (sum of a family's check contributions is capped): timer 60, movement 80, protocol 200,
-inventory 40, reach 80, killaura 120, aim 45, velocity 60, autoclicker 40, scaffold 100, latency 25, ml 50.
+inventory 40, reach 80, killaura 120, aim 45, velocity 60, autoclicker 40, scaffold 100, dig 70, latency 25,
+ml 50. `Signal.points` carries the raw points of this table (severity-scaled where the formula says so);
+confidence is applied separately by the verdict service (ARCHITECTURE 5.6). Variants: `protocol.slot`
+has `range` (10 points) and `redundant` (0 points).
 
 The same table lives in code: `cloud/internal/checks/catalog.go` (authoritative for the cloud, includes
 local checks for scoring) and `plugin/paper/src/main/java/dev/pandascript/pandaeye/paper/check/CheckCatalog.java`

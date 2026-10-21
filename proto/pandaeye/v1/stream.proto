@@ -42,7 +42,7 @@ message Signal {
   string player_name = 3;
   string check_id = 4;                // e.g. "killaura.hitbox"; "probe" for the latency probe (0 points)
   Category category = 5;
-  double points = 6;                  // score contribution before decay (already scaled by confidence)
+  double points = 6;                  // raw points from CHECKS.md (severity-scaled where specified), before decay
   double confidence = 7;              // 0..1
   uint64 event_time_us = 8;           // time of the triggering event (plugin clock)
   uint64 gateway_recv_unix_us = 9;    // when the gateway received the triggering batch (cloud clock)
@@ -132,8 +132,12 @@ message AckRecord {
 }
 
 // Stored replay clip payload (zstd-compressed when persisted).
+// clips.codec 1 = a zstd frame with content size (same rules as wire codec 0x01) of a serialized ClipData.
 message ClipData {
   Origin origin = 1;
   bytes player = 2;
   repeated Event events = 3;          // the player's own events, plus target positions inside Attack events
+  uint64 start_us = 4;
+  uint64 end_us = 5;
+  uint32 format_version = 6;          // 1
 }
