@@ -104,7 +104,7 @@ public final class CloudClient {
     private volatile long tooLargeBatches;
 
     // Cloud-thread state.
-    private HttpClient http;
+    private volatile HttpClient http;
     private ServerIdentity identity;
     private StateStore stateStore;
     private SeqAllocator seqs;
@@ -197,8 +197,10 @@ public final class CloudClient {
 
     /**
      * Bounded shutdown (ARCHITECTURE 4.6): stop the loop, cancel a pending connect, best-effort Goodbye and
-     * close frame (100 ms together), always abort, stop the HttpClient executor; never
-     * {@code HttpClient.close()}. The remaining budget spools unacknowledged batches and undrained events.
+     * close frame (100 ms together), always abort, then {@code HttpClient.shutdownNow()} (non-blocking; its
+     * SelectorManager thread would otherwise outlive the plugin and pin the class loader) and stop the
+     * HttpClient executor; never {@code HttpClient.close()}. The remaining budget spools unacknowledged batches
+     * and undrained events.
      */
     public void stop(Duration budget) {
         long start = System.nanoTime();
@@ -225,9 +227,18 @@ public final class CloudClient {
             closeGracefully(ws, codec.encodeRaw(GOODBYE), Math.min(start + CLOSE_WAIT_NANOS, networkDeadline));
             ws.abort();
         }
+        HttpClient client = http;
+        if (client != null) {
+            client.shutdownNow();
+        }
         httpRef.shutdownNow();
         boolean loopStopped = awaitQuietly(loopRef, networkDeadline);
+        HttpClient late = http; // created by a connect that was still running on the loop
+        if (late != null && late != client) {
+            late.shutdownNow();
+        }
         awaitQuietly(httpRef, networkDeadline);
+        awaitQuietly(late != null ? late : client, networkDeadline);
         loopStopped &= loopThreads.joinAll(networkDeadline);
         httpThreads.joinAll(networkDeadline);
         state = CloudState.STOPPED;
@@ -745,6 +756,18 @@ public final class CloudClient {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return executor.isTerminated();
+        }
+    }
+
+    /** Waits (bounded) for a shut-down HttpClient's SelectorManager thread to end. */
+    private static void awaitQuietly(HttpClient client, long deadlineNanos) {
+        if (client == null) {
+            return;
+        }
+        try {
+            client.awaitTermination(Duration.ofNanos(Math.max(0, deadlineNanos - System.nanoTime())));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

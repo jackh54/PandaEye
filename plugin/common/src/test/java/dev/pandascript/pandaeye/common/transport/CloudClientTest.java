@@ -90,9 +90,11 @@ class CloudClientTest {
     @Test
     void stopIsBoundedWhenTheCloudNeverAnswersTheCloseFrame() throws Exception {
         gateway.answerClose = false;
+        List<String> httpBefore = httpClientThreads();
         CloudClient client = start();
         awaitState(client, CloudState.READY);
         clients.remove(client);
+        assertTrue(httpClientThreads().size() > httpBefore.size(), "the client runs a SelectorManager thread");
 
         long started = System.nanoTime();
         client.stop(Duration.ofMillis(280));
@@ -100,6 +102,9 @@ class CloudClientTest {
 
         assertTrue(elapsedMillis < 300, "stop took " + elapsedMillis + " ms");
         assertEquals(List.of(), pandaEyeThreads());
+        List<String> httpAfter = new java.util.ArrayList<>(httpClientThreads());
+        httpAfter.removeAll(httpBefore);
+        assertEquals(List.of(), httpAfter, "no HttpClient thread survives stop (it would pin the class loader)");
         waitUntil(() -> gateway.connection(0).closeReceived, "close frame sent");
         assertEquals("plugin stopping", gateway.await(ClientFrame::hasGoodbye, WAIT).frame().getGoodbye().getReason());
     }
@@ -415,6 +420,14 @@ class CloudClientTest {
                 .filter(Thread::isAlive)
                 .map(Thread::getName)
                 .filter(name -> name.startsWith("PandaEye-"))
+                .toList();
+    }
+
+    private static List<String> httpClientThreads() {
+        return Thread.getAllStackTraces().keySet().stream()
+                .filter(Thread::isAlive)
+                .map(Thread::getName)
+                .filter(name -> name.startsWith("HttpClient-"))
                 .toList();
     }
 

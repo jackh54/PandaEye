@@ -39,7 +39,7 @@ class StallDetectorTest {
     }
 
     private static void packets(List<Session> group, long nanos) {
-        group.forEach(session -> session.beforePacket(nanos));
+        group.forEach(session -> session.beforePacket(nanos, true));
     }
 
     @Test
