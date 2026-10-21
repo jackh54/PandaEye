@@ -15,6 +15,8 @@ from .conftest import FAST, SMALL_SYNTH
 TRAIN_FLAGS = [
     "--max-iter", str(FAST["max_iter"]),
     "--min-samples-leaf", str(FAST["min_samples_leaf"]),
+    "--learning-rate", str(FAST["learning_rate"]),
+    "--class-weight", "none",
     "--calibration-folds", str(FAST["calibration_folds"]),
     "--threshold-folds", str(FAST["threshold_folds"]),
 ]

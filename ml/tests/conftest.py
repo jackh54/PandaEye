@@ -17,9 +17,12 @@ from pandaeye_ml.train import TrainConfig  # noqa: E402
 ML_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = ML_DIR.parent
 
-# Small, fast settings for tests (the defaults are sized for real data).
-FAST = dict(max_iter=40, min_samples_leaf=20, calibration_folds=2, threshold_folds=2)
-SMALL_SYNTH = dict(players=420, windows_per_session=(4, 10), seed=3)
+# Small, fast settings for tests (the defaults are sized for real data). The end-to-end run trains
+# without class weights: scikit-learn's weighted bin quantiles make weighted fits ~4x slower; the class
+# weighted path is exercised by the ONNX tests (WEIGHTED).
+FAST = dict(max_iter=150, min_samples_leaf=10, learning_rate=0.1, calibration_folds=2, threshold_folds=2, class_weight=None)
+WEIGHTED = dict(FAST, max_iter=40, class_weight="balanced")
+SMALL_SYNTH = dict(players=700, windows_per_session=(4, 10), seed=3)
 
 
 @pytest.fixture(scope="session")
@@ -39,7 +42,7 @@ def synth_dataset(synth_dir) -> D.Dataset:
 
 @pytest.fixture(scope="session")
 def fast_config() -> TrainConfig:
-    return TrainConfig(**FAST)
+    return TrainConfig(**WEIGHTED)
 
 
 @pytest.fixture(scope="session")

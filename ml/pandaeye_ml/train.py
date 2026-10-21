@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,9 +88,9 @@ def monotonic_constraints() -> list[int]:
 @dataclass
 class TrainConfig:
     max_iter: int = 300
-    learning_rate: float = 0.06
+    learning_rate: float = 0.08
     max_leaf_nodes: int = 15
-    min_samples_leaf: int = 40
+    min_samples_leaf: int = 20
     l2_regularization: float = 1.0
     # 63 bins: scikit-learn computes weighted bin quantiles one percentile at a time when sample weights
     # (class weights) are present, which costs ~4x more at the default 255 bins.
@@ -227,7 +226,6 @@ def train(dataset: Dataset, cfg: TrainConfig, out_dir: str | Path) -> dict[str, 
 
     log.info("fitting final model on %d windows / %d players", len(train_ds), len(np.unique(g_tr)))
     model = fit_calibrated(X_tr, y_tr, g_tr, cfg)
-    fit_ds = train_ds
 
     created_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     metadata = build_metadata(
@@ -237,8 +235,8 @@ def train(dataset: Dataset, cfg: TrainConfig, out_dir: str | Path) -> dict[str, 
         created_at=created_at,
         extra={
             "pipeline_version": __version__,
-            "training_windows": str(len(fit_ds)),
-            "training_players": str(len(np.unique(fit_ds.groups))),
+            "training_windows": str(len(train_ds)),
+            "training_players": str(len(np.unique(g_tr))),
             "baseline_threshold": repr(float(cfg.baseline_threshold)),
         },
     )
@@ -280,10 +278,6 @@ def train(dataset: Dataset, cfg: TrainConfig, out_dir: str | Path) -> dict[str, 
         "created_at": created_at,
     }
     (out / REPORT_FILE).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    try:
-        os.chmod(out / HELDOUT_FILE, 0o600)
-    except OSError:  # pragma: no cover
-        pass
     return report
 
 
