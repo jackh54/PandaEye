@@ -12,7 +12,7 @@ for (const ph of ['shadow', 'hotload']) {
       const ra2 = (f.a2 || []).find((x) => x.scenario === ra.scenario)
       const rb = (f.b || []).find((x) => x.scenario === ra.scenario)
       if (!ra.dump || !rb?.dump) continue
-      const c = compare(ra.dump, rb.dump, ra2?.dump ? noise(ra.dump, ra2.dump) : {})
+      const c = compare(ra.dump, rb.dump, ra2?.dump ? noise(ra.dump, ra2.dump) : {}, { deterministic: ra.engine === 'raw', chaotic: ra.scenario === 'legit/mf-pvp' || !!ra.chaotic })
       const ok = c.ok && !rb.serverKicks.length && !(rb.confirmedFlags || []).length
       if (!ok) bad++
       console.log(`${ph} ${fl} ${ra.scenario.padEnd(24)} ${ok ? 'identical within noise' : 'FAIL ' + JSON.stringify(c.violations.slice(0, 4))}`)

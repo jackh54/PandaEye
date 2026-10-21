@@ -118,6 +118,9 @@ func (c *consumeLoop) run(ctx context.Context, h Handler) (ConsumeResult, error)
 		}
 	},
 		jetstream.PullMaxMessagesWithBytesLimit(PullBatch, PullMaxBytes),
+		// A pull request must be renewed within PinnedTTL, or an idle partition loses its pin and the
+		// next pull fails with ErrPinIDMismatch (the default 30 s expiry outlives the 15 s pin).
+		jetstream.PullExpiry(PinnedTTL/3),
 		jetstream.PullPriorityGroup(PriorityGroup),
 		jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
 			select {
@@ -156,7 +159,11 @@ func (c *consumeLoop) run(ctx context.Context, h Handler) (ConsumeResult, error)
 			case errors.Is(err, jetstream.ErrConsumerDeleted), errors.Is(err, jetstream.ErrConsumerNotFound):
 				return c.res, ErrConsumerGone
 			case errors.Is(err, jetstream.ErrPinIDMismatch):
-				return c.res, err
+				// Only this lease holder pulls from this epoch's durable consumer, so a mismatch means
+				// the pin expired, not that another owner took over (leases fence that). nats.go
+				// clears the pin and pulls again; a skipped delivery would stop us (ErrDeliveryGap).
+				c.b.log.Debug("consume: pin reset", "consumer", c.e.Name)
+				continue
 			}
 			c.b.log.Debug("consume", "consumer", c.e.Name, "err", err)
 		case m := <-msgs:

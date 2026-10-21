@@ -3,6 +3,8 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,5 +90,40 @@ func TestResetConsumerKeepsFloorWhenCreateFails(t *testing.T) {
 	}
 	if _, err := st.Consumer(ctxT(t, 5*time.Second), spec.Name+"-e1"); !errors.Is(err, jetstream.ErrConsumerNotFound) {
 		t.Fatalf("old epoch not deleted after a successful reset: %v", err)
+	}
+}
+
+// An idle partition keeps its pin: pull requests are renewed within PinnedTTL. In production a message
+// arriving on an idle partition after PinnedTTL (while the previous 30 s pull was still open) failed
+// the loop with ErrPinIDMismatch.
+func TestIdleConsumerKeepsItsPin(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits past PinnedTTL")
+	}
+	srv := startServer(t)
+	b := openBus(t, testConfig(srv.ClientURL(), "owner-a"))
+	lease := acquire(t, b, PartitionLeaseKey(GroupSignals, 0))
+	defer lease.Release(context.Background())
+	e, err := b.ResetConsumer(ctxT(t, 5*time.Second), PartitionConsumer(GroupSignals, 0), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for i, at := range []time.Duration{PinnedTTL + 5*time.Second, 2*PinnedTTL + 10*time.Second} {
+			time.Sleep(at - time.Duration(i)*(PinnedTTL+5*time.Second))
+			if _, err := b.PublishAll(context.Background(), []Message{{Subject: SignalsSubject(0), Data: []byte("x"), MsgID: fmt.Sprintf("pin:%d", i)}}); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	var handled atomic.Int32
+	ctx, stop := context.WithTimeout(context.Background(), 2*PinnedTTL+15*time.Second)
+	defer stop()
+	_, err = b.Consume(ctx, e, lease, func(_ context.Context, _ *Msg, done func(error)) { handled.Add(1); done(nil) }, ConsumeOptions{})
+	if err != nil {
+		t.Fatalf("idle consume stopped: %v", err)
+	}
+	if handled.Load() != 2 {
+		t.Fatalf("handled %d messages, want 2", handled.Load())
 	}
 }

@@ -150,7 +150,7 @@ async function runSuite (server, scenarios, { tag, trace = false, onEach } = {})
     let d = null
     try { d = readJsonLenient(path.join(server.dir, 'probe', dumpName + '.json')) } catch (e) { r.error = (r.error || '') + ' dump: ' + e.message }
     const rec = {
-      scenario: m.name, kind: m.kind, engine: m.engine, checks: m.checks || [], players: r.players, suspects: r.suspects,
+      scenario: m.name, kind: m.kind, engine: m.engine, chaotic: !!m.chaotic, checks: m.checks || [], players: r.players, suspects: r.suspects,
       ok: r.ok, error: r.error, verify: r.verify, kicked: r.kicked, expectedKick: r.expectedKick,
       serverKicks: kicksOf(d, r.players), startMs: r.startMs, endMs: r.endMs, notes: r.notes, facts: r.facts,
       errors: consoleErrors(server, from), dump: slim(d)
@@ -290,7 +290,7 @@ async function phaseShadow (hot = false) {
         const rb = (f.b || []).find((x) => x.scenario === ra.scenario)
         if (!ra.dump || !rb || !rb.dump) continue
         const nz = ra2 && ra2.dump ? noise(ra.dump, ra2.dump) : {}
-        const c = compare(ra.dump, rb.dump, nz)
+        const c = compare(ra.dump, rb.dump, nz, { deterministic: ra.engine === 'raw', chaotic: !!ra.chaotic })
         c.kicks = rb.serverKicks
         c.confirmedFlags = (rb.confirmedFlags || []).map((x) => x.check)
         c.ok = c.ok && rb.serverKicks.length === 0 && c.confirmedFlags.length === 0

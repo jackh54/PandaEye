@@ -133,6 +133,7 @@ module.exports = [
     kind: 'legit',
     engine: 'mineflayer',
     players: ['lg_mfpvpa', 'lg_mfpvpb'],
+    chaotic: true, // hit/knockback counts depend on timing: only anomaly counters, strict injection types and kicks are compared
     description: 'two bots fight: sprint hits, knockback taken normally, 8-12 CPS jittered clicks, smoothed noisy aim, strafing',
     async run (ctx) {
       const c = ctx.fx.combat.center

@@ -17,6 +17,13 @@ const STRICT_OUT = new Set([
   'play:HELD_ITEM_CHANGE', 'play:CHANGE_GAME_STATE', 'play:PLAYER_ABILITIES', 'play:BLOCK_CHANGE'
 ])
 const PERIODIC = new Set(['play:PING', 'play:KEEP_ALIVE']) // timing-dependent: +-1 per scenario is timing
+// Strict types whose count also follows the bot's behaviour (setbacks, knockback taken, inventory, blocks): strict
+// only in deterministic scenarios (vanilla-mover, engine 'raw'); mineflayer scenarios are chaotic for these
+// (e.g. mf-pvp ENTITY_VELOCITY 65 vs 87 with a well-behaved plugin). Injection-only types stay strict everywhere.
+const BEHAVIOUR = new Set([
+  'play:PLAYER_POSITION_AND_LOOK', 'play:PLAYER_ROTATION', 'play:FACE_PLAYER', 'play:ENTITY_VELOCITY', 'play:SET_SLOT',
+  'play:CLOSE_WINDOW', 'play:HELD_ITEM_CHANGE', 'play:CHANGE_GAME_STATE', 'play:PLAYER_ABILITIES', 'play:BLOCK_CHANGE'
+])
 
 // Groups compared and how
 const COUNT_GROUPS = ['wire.out', 'wire.in']
@@ -29,8 +36,12 @@ const ANOMALY_GROUPS = [
   'pe.in.will_reencode', 'pe.in.reencode_flag_changed', 'pe.in.buffer_index_changed', 'pe.in.buffer_bytes_changed'
 ]
 
-function tolerance (group, type, a, noise) {
-  if (group === 'wire.out' && STRICT_OUT.has(type)) return PERIODIC.has(type) ? Math.max(1, noise) : noise
+function isStrict (group, type, deterministic) {
+  return group === 'wire.out' && STRICT_OUT.has(type) && (deterministic || !BEHAVIOUR.has(type))
+}
+
+function tolerance (group, type, a, noise, deterministic = true) {
+  if (isStrict(group, type, deterministic)) return PERIODIC.has(type) ? Math.max(1, noise) : noise
   if (ANOMALY_GROUPS.includes(group)) return Math.max(noise, 0)
   // ordinary traffic (chunks, entity movement, waypoints, sounds ...): driven by bot physics and timing; one A/A
   // sample underestimates it (mineflayer PvP: WAYPOINT 350 vs 296 with A/A noise 24), so 3x noise or 20 %.
@@ -57,7 +68,7 @@ function noise (a, a2) {
  * Compare a run B against baseline A with a noise table. Returns { ok, violations[], deltas{} }.
  * wire.in is reported but not asserted (inbound traffic comes from the same scripts; it is a sanity check).
  */
-function compare (a, b, noiseTable = {}) {
+function compare (a, b, noiseTable = {}, { deterministic = true, chaotic = false } = {}) {
   const violations = []
   const deltas = {}
   for (const group of [...COUNT_GROUPS, ...ANOMALY_GROUPS]) {
@@ -66,12 +77,13 @@ function compare (a, b, noiseTable = {}) {
       const va = ga[t] || 0; const vb = gb[t] || 0
       if (va === vb) continue
       const nz = (noiseTable[group] && noiseTable[group][t]) || 0
-      const tol = tolerance(group, t, va, nz)
+      const tol = tolerance(group, t, va, nz, deterministic)
       const d = vb - va
       ;(deltas[group] = deltas[group] || {})[t] = { a: va, b: vb, d, tol, noise: nz }
       const isAnomaly = ANOMALY_GROUPS.includes(group)
-      const strict = group === 'wire.out' && STRICT_OUT.has(t)
-      const bad = group === 'wire.in' ? false : (isAnomaly || strict) ? d > tol : Math.abs(d) > tol
+      const strict = isStrict(group, t, deterministic)
+      // chaotic scenarios (two mineflayer bots fighting): ordinary counts are reported, not asserted
+      const bad = group === 'wire.in' ? false : (isAnomaly || strict) ? d > tol : (!chaotic && Math.abs(d) > tol)
       if (bad) violations.push({ group, type: t, a: va, b: vb, d, tol, noise: nz })
     }
   }

@@ -372,7 +372,9 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
                     Plugin pl = Bukkit.getPluginManager().getPlugin(a[1]);
                     if (pl != null && pl.isEnabled()) {
                         ClassLoader cl = pl.getClass().getClassLoader();
-                        watched.add(new Watched(pl.getName(), System.currentTimeMillis(), new WeakReference<>(cl), String.valueOf(cl)));
+                        boolean known;
+                        synchronized (watched) { known = watched.stream().anyMatch(w -> w.loader().get() == cl); }
+                        if (!known) watched.add(new Watched(pl.getName(), System.currentTimeMillis(), new WeakReference<>(cl), String.valueOf(cl)));
                     }
                     ok(line);
                 }
