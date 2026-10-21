@@ -196,9 +196,10 @@ Confirm/adjust these in `orchestrator/cloud.js` once `cloud/internal/api` exists
 
 ## Findings
 
-* **PandaEye 0.1.0 (plugin/paper/build/libs/PandaEye-0.1.0.jar, 19:58) does not enable on Paper 1.21.11 / Java 21**:
+* **PandaEye 0.1.0 (builds of 19:58 and 21:58) does not enable on Paper 1.21.11 / Java 21**:
   `IllegalArgumentException: No implementation of the random number generator algorithm "L32X64MixRandom" is
-  available` at `CloudClient.<init>(CloudClient.java:130)`. Cause: module `jdk.random` is defined to the *app*
+  available` at `CloudClient.<init>(CloudClient.java:130)` (`RandomGenerator.of(...)`, and in the 21:58 build
+  `RandomGenerator.getDefault()`, which resolves the same algorithm). Cause: module `jdk.random` is defined to the *app*
   class loader, but paperclip runs the server in a URLClassLoader whose parent is the *platform* loader, so the
   ServiceLoader lookup behind `RandomGenerator.of(...)` never sees it (reproduced with a 20-line plugin; `new
   SplittableRandom()` works). Use `SplittableRandom`/`ThreadLocalRandom`/`Random` instead. After the failed
