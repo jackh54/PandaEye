@@ -684,6 +684,18 @@ dashboard (server online, probe RTT).
    implementation also uses `metering`, `janitor` and `members.*` (lease balancing).
 10. Whether `/pandaeye reload` applies `mode`, `checks.<id>.enabled`, `setbacks.enabled` and
     `mitigations.enabled`; the per-check threshold key names; the JSON schema of the flags and peaks logs.
-11. Whether runtime changes of `enforcement` clear active mitigations and unregister mitigation listeners.
+11. Decided: when `enforcement` turns off at runtime the plugin clears active mitigations and removes the
+    mitigation listeners (8.4).
 12. Multi-region tenancy and how one dashboard serves several regional APIs.
 13. Whether a Velocity proxy connection counts towards `maxServers`.
+14. KnockbackSync shades its own PacketEvents and its decoder runs first: it drops the PONGs answering its
+    own PINGs, so PandaEye (on the PacketEvents plugin) never sees them. Passive acknowledgement then
+    depends on other PING senders; without any, pending values are promoted only at JOIN/RESPAWN, so
+    movement checks stay exempt after a player's first change (fewer detections, never more flags).
+15. `plugman unload` of an instance that was loaded at server start leaves its class loader reachable
+    through `CraftServer`'s help map (the plugin.yml command's help topic) until the next restart, a few MB.
+    Instances loaded with `plugman load` are collected. Registering `/pandaeye` at runtime would avoid it.
+16. Seen in the first live shadow run: `protocol.cursor` was stricter than vanilla (fixed: [-0.5, 1.5]);
+    `dig.speed` flagged one player hundreds of times ("0-1 ticks, expected 3") and needs a look at custom
+    tools/effects before it is trusted; local checks produced about 2,500 dropped confirmations in 25 minutes
+    at 100 players (bounded, but thresholds need tuning).

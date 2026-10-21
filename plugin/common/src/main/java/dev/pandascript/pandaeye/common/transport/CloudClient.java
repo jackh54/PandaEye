@@ -38,6 +38,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntSupplier;
+import java.util.SplittableRandom;
 import java.util.random.RandomGenerator;
 
 /**
@@ -127,7 +128,9 @@ public final class CloudClient {
     private int failuresSinceReady;
 
     public CloudClient(CloudConfig config, CloudListener listener, Log log, EventClock clock, IntSupplier onlinePlayers) {
-        this(config, listener, log, clock, onlinePlayers, Timings.DEFAULT, new FrameCodec(log), RandomGenerator.getDefault());
+        // Not RandomGenerator.getDefault(): it looks its algorithm up in the jdk.random module, which paperclip's
+        // class loader cannot see ("No implementation of ... L32X64MixRandom"). SplittableRandom is in java.base.
+        this(config, listener, log, clock, onlinePlayers, Timings.DEFAULT, new FrameCodec(log), new SplittableRandom());
     }
 
     CloudClient(CloudConfig config, CloudListener listener, Log log, EventClock clock, IntSupplier onlinePlayers,
