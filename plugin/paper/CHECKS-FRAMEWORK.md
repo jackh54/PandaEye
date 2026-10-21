@@ -82,7 +82,9 @@ A `Violation` is `severity` (0..1, how far beyond the limit; the cloud scales po
 All values are the client's view, built from packets only. Server-controlled values are `Tracked<T>`:
 `applied()` (what the client has provably applied), `latest()`, `isPending()`, `known()`, and the lenient
 helpers `anyMatch`, `max`, `min`. A change counts as applied one movement packet after the client
-acknowledged it (keep-alive or ping after the change), or after 5 s. Use the most lenient value while
+acknowledged it with a PONG to a PING sent after the change (keep-alive replies are answered before
+earlier packets are applied and never count), or 5 s after the change once any later PONG arrived; never on
+time alone. Pending velocities follow the same rule. Use the most lenient value while
 anything is pending.
 
 | Accessor | Content |
@@ -147,7 +149,7 @@ telemetry and `logs/peaks-YYYY-MM-DD.jsonl`, which is how thresholds are tuned i
 
 ```java
 CheckHarness h = CheckHarness.of(CheckCatalog.MOVEMENT_SPEED, SpeedCheck::new)
-        .join()        // JOIN_GAME survival, abilities, tick rate 20, keep-alive ack, one tick end
+        .join()        // JOIN_GAME survival, abilities, tick rate 20, ping/pong ack, one tick end
         .stand(40);    // warm-up: 40 movement packets
 for (int i = 0; i < 20; i++) {
     h.step(0.6, 0, 0, true);   // one tick: position packet + CLIENT_TICK_END, 50 ms
@@ -156,7 +158,8 @@ h.confirmAll();                // runs pending Confirmers against h.world() (Fak
 assertFalse(h.flags().isEmpty());
 ```
 
-- Packets: `move`, `step`, `look`, `tickEnd`, `stand(n)`, `advance(nanos)`, `acknowledge()`, and
+- Packets: `move`, `step`, `look`, `tickEnd`, `stand(n)`, `advance(nanos)`, `acknowledge()` (PING/PONG),
+  `keepAlive()` (RTT only), and
   `processor()` for any other packet (`serverTeleport`, `teleportConfirm`, `serverRotation`, velocity,
   attributes, effects...).
 - Clients: `CheckHarness.of(client, id, factory)` with `TICK_CLIENT` (1.21.11) or `LEGACY_CLIENT` (1.8.9).
