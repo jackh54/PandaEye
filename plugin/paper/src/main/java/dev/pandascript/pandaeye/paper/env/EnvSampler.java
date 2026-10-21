@@ -157,16 +157,22 @@ public final class EnvSampler {
         if (BlockKinds.soulSpeed(feet)) {
             flags |= EnvFlag.ENV_FLAG_ON_SOUL_SPEED_BLOCK_VALUE;
         }
+        // The boxes can reach into a neighbouring chunk: query only chunks that are loaded and owned by this
+        // region (Folia throws for another region's entities); otherwise answer the lenient way.
+        ChunkAccess chunks = ChunkAccess.currentRegion(world);
         BoundingBox box = player.getBoundingBox();
-        if (world.hasCollisionsIn(box.clone().expand(1))) {
+        BoundingBox near = box.clone().expand(1);
+        if (!readable(chunks, near) || world.hasCollisionsIn(near)) {
             flags |= EnvFlag.ENV_FLAG_NEAR_SOLID_VALUE;
         }
         double top = box.getMaxY();
-        if (world.hasCollisionsIn(new BoundingBox(location.getX() - 0.3, top, location.getZ() - 0.3,
-                location.getX() + 0.3, top + 1.0, location.getZ() + 0.3))) {
+        BoundingBox ceiling = new BoundingBox(location.getX() - 0.3, top, location.getZ() - 0.3,
+                location.getX() + 0.3, top + 1.0, location.getZ() + 0.3);
+        if (!readable(chunks, ceiling) || world.hasCollisionsIn(ceiling)) {
             flags |= EnvFlag.ENV_FLAG_LOW_CEILING_VALUE;
         }
-        if (!world.getNearbyEntities(box.clone().expand(1.5),
+        BoundingBox around = box.clone().expand(1.5);
+        if (!readable(chunks, around) || !world.getNearbyEntities(around,
                 entity -> entity != player && Collidables.pushesOrCollides(entity)).isEmpty()) {
             flags |= EnvFlag.ENV_FLAG_NEAR_ENTITY_VALUE;
         }
@@ -174,6 +180,22 @@ public final class EnvSampler {
             flags |= EnvFlag.ENV_FLAG_EXTENDED_REACH_ITEM_VALUE;
         }
         return flags;
+    }
+
+    /** Every chunk the box overlaps is loaded and owned by the current region. */
+    static boolean readable(ChunkAccess chunks, BoundingBox box) {
+        int minX = (int) Math.floor(box.getMinX()) >> 4;
+        int maxX = (int) Math.floor(box.getMaxX()) >> 4;
+        int minZ = (int) Math.floor(box.getMinZ()) >> 4;
+        int maxZ = (int) Math.floor(box.getMaxZ()) >> 4;
+        for (int cx = minX; cx <= maxX; cx++) {
+            for (int cz = minZ; cz <= maxZ; cz++) {
+                if (!chunks.readable(cx, cz)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static int surface(Material type) {
