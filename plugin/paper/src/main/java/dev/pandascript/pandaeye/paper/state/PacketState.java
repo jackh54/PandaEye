@@ -241,7 +241,6 @@ public final class PacketState {
         flyingThisTick++;
         if (hasPos) {
             positionsSinceSpawn++;
-            teleports.onPositionPacket();
             positions.add(eventMicros, nx, ny, nz);
             if (!client.sendsLoaded() && positionsSinceSpawn >= TeleportTracker.GRACE_POSITIONS) {
                 loading = false;
@@ -260,6 +259,9 @@ public final class PacketState {
 
     /** Ends a movement packet: velocities and pending state the client has applied by now are promoted. */
     void finishMove(Move move, boolean wasCancelled) {
+        if (move.hasPos()) {
+            teleports.onPositionPacket();
+        }
         velocities.onMove(move.hasPos(), move.dy(), moveClock, moveClock.now);
         gameMode.promote(moveClock);
         abilities.promote(moveClock);

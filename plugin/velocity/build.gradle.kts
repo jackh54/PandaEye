@@ -18,24 +18,6 @@ tasks.processResources {
     }
 }
 
-tasks.jar {
-    archiveClassifier.set("plain")
-}
-
 tasks.shadowJar {
     archiveBaseName.set("pandaeye-velocity")
-    archiveClassifier.set("")
-    relocate("com.google.protobuf", "dev.pandascript.pandaeye.libs.protobuf")
-    relocate("io.airlift.compress", "dev.pandascript.pandaeye.libs.aircompressor")
-    minimize {
-        exclude(project(":protocol"))
-        exclude(project(":common"))
-        exclude(dependency("com.google.protobuf:protobuf-javalite:.*"))
-    }
-    exclude("google/protobuf/**", "META-INF/maven/**", "META-INF/versions/**", "**/module-info.class",
-        "META-INF/LICENSE*", "META-INF/NOTICE*")
-}
-
-tasks.assemble {
-    dependsOn(tasks.shadowJar)
 }

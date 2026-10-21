@@ -31,24 +31,34 @@ tasks.processResources {
     }
 }
 
-tasks.jar {
-    archiveClassifier.set("plain")
-}
-
 tasks.shadowJar {
     archiveBaseName.set("PandaEye")
-    archiveClassifier.set("")
-    relocate("com.google.protobuf", "dev.pandascript.pandaeye.libs.protobuf")
-    relocate("io.airlift.compress", "dev.pandascript.pandaeye.libs.aircompressor")
-    minimize {
-        exclude(project(":protocol"))
-        exclude(project(":common"))
-        exclude(dependency("com.google.protobuf:protobuf-javalite:.*"))
-    }
-    exclude("google/protobuf/**", "META-INF/maven/**", "META-INF/versions/**", "META-INF/*.kotlin_module",
-        "**/module-info.class", "META-INF/LICENSE*", "META-INF/NOTICE*")
 }
 
-tasks.assemble {
+// Runs against the shaded jar itself, so a minimisation or relocation mistake fails the build. The test
+// compiles against the unshaded modules (PandaEye's own packages are not relocated) but runs with only the
+// shaded jar and JUnit on its classpath. Compiling against the shaded jar would be circular: shadow's
+// minimiser reads every source set's classes.
+val smokeTest: SourceSet by sourceSets.creating
+val shadedJar = tasks.shadowJar.flatMap { it.archiveFile }
+
+dependencies {
+    "smokeTestCompileOnly"(project(":common"))
+    "smokeTestImplementation"(platform(libs.junit.bom))
+    "smokeTestImplementation"(libs.junit.jupiter)
+    "smokeTestRuntimeOnly"(libs.junit.launcher)
+}
+
+val shadedJarTest = tasks.register<Test>("shadedJarTest") {
+    description = "Exercises protobuf and zstd inside the relocated, minimised plugin jar"
+    group = "verification"
+    testClassesDirs = smokeTest.output.classesDirs
+    classpath = smokeTest.output + configurations[smokeTest.runtimeClasspathConfigurationName] + files(shadedJar)
+    systemProperty("pandaeye.jar", shadedJar.get().asFile.absolutePath)
+    inputs.file(shadedJar).withPropertyName("shadedJar")
     dependsOn(tasks.shadowJar)
+}
+
+tasks.check {
+    dependsOn(shadedJarTest)
 }

@@ -14,13 +14,15 @@ const mineflayer = require('mineflayer')
 const { Vec3 } = require('vec3')
 const { sleep } = require('./util')
 
-async function createMf ({ username, host = '127.0.0.1', port, log = () => {}, timeoutMs = 45000 }) {
+async function createMf ({ username, host = '127.0.0.1', port, log = () => {}, timeoutMs = 45000, version = '1.21.11' }) {
   const bot = mineflayer.createBot({
-    host, port, username, version: '1.21.11', auth: 'offline', hideErrors: true, viewDistance: 4, checkTimeoutInterval: 60000
+    host, port, username, version, auth: 'offline', hideErrors: true, viewDistance: 4, checkTimeoutInterval: 60000
   })
+  // CLIENT_TICK_END exists since 1.21.2; older (ViaVersion-translated) clients do not send it
+  const tickEnd = bot.supportFeature ? !!require('minecraft-data')(version).protocol?.play?.toServer?.types?.packet_tick_end : false
   let first = true
   bot.on('physicsTick', () => {
-    if (!first && bot._client.state === 'play') bot._client.write('tick_end', {})
+    if (tickEnd && !first && bot._client.state === 'play') bot._client.write('tick_end', {})
     first = false
   })
   bot.on('kicked', (r) => { bot.kickedReason = typeof r === 'string' ? r : JSON.stringify(r); log(`${username} kicked: ${bot.kickedReason}`) })

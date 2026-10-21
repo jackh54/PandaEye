@@ -101,6 +101,7 @@ class CloudClientTest {
         assertTrue(elapsedMillis < 300, "stop took " + elapsedMillis + " ms");
         assertEquals(List.of(), pandaEyeThreads());
         waitUntil(() -> gateway.connection(0).closeReceived, "close frame sent");
+        assertEquals("plugin stopping", gateway.await(ClientFrame::hasGoodbye, WAIT).frame().getGoodbye().getReason());
     }
 
     @Test

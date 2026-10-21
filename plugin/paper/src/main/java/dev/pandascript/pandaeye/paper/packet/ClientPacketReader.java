@@ -24,22 +24,17 @@ import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientTe
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientUseItem;
 import dev.pandascript.pandaeye.common.proxy.ProxySessionToken;
 import dev.pandascript.pandaeye.paper.check.CheckInput;
-import dev.pandascript.pandaeye.paper.config.PluginConfig;
 import dev.pandascript.pandaeye.paper.session.Session;
 import dev.pandascript.pandaeye.paper.state.PacketProcessor;
-
-import java.util.function.Supplier;
 
 import static dev.pandascript.pandaeye.paper.packet.Wrappers.read;
 
 /** Decodes server-bound PLAY packets into {@link PacketProcessor} calls (netty thread). */
 final class ClientPacketReader {
 
-    private final Supplier<PluginConfig> config;
-    private final ProxySessionListener proxySessions;
+    private final ProxySessionChannel proxySessions;
 
-    ClientPacketReader(Supplier<PluginConfig> config, ProxySessionListener proxySessions) {
-        this.config = config;
+    ClientPacketReader(ProxySessionChannel proxySessions) {
         this.proxySessions = proxySessions;
     }
 
@@ -116,13 +111,8 @@ final class ClientPacketReader {
         String channel = message.getChannelName();
         if (PluginMessages.BRAND.equals(channel)) {
             session.processor().brand(PluginMessages.brand(message.getData()), now);
-            return;
-        }
-        PluginConfig.Proxy proxy = config.get().proxy();
-        if (ProxySessionToken.CHANNEL.equals(channel) && proxy.sessionChannel()) {
-            ProxySessionToken.verify(message.getData(), proxy.secret(), session.uuid(), System.currentTimeMillis() / 1_000)
-                    .filter(verified -> session.acceptProxySession(verified.networkSession().toString()))
-                    .ifPresent(verified -> proxySessions.accepted(session, now));
+        } else if (ProxySessionToken.CHANNEL.equals(channel)) {
+            proxySessions.received(session.uuid(), session, message.getData(), now);
         }
     }
 

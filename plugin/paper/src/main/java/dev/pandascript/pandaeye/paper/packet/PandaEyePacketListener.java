@@ -8,7 +8,9 @@ import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
 import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.wrapper.configuration.client.WrapperConfigClientPluginMessage;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPluginMessage;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerJoinGame;
+import dev.pandascript.pandaeye.common.proxy.ProxySessionToken;
 import dev.pandascript.pandaeye.common.util.RateLimitedLog;
 import dev.pandascript.pandaeye.paper.config.PluginConfig;
 import dev.pandascript.pandaeye.paper.session.Session;
@@ -27,6 +29,7 @@ public final class PandaEyePacketListener implements PacketListener {
 
     private final ActiveGate gate;
     private final SessionRegistry sessions;
+    private final ProxySessionChannel proxySessions;
     private final ClientPacketReader client;
     private final ServerPacketReader server = new ServerPacketReader();
     private final PacketCost cost;
@@ -37,7 +40,8 @@ public final class PandaEyePacketListener implements PacketListener {
                                   RateLimitedLog errors) {
         this.gate = gate;
         this.sessions = sessions;
-        this.client = new ClientPacketReader(config, proxySessions);
+        this.proxySessions = new ProxySessionChannel(config, proxySessions);
+        this.client = new ClientPacketReader(this.proxySessions);
         this.cost = cost;
         this.errors = errors;
     }
@@ -56,13 +60,15 @@ public final class PandaEyePacketListener implements PacketListener {
                     session.beforePacket(now);
                     client.handle(event, play, session, now);
                     cost.record(System.nanoTime() - now);
+                } else if (play == PacketType.Play.Client.PLUGIN_MESSAGE) {
+                    WrapperPlayClientPluginMessage message = Wrappers.read(event, WrapperPlayClientPluginMessage.class,
+                            WrapperPlayClientPluginMessage::new);
+                    earlyPluginMessage(event.getUser(), message.getChannelName(), message.getData(), now);
                 }
             } else if (type == PacketType.Configuration.Client.PLUGIN_MESSAGE) {
                 WrapperConfigClientPluginMessage message = Wrappers.read(event, WrapperConfigClientPluginMessage.class,
                         WrapperConfigClientPluginMessage::new);
-                if (PluginMessages.BRAND.equals(message.getChannelName())) {
-                    sessions.configurationBrand(event.getUser(), PluginMessages.brand(message.getData()));
-                }
+                earlyPluginMessage(event.getUser(), message.getChannelName(), message.getData(), now);
             }
         } catch (Throwable t) {
             errors.warn("receive " + safeName(event.getPacketType()), "packet handling failed", t);
@@ -112,6 +118,15 @@ public final class PandaEyePacketListener implements PacketListener {
         }
     }
 
+    /** A plugin message from a connection that has no session yet (configuration phase). */
+    private void earlyPluginMessage(User user, String channel, byte[] data, long now) {
+        if (PluginMessages.BRAND.equals(channel)) {
+            sessions.configurationBrand(user, PluginMessages.brand(data));
+        } else if (ProxySessionToken.CHANNEL.equals(channel)) {
+            proxySessions.received(user.getUUID(), null, data, now);
+        }
+    }
+
     private void joinGame(PacketSendEvent event, long now) {
         User user = event.getUser();
         if (user.getUUID() == null) {
@@ -133,7 +148,8 @@ public final class PandaEyePacketListener implements PacketListener {
             mode = null;
             world = null;
         }
-        sessions.joinGame(user, ClientInfos.of(user), entityId, mode, world, now);
+        Session session = sessions.joinGame(user, ClientInfos.of(user), entityId, mode, world, now);
+        proxySessions.sessionStarted(session, now);
         cost.record(System.nanoTime() - now);
     }
 

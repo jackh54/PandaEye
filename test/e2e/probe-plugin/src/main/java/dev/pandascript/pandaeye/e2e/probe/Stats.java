@@ -53,18 +53,36 @@ final class Stats {
         return o;
     }
 
-    /** Log2 histogram of nanosecond durations (count/sum/max exact, percentiles from buckets). */
+    /**
+     * Log-linear histogram of nanosecond durations: 8 sub-buckets per power of two (~9% resolution);
+     * count/sum/max are exact, percentiles are bucket midpoints.
+     */
     static final class Hist {
+        private static final int SUB = 8;
         private final LongAdder count = new LongAdder();
         private final LongAdder sum = new LongAdder();
-        private final AtomicLongArray buckets = new AtomicLongArray(64);
+        private final AtomicLongArray buckets = new AtomicLongArray(64 * SUB);
         private volatile long max;
+
+        private static int index(long ns) {
+            if (ns < SUB) return (int) ns;
+            int e = 63 - Long.numberOfLeadingZeros(ns); // floor(log2), >= 3
+            int m = (int) ((ns >>> (e - 3)) & (SUB - 1)); // next 3 bits after the leading one
+            return e * SUB + m;
+        }
+
+        private static double mid(int i) {
+            if (i < SUB) return i;
+            int e = i / SUB, m = i % SUB;
+            double lo = (double) (1L << e) * (1 + m / (double) SUB);
+            return lo * (1 + 0.5 / SUB);
+        }
 
         void record(long ns) {
             if (ns < 0) ns = 0;
             count.increment();
             sum.add(ns);
-            buckets.incrementAndGet(64 - Long.numberOfLeadingZeros(ns)); // 0 -> bucket 0, [2^(i-1), 2^i) -> i
+            buckets.incrementAndGet(index(ns));
             if (ns > max) max = ns; // racy but monotone enough for a test report
         }
 
@@ -73,9 +91,9 @@ final class Stats {
             if (n == 0) return 0;
             long target = (long) Math.ceil(p * n);
             long seen = 0;
-            for (int i = 0; i < 64; i++) {
+            for (int i = 0; i < buckets.length(); i++) {
                 seen += buckets.get(i);
-                if (seen >= target) return i == 0 ? 0 : (double) (1L << (i - 1)) * 1.5; // bucket midpoint
+                if (seen >= target) return Math.min(mid(i), max);
             }
             return max;
         }

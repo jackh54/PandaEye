@@ -11,6 +11,7 @@ import dev.pandascript.pandaeye.common.util.TokenBucket;
 import dev.pandascript.pandaeye.protocol.v1.ClientFrame;
 import dev.pandascript.pandaeye.protocol.v1.Error;
 import dev.pandascript.pandaeye.protocol.v1.Event;
+import dev.pandascript.pandaeye.protocol.v1.Goodbye;
 import dev.pandascript.pandaeye.protocol.v1.Hello;
 import dev.pandascript.pandaeye.protocol.v1.Ping;
 import dev.pandascript.pandaeye.protocol.v1.Pong;
@@ -57,6 +58,8 @@ public final class CloudClient {
     static final int MAX_BATCHES_PER_TICK = 16;
     private static final int CLOSE_GOING_AWAY = 1001;
     private static final long CLOSE_WAIT_NANOS = 100_000_000L;
+    private static final byte[] GOODBYE = ClientFrame.newBuilder()
+            .setGoodbye(Goodbye.newBuilder().setReason("plugin stopping")).build().toByteArray();
     private static final long REMOTE_PERSIST_REFRESH_NANOS = 600_000_000_000L;
 
     /** Protocol timings; tests shorten them. */
@@ -193,9 +196,9 @@ public final class CloudClient {
     }
 
     /**
-     * Bounded shutdown (ARCHITECTURE 4.6): stop the loop, cancel a pending connect, best-effort close frame
-     * (100 ms), always abort, stop the HttpClient executor; never {@code HttpClient.close()}. The remaining
-     * budget spools unacknowledged batches and undrained events.
+     * Bounded shutdown (ARCHITECTURE 4.6): stop the loop, cancel a pending connect, best-effort Goodbye and
+     * close frame (100 ms together), always abort, stop the HttpClient executor; never
+     * {@code HttpClient.close()}. The remaining budget spools unacknowledged batches and undrained events.
      */
     public void stop(Duration budget) {
         long start = System.nanoTime();
@@ -219,7 +222,7 @@ public final class CloudClient {
         }
         WebSocket ws = socket;
         if (ws != null) {
-            closeGracefully(ws, Math.min(start + CLOSE_WAIT_NANOS, networkDeadline));
+            closeGracefully(ws, codec.encodeRaw(GOODBYE), Math.min(start + CLOSE_WAIT_NANOS, networkDeadline));
             ws.abort();
         }
         httpRef.shutdownNow();
@@ -586,7 +589,7 @@ public final class CloudClient {
             Ping ping = Ping.newBuilder()
                     .setNonce(++pingNonce)
                     .setClientTimeUs(clock.toMicros(now))
-                    .setLastProbeRttUs((int) Math.min(Integer.MAX_VALUE, probes.lastRttMicros()))
+                    .setLastProbeRttUs((int) Math.min(Integer.MAX_VALUE, probes.freshRttMicros(now)))
                     .setOnlinePlayers(Math.max(0, onlinePlayers.getAsInt()))
                     .build();
             return codec.encode(ClientFrame.newBuilder().setPing(ping).build().toByteArray());
@@ -716,10 +719,13 @@ public final class CloudClient {
         }
     }
 
-    private static void closeGracefully(WebSocket ws, long deadlineNanos) {
+    /** Goodbye, then a close frame (1001), together bounded by the deadline; best effort. */
+    private static void closeGracefully(WebSocket ws, byte[] goodbye, long deadlineNanos) {
         try {
-            long waitNanos = Math.max(1, deadlineNanos - System.nanoTime());
-            ws.sendClose(CLOSE_GOING_AWAY, "plugin stopping").get(waitNanos, TimeUnit.NANOSECONDS);
+            ws.sendBinary(ByteBuffer.wrap(goodbye), true)
+                    .exceptionally(error -> ws)
+                    .thenCompose(socket -> socket.sendClose(CLOSE_GOING_AWAY, "plugin stopping"))
+                    .get(Math.max(1, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception ignored) {

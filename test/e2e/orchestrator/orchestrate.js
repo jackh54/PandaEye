@@ -162,6 +162,17 @@ async function runSuite (server, scenarios, { tag, trace = false, onEach } = {})
   return out
 }
 
+const BASE_CACHE = {} // flavor -> { a, a2 } baseline runs reused by shadow/hotload in the same invocation
+
+/** onEach hook: PandaEye flags of the scenario's players (legit scenarios must have no confirmed flag). */
+async function collectFlags (rec, srv) {
+  await sleep(6000) // flag log aggregation window is 5 s
+  const players = rec.suspects.flatMap((p) => [p, offlineUuid(p)])
+  rec.flags = PE.flagsFor(srv.dir, players, rec.startMs - 1000, Date.now())
+  rec.confirmedFlags = rec.flags.filter((f) => f.confirmed)
+  if (rec.kind === 'legit' && rec.confirmedFlags.length) log(`    LEGIT FLAGGED: ${rec.confirmedFlags.map((f) => f.check).join(', ')}`)
+}
+
 const legitScenarios = () => listScenarios(O.scenarios === 'legit' ? 'legit' : O.scenarios).filter((m) => m.kind === 'legit')
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -186,6 +197,7 @@ async function phaseBaseline () {
       f.error = String(e.message || e)
       log(`baseline ${flavor} failed: ${f.error}`)
     }
+    if (f.runs.length >= 2) BASE_CACHE[flavor] = { a: f.runs[0], a2: f.runs[1] }
     if (f.runs.length >= 2) {
       for (const rec of f.runs[0]) {
         const rec2 = f.runs[1].find((x) => x.scenario === rec.scenario)
@@ -242,12 +254,18 @@ async function phaseShadow (hot = false) {
       res.flavors[flavor] = f
       const scen = legitScenarios()
       // A and A2: baseline twice (noise); B: with PandaEye
-      await withServer({ name: `${flavor}-base`, flavor, port: PORTS[flavor] }, async (server) => {
-        if (!server) return
-        f.a = await runSuite(server, scen, { tag: 'A' })
-        await server.buildArena()
-        f.a2 = await runSuite(server, scen, { tag: 'A2' })
-      })
+      if (BASE_CACHE[flavor]) {
+        Object.assign(f, BASE_CACHE[flavor])
+        log(`  ${flavor}: reusing baseline runs of this invocation as A/A2`)
+      } else {
+        await withServer({ name: `${flavor}-base`, flavor, port: PORTS[flavor] }, async (server) => {
+          if (!server) return
+          f.a = await runSuite(server, scen, { tag: 'A' })
+          await server.buildArena()
+          f.a2 = await runSuite(server, scen, { tag: 'A2' })
+          BASE_CACHE[flavor] = { a: f.a, a2: f.a2 }
+        })
+      }
       const profile = hot ? 'hotload' : 'pandaeye'
       await withServer({ name: `${flavor}-${hot ? 'hot' : 'pe'}`, flavor, profile, port: PORTS[flavor] + PROFILE_PORT[profile], extra: ['--pandaeye-jar', jar] }, async (server) => {
         if (!server) { log(`DRY: ${hot ? 'hotload.sh (plugman load PandaEye) with 2 bots connected, then ' : ''}run legit suite, pandaeye status`); return }
@@ -261,7 +279,7 @@ async function phaseShadow (hot = false) {
           await stopWalkers(bots)
         }
         f.status = await pandaeyeStatus(server)
-        f.b = await runSuite(server, scen, { tag: 'B' })
+        f.b = await runSuite(server, scen, { tag: 'B', onEach: collectFlags })
         f.statusAfter = await pandaeyeStatus(server)
       })
       if (O.dryRun) continue
@@ -273,7 +291,8 @@ async function phaseShadow (hot = false) {
         const nz = ra2 && ra2.dump ? noise(ra.dump, ra2.dump) : {}
         const c = compare(ra.dump, rb.dump, nz)
         c.kicks = rb.serverKicks
-        c.ok = c.ok && rb.serverKicks.length === 0
+        c.confirmedFlags = (rb.confirmedFlags || []).map((x) => x.check)
+        c.ok = c.ok && rb.serverKicks.length === 0 && c.confirmedFlags.length === 0
         f.compare[ra.scenario] = c
         log(`  ${flavor} ${ra.scenario}: ${c.ok ? 'IDENTICAL within noise' : 'VIOLATIONS ' + JSON.stringify(c.violations.slice(0, 5))}`)
       }

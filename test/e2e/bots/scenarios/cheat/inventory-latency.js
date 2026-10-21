@@ -74,6 +74,10 @@ module.exports = [
       'second so KnockbackSync keeps it combat-tagged and pings it (ping_strategy PING), 75 s',
     async run (ctx) {
       const c = ctx.fx.combat.center
+      // KnockbackSync's own PacketEvents consumes the PONGs to its PINGs (see README findings), so a second ping
+      // source (like Vulcan/Grim transactions) is emulated by the probe for this scenario only
+      await ctx.probe('pinger 10')
+      ctx.facts.probePinger = true
       const v = await ctx.raw('ch_pingspoof')
       await ctx.probe('effect ch_pingspoof resistance 300 4')
       await ctx.tp(v, c[0], c[1], c[2], 180, 0)
@@ -88,6 +92,7 @@ module.exports = [
         if (i % 20 === 10 && d < 3.0) a.attack(v.entityId)
         if (i % 20 === 0) { v.input.forward = d > 3.5 ? 1 : 0; v.input.yaw = 180 }
       })
+      await ctx.probe('pinger off')
     },
     verify (tr, { dump }) {
       const es = tr.ch_pingspoof

@@ -12,17 +12,19 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * The {@code pandaeye:session} plugin message a PandaEye proxy sends to a backend after each server connect:
- * {@code player uuid (16) || network session uuid (16) || unix seconds (int64) || HMAC-SHA256(secret, the
- * preceding 40 bytes) (32)}. The proxy encodes, the backend verifies.
+ * The {@code pandaeye:session} plugin message a PandaEye proxy sends to a backend after each server connect
+ * (73 bytes): version {@code 1} (1) || player uuid (16) || network session uuid (16) || unix seconds
+ * (int64, big-endian) || HMAC-SHA256(secret, the preceding 41 bytes) (32). The proxy encodes, the backend
+ * verifies.
  */
 public final class ProxySessionToken {
 
     public static final String CHANNEL = "pandaeye:session";
-    public static final int LENGTH = 16 + 16 + 8 + 32;
+    public static final byte VERSION = 1;
+    public static final int LENGTH = 1 + 16 + 16 + 8 + 32;
     public static final long MAX_AGE_SECONDS = 30;
 
-    private static final int SIGNED_LENGTH = 40;
+    private static final int SIGNED_LENGTH = 41;
 
     private ProxySessionToken() {
     }
@@ -35,17 +37,18 @@ public final class ProxySessionToken {
             throw new IllegalArgumentException("a proxy session secret is required");
         }
         ByteBuffer buffer = ByteBuffer.allocate(LENGTH);
-        buffer.put(Uuids.toBytes(player)).put(Uuids.toBytes(networkSession)).putLong(unixSeconds);
+        buffer.put(VERSION).put(Uuids.toBytes(player)).put(Uuids.toBytes(networkSession)).putLong(unixSeconds);
         buffer.put(mac(secret, buffer.array()));
         return buffer.array();
     }
 
     /**
-     * Verifies a message for {@code expectedPlayer}. Empty when the secret is empty, the layout or MAC is
-     * wrong, the player differs, or the timestamp is more than 30 s away from {@code nowUnixSeconds}.
+     * Verifies a message for {@code expectedPlayer}. Empty when the secret is empty, the version, layout or
+     * MAC is wrong, the player differs, or the timestamp is more than 30 s away from {@code nowUnixSeconds}.
      */
     public static Optional<Verified> verify(byte[] message, String secret, UUID expectedPlayer, long nowUnixSeconds) {
-        if (secret == null || secret.isEmpty() || message == null || message.length != LENGTH) {
+        if (secret == null || secret.isEmpty() || message == null || message.length != LENGTH
+                || message[0] != VERSION) {
             return Optional.empty();
         }
         byte[] expected = mac(secret, message);
@@ -54,9 +57,9 @@ public final class ProxySessionToken {
         if (!MessageDigest.isEqual(expected, actual)) {
             return Optional.empty();
         }
-        UUID player = Uuids.fromBytes(message, 0);
-        UUID session = Uuids.fromBytes(message, 16);
-        long unixSeconds = ByteBuffer.wrap(message, 32, 8).getLong();
+        UUID player = Uuids.fromBytes(message, 1);
+        UUID session = Uuids.fromBytes(message, 17);
+        long unixSeconds = ByteBuffer.wrap(message, 33, 8).getLong();
         if (!player.equals(expectedPlayer) || Math.abs(nowUnixSeconds - unixSeconds) > MAX_AGE_SECONDS) {
             return Optional.empty();
         }

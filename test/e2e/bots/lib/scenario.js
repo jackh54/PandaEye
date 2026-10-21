@@ -81,7 +81,7 @@ class Context {
   }
 
   async mf (username, opts = {}) {
-    const bot = await createMf({ username, port: this.server.port, host: this.server.host, log: this.log })
+    const bot = await createMf({ username, port: this.server.port, host: this.server.host, log: this.log, version: opts.version })
     this.mfBots.push(bot)
     if (opts.prepare !== false) await this.prepare(username, opts)
     return bot
@@ -157,6 +157,7 @@ async function runScenario (mod, { server, log, seed, quick, trace = false, lane
   res.endMs = Date.now()
   res.facts = ctx.facts
   res.notes = ctx.notes
+  if (ctx.facts.probePinger) { try { await server.probe('pinger off') } catch (_) {} }
   res.botStats = ctx.bots.map((b) => ({ name: b.username, sent: b.sent, ticks: b.tick, teleports: b.teleports, velocities: b.velocityLog.length }))
   await ctx.cleanup()
   if (trace || dumpName) {

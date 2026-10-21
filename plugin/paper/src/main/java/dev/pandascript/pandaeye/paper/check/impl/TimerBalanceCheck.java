@@ -15,13 +15,10 @@ import java.util.Map;
  * timer.balance (CHECKS 1.2): a legitimate tick client sends tick k at client time {@code c0 + 50k}, so the
  * receive offset {@code (t - t0) - 50k} never falls below {@code c0 + d_min}: lag raises it, catch-up returns
  * to the floor. A timer makes the floor fall continuously. The offset minimum is taken per 2 s bin; after 60 s
- * of calibration a bin is a "new low" when its minimum is more than 2 ms plus a clock-drift allowance below
- * the running minimum. Violation: at least 8 of the last 10 bins are new lows, the running minimum fell by
- * at least 150 ms over them, and by at least 100 ms without the single largest bin-to-bin drop.
- *
- * <p>The drift allowance is 0.5 ms per second of time between the bin and the bin that set the running
- * minimum (the floor a 500 ppm clock drift can produce), not since the start of measurement, which would grow
- * without bound and hide slow timers.
+ * of calibration a bin is a "new low" when its minimum is below
+ * {@code runMin - 2 - 0.0005 * (t_bin - runMinT)} ms: a 0.5 ms/s clock-drift allowance measured from when the
+ * running minimum was set. Violation: at least 8 of the last 10 bins are new lows, the running minimum fell
+ * by at least 150 ms over them, and by at least 100 ms without the single largest bin-to-bin drop.
  */
 public final class TimerBalanceCheck extends Check {
 

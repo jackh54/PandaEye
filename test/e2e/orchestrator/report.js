@@ -74,7 +74,7 @@ function writeReport (dir, R) {
       L.push('| scenario | result | violations (group type A->B tol) |', '|---|---|---|')
       for (const [sc, c] of Object.entries(f.compare || {})) {
         if (!c.ok) fail = true
-        L.push(`| ${sc} | ${c.ok ? 'identical within noise' : 'FAIL'} | ${c.violations.slice(0, 6).map((v) => `${v.group} ${v.type} ${v.a}->${v.b} (tol ${v.tol})`).join('; ')}${c.kicks?.length ? ' kicks: ' + c.kicks.length : ''} |`)
+        L.push(`| ${sc} | ${c.ok ? 'identical within noise' : 'FAIL'} | ${c.violations.slice(0, 6).map((v) => `${v.group} ${v.type} ${v.a}->${v.b} (tol ${v.tol})`).join('; ')}${c.kicks?.length ? ' kicks: ' + c.kicks.length : ''}${c.confirmedFlags?.length ? ' confirmed flags: ' + c.confirmedFlags.join(',') : ''} |`)
       }
       L.push('')
     }

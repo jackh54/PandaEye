@@ -46,6 +46,18 @@ class TimerBalanceCheckTest {
     }
 
     @Test
+    void aSingle400MsFloorDropNeverFlags() {
+        assertEquals(0, run(1.0, FIVE_MINUTES, k -> k < 2_400 ? 430 : 30).flags().size());
+        assertEquals(0, run(1.0, FIVE_MINUTES, k -> k < 1_300 ? 450 + (k % 7) : 50 + (k % 7)).flags().size());
+    }
+
+    @Test
+    void driftAllowanceIsMeasuredFromWhenTheRunningMinimumWasSet() {
+        // 0.45 ms/s of drift: under the 0.5 ms/s allowance however long it runs.
+        assertEquals(0, run(1.00045, 12_000, k -> 30).flags().size());
+    }
+
+    @Test
     void timer101FlagsAfterCalibrationAndOneWindow() {
         CheckHarness harness = run(1.01, 2_400, k -> 30);
         assertTrue(harness.flags().size() >= 1, "1.01x must flag within two minutes");

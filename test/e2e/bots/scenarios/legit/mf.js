@@ -24,7 +24,28 @@ async function holdMove (bot, ms, { yaw, sprint = false, jump = false, rng, nois
   await ticks(bot, 10)
 }
 
+function legacy (version, name, laneIdx) {
+  return {
+    name: `legit/mf-legacy-${version.replace(/\./g, '')}`,
+    kind: 'legit',
+    engine: 'mineflayer',
+    players: [name],
+    description: `mineflayer ${version} client through ViaVersion/ViaBackwards: walk, sprint, sprint-jump (no CLIENT_TICK_END: non-tick client)`,
+    async run (ctx) {
+      const bot = await ctx.mf(name, { version })
+      const lane = ctx.lane(laneIdx)
+      await ctx.tp(name, lane.x, lane.y, lane.z, -90, 0)
+      await waitAt(bot, lane.x, lane.y, lane.z)
+      await holdMove(bot, 4000, { yaw: MF_EAST, rng: ctx.rng })
+      await holdMove(bot, 4000, { yaw: MF_EAST, sprint: true, jump: true, rng: ctx.rng })
+      await holdMove(bot, 4000, { yaw: MF_WEST, sprint: true, rng: ctx.rng })
+    }
+  }
+}
+
 module.exports = [
+  legacy('1.20.4', 'lg_mf1204', 13),
+  legacy('1.12.2', 'lg_mf1122', 14),
   {
     name: 'legit/mf-walk',
     kind: 'legit',

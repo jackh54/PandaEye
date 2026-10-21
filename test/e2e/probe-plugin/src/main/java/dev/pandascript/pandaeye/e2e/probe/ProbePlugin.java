@@ -70,6 +70,8 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
     private final List<Watched> watched = Collections.synchronizedList(new ArrayList<>());
     private final Map<String, Long> warnTimes = new ConcurrentHashMap<>();
     private volatile long resetAtMs = System.currentTimeMillis();
+    private volatile io.papermc.paper.threadedregions.scheduler.ScheduledTask pingerTask;
+    private final java.util.concurrent.atomic.AtomicInteger pingId = new java.util.concurrent.atomic.AtomicInteger(0x7E000000);
 
     private record Watched(String plugin, long enabledAtMs, WeakReference<ClassLoader> loader, String loaderName) {
     }
@@ -214,7 +216,7 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
             "probe heal <p> | flight <p> <true|false> | mount <p> <boat|minecart> | dismount <p>",
             "probe setblock <x> <y> <z> <blockdata> | fill <x1> <y1> <z1> <x2> <y2> <z2> <blockdata>",
             "probe trace <p> <seconds> | trace off | pipeline <p>",
-            "probe threads <file> | watch <plugin> | gc <file> | disable-timed <plugin> <file>");
+            "probe threads <file> | watch <plugin> | gc <file> | disable-timed <plugin> <file> | pinger <ticks|off>");
 
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, String @NotNull [] a) {
@@ -345,6 +347,20 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
                     Path p = resolve(a[1]);
                     Files.createDirectories(p.toAbsolutePath().getParent());
                     Files.writeString(p, new GsonBuilder().setPrettyPrinting().create().toJson(o), StandardCharsets.UTF_8);
+                    ok(line);
+                }
+                case "pinger" -> {
+                    // emulates a second ping-sending plugin (anticheat transactions); NEVER used in shadow-invariant runs
+                    if (pingerTask != null) { pingerTask.cancel(); pingerTask = null; }
+                    if (!a[1].equalsIgnoreCase("off")) {
+                        long period = Long.parseLong(a[1]);
+                        pingerTask = Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, t -> {
+                            for (Player p : Bukkit.getOnlinePlayers()) {
+                                var u = PacketEvents.getAPI().getPlayerManager().getUser(p);
+                                if (u != null) u.sendPacket(new com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPing(pingId.incrementAndGet()));
+                            }
+                        }, period, period);
+                    }
                     ok(line);
                 }
                 case "watch" -> {
