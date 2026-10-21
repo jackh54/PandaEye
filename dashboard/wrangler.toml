@@ -13,6 +13,7 @@ name = "pandaeye-dashboard"
 main = "src/index.ts"
 compatibility_date = "2026-09-15"
 workers_dev = true
+routes = [{ pattern = "eye-dash.pandascript.dev", custom_domain = true }]
 
 [vars]
 ENVIRONMENT = "production"
@@ -20,8 +21,7 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "pandaeye-dashboard"
-# Replace with the id printed by `wrangler d1 create pandaeye-dashboard`.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "3bcf201e-8999-4270-8ec8-42940c3daebb"
 migrations_dir = "migrations"
 
 # Static files (stylesheet, replay viewer script) are served through the Worker so every response
