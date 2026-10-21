@@ -1,0 +1,8 @@
+# PandaEye e2e: partial paper-world-defaults.yml
+_version: 31
+chunks:
+  auto-save-interval: 6000
+  delay-chunk-unloads-by: 10s
+environment:
+  disable-ice-and-snow: true
+  disable-thunder: true

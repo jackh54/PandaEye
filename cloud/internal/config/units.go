@@ -36,6 +36,9 @@ func ParseSize(v string) (int64, error) {
 // ParseDuration parses Go durations plus a day suffix ("7d", "1d12h").
 func ParseDuration(v string) (time.Duration, error) {
 	s := strings.TrimSpace(v)
+	if s == "" {
+		return 0, fmt.Errorf("not a duration: %q", v)
+	}
 	var days time.Duration
 	if i := strings.IndexByte(s, 'd'); i > 0 {
 		n, err := strconv.Atoi(s[:i])

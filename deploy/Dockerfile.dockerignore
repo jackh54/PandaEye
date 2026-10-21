@@ -1,0 +1,9 @@
+# BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile in preference to a root .dockerignore.
+# The build context is the repository root; only the cloud module and the health-check probe are sent.
+*
+!cloud/
+!deploy/healthcheck/
+cloud/**/bin/
+cloud/**/data/
+cloud/**/*_test.go
+cloud/**/testdata/

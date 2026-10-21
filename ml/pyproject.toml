@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pandaeye-ml"
+version = "0.1.0"
+description = "PandaEye ML pipeline: feature contract, dataset export, training, ONNX export and the deployment gate"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+# Loose lower bounds for library use; ml/requirements.txt holds the exact, tested pins.
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "scikit-learn>=1.6",
+    "joblib>=1.4",
+    "onnx>=1.17",
+    "onnxruntime>=1.20",
+    "skl2onnx>=1.19",
+    "protobuf>=5,<7",
+    "clickhouse-connect>=0.8",
+    "pyarrow>=17",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+pandaeye-ml = "pandaeye_ml.cli:main"
+
+[tool.setuptools]
+packages = ["pandaeye_ml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+filterwarnings = [
+    # skl2onnx / sklearn deprecation chatter that does not affect results
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+]

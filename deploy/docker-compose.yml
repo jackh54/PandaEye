@@ -1,0 +1,283 @@
+# PandaEye split-service stack: NATS (JetStream, operator-mode auth, TLS), Postgres, ClickHouse and the
+# gateway, two workers, the verdict service and the API, each with its own NATS identity.
+#
+#   make -C deploy env certs nats-auth image   # deploy/.env, dev certificates, NATS creds, pandaeye:dev
+#   docker compose -f deploy/docker-compose.yml up -d
+#
+# Infrastructure images default to mirror.gcr.io (a Docker Hub pull-through mirror); the upstream names
+# are given next to each one. Published ports bind to loopback; see docs/OPERATIONS.md for TLS.
+# Secrets come from deploy/.env and are passed only to the services that need them; an unset secret
+# makes that service refuse to start.
+
+name: pandaeye
+
+x-pandaeye: &pandaeye
+  image: ${PANDAEYE_IMAGE:-pandaeye:dev}
+  restart: unless-stopped
+  # Graceful shutdown completes within 10 s (ARCHITECTURE 5.1); leave headroom before SIGKILL.
+  stop_grace_period: 20s
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+# Settings shared by every PandaEye role. Role-specific keys are added per service.
+x-pandaeye-env: &pandaeye-env
+  PE_REGION: ${PE_REGION:-local}
+  PE_LOG_LEVEL: ${PE_LOG_LEVEL:-info}
+  PE_PARTITIONS: ${PE_PARTITIONS:-16}
+  PE_NATS_URL: tls://nats:4222
+  PE_NATS_CREDS: /etc/pandaeye/nats.creds
+  PE_NATS_TLS_CA: /etc/pandaeye/nats-ca.pem
+  PE_NATS_REPLICAS: "1"
+  PE_EVENTS_MAX_AGE: ${PE_EVENTS_MAX_AGE:-24h}
+  PE_EVENTS_MAX_BYTES: ${PE_EVENTS_MAX_BYTES:-10GiB}
+  PE_DB_DRIVER: postgres
+  PE_DB_DSN: postgres://pandaeye:${POSTGRES_PASSWORD:-}@postgres:5432/pandaeye?sslmode=disable
+  PE_CLICKHOUSE_DSN: clickhouse://pandaeye:${CLICKHOUSE_PASSWORD:-}@clickhouse:9000/pandaeye
+  # Required outside `all` (gateway, worker, verdict, api); identical everywhere. Pass-through from .env.
+  PE_OUTBOUND_KEY:
+
+x-pandaeye-depends: &pandaeye-depends
+  nats:
+    condition: service_healthy
+  postgres:
+    condition: service_healthy
+  clickhouse:
+    condition: service_healthy
+  migrate:
+    condition: service_completed_successfully
+
+# Bind mounts fail instead of creating an empty directory when the source is missing.
+x-ca-mount: &ca-mount
+  type: bind
+  source: ./certs/ca.pem
+  target: /etc/pandaeye/nats-ca.pem
+  read_only: true
+  bind:
+    create_host_path: false
+
+services:
+  # ------------------------------------------------------------------------------------------ NATS
+  nats:
+    image: ${NATS_IMAGE:-mirror.gcr.io/library/nats:2.15-alpine} # upstream: docker.io/library/nats:2.15-alpine
+    command: ["nats-server", "--config", "/etc/nats/pandaeye/nats-server.conf"]
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./nats/nats-server.conf
+        target: /etc/nats/pandaeye/nats-server.conf
+        read_only: true
+        bind: { create_host_path: false }
+      # The directory, not the file: a regenerated resolver.conf stays visible for `--signal reload`.
+      - type: bind
+        source: ./nats/auth/server
+        target: /etc/nats/pandaeye/auth/server
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./certs/nats.pem
+        target: /etc/nats/certs/nats.pem
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./certs/nats-key.pem
+        target: /etc/nats/certs/nats-key.pem
+        read_only: true
+        bind: { create_host_path: false }
+      - nats-data:/data
+    # 4222 (clients) and 8222 (monitoring, unauthenticated) stay on the compose network.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  # -------------------------------------------------------------------------------------- Postgres
+  postgres:
+    image: ${POSTGRES_IMAGE:-mirror.gcr.io/library/postgres:17-alpine} # upstream: docker.io/library/postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pandaeye
+      POSTGRES_DB: pandaeye
+      POSTGRES_PASSWORD:
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "pandaeye", "-d", "pandaeye"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  # ------------------------------------------------------------------------------------ ClickHouse
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE:-mirror.gcr.io/clickhouse/clickhouse-server:25.8} # upstream: docker.io/clickhouse/clickhouse-server:25.8
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: pandaeye
+      CLICKHOUSE_USER: pandaeye
+      CLICKHOUSE_PASSWORD:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "0"
+    volumes:
+      - type: bind
+        source: ./clickhouse/init.sql
+        target: /docker-entrypoint-initdb.d/init.sql
+        read_only: true
+        bind: { create_host_path: false }
+      - clickhouse-data:/var/lib/clickhouse
+    # ClickHouse's recommended open-file limit; lower it if the Docker host's hard limit is smaller.
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # ------------------------------------------------------------------------- PandaEye: migrations
+  migrate:
+    <<: *pandaeye
+    # The only service with a build section: the other PandaEye services reuse the same image.
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      PE_LOG_LEVEL: ${PE_LOG_LEVEL:-info}
+      PE_DB_DRIVER: postgres
+      PE_DB_DSN: postgres://pandaeye:${POSTGRES_PASSWORD:-}@postgres:5432/pandaeye?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  # ---------------------------------------------------------------------------- PandaEye: gateway
+  gateway:
+    <<: *pandaeye
+    command: ["gateway"]
+    environment:
+      <<: *pandaeye-env
+      PE_GATEWAY_LISTEN: 0.0.0.0:8080
+      PE_TRUSTED_PROXIES: ${PE_TRUSTED_PROXIES:-}
+      PE_LICENSE_MODE: ${PE_LICENSE_MODE:-static}
+      PE_LICENSE_URL: ${PE_LICENSE_URL:-}
+      PE_LICENSE_PRODUCT: ${PE_LICENSE_PRODUCT:-pandaeye}
+      PE_LICENSE_PEPPER:
+      PE_STATIC_LICENSES:
+      PE_OWNER_ID: gateway-1
+    volumes:
+      - *ca-mount
+      - type: bind
+        source: ./nats/auth/creds/pe-gateway.creds
+        target: /etc/pandaeye/nats.creds
+        read_only: true
+        bind: { create_host_path: false }
+    ports:
+      - "${GATEWAY_BIND:-127.0.0.1:8080}:8080"
+    depends_on: *pandaeye-depends
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pe-healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ----------------------------------------------------------------------------- PandaEye: workers
+  # Two replicas share the partitions through leases (PE_LEASES=auto: a fair share each). Owner ids
+  # default to "<role>-<hostname>", which differs per replica.
+  worker:
+    <<: *pandaeye
+    command: ["worker"]
+    deploy:
+      replicas: 2
+    environment:
+      <<: *pandaeye-env
+      PE_WORKER_MAX_MEMORY: ${PE_WORKER_MAX_MEMORY:-2GiB}
+    volumes:
+      - *ca-mount
+      - type: bind
+        source: ./nats/auth/creds/pe-worker.creds
+        target: /etc/pandaeye/nats.creds
+        read_only: true
+        bind: { create_host_path: false }
+    depends_on: *pandaeye-depends
+    # Liveness only: the metrics listener (loopback inside the container).
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pe-healthcheck", "http://127.0.0.1:9090/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ----------------------------------------------------------------------- PandaEye: verdict service
+  verdict:
+    <<: *pandaeye
+    command: ["verdict"]
+    environment:
+      <<: *pandaeye-env
+      PE_PUBLIC_URL: ${PE_PUBLIC_URL:-}
+      PE_OWNER_ID: verdict-1
+    volumes:
+      - *ca-mount
+      - type: bind
+        source: ./nats/auth/creds/pe-verdict.creds
+        target: /etc/pandaeye/nats.creds
+        read_only: true
+        bind: { create_host_path: false }
+    depends_on: *pandaeye-depends
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pe-healthcheck", "http://127.0.0.1:9090/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ------------------------------------------------------------------------------- PandaEye: API
+  api:
+    <<: *pandaeye
+    command: ["api"]
+    environment:
+      <<: *pandaeye-env
+      PE_API_LISTEN: 0.0.0.0:8081
+      PE_PUBLIC_URL: ${PE_PUBLIC_URL:-}
+      PE_TRUSTED_PROXIES: ${PE_TRUSTED_PROXIES:-}
+      PE_LICENSE_MODE: ${PE_LICENSE_MODE:-static}
+      PE_LICENSE_URL: ${PE_LICENSE_URL:-}
+      PE_LICENSE_PRODUCT: ${PE_LICENSE_PRODUCT:-pandaeye}
+      PE_LICENSE_PEPPER:
+      PE_STATIC_LICENSES:
+      PE_SERVICE_TOKEN:
+      PE_SERVICE_TOKEN_NEXT:
+      PE_ASSERTION_KEY:
+      PE_OWNER_ID: api-1
+    volumes:
+      - *ca-mount
+      - type: bind
+        source: ./nats/auth/creds/pe-api.creds
+        target: /etc/pandaeye/nats.creds
+        read_only: true
+        bind: { create_host_path: false }
+    ports:
+      - "${API_BIND:-127.0.0.1:8081}:8081"
+    depends_on: *pandaeye-depends
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pe-healthcheck", "http://127.0.0.1:9090/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  nats-data:
+  postgres-data:
+  clickhouse-data:

@@ -1,0 +1,16 @@
+# PandaEye e2e: partial spigot.yml (Spigot fills in the rest).
+config-version: 12
+settings:
+  restart-on-crash: false
+  netty-threads: 2
+  timeout-time: 60
+  bungeecord: false
+  log-villager-deaths: false
+  log-named-deaths: false
+stats:
+  disable-saving: true
+advancements:
+  disable-saving: true
+commands:
+  log: true
+  silent-commandblock-console: true

@@ -1,0 +1,5 @@
+# appended to config/paper-global.yml for folia/canvas
+threaded-regions:
+  grid-exponent: 4
+  scheduler: EDF
+  threads: 2

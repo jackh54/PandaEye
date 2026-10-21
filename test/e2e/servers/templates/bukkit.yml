@@ -1,0 +1,23 @@
+# PandaEye e2e: partial bukkit.yml (Bukkit fills in the rest). connection-throttle -1: many bot logins from 127.0.0.1.
+settings:
+  allow-end: false
+  connection-throttle: -1
+  query-plugins: false
+  shutdown-message: Server closed
+spawn-limits:
+  monsters: 0
+  animals: 0
+  water-animals: 0
+  water-ambient: 0
+  water-underground-creature: 0
+  axolotls: 0
+  ambient: 0
+ticks-per:
+  animal-spawns: 400
+  monster-spawns: 400
+  water-spawns: 400
+  water-ambient-spawns: 400
+  water-underground-creature-spawns: 400
+  axolotl-spawns: 400
+  ambient-spawns: 400
+  autosave: 6000

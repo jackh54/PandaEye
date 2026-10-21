@@ -1,0 +1,12 @@
+.venv/
+build/
+*.egg-info/
+.pytest_cache/
+__pycache__/
+# exports and model directories contain player UUIDs (personal data): never commit them
+data/
+models/
+*.parquet
+*.ndjson
+*.onnx
+*.joblib

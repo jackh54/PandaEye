@@ -1,0 +1,22 @@
+# PandaEye e2e: partial paper-global.yml (_version pinned to the 1.21.11 builds; Paper fills in the rest).
+# The packet limiter stays at the shipped default (cheat scenarios are sized to stay below it).
+_version: 31
+chunk-system:
+  io-threads: 1
+  worker-threads: 1
+console:
+  enable-brigadier-completions: false
+  enable-brigadier-highlighting: false
+  has-all-permissions: true
+logging:
+  deobfuscate-stacktraces: true
+misc:
+  max-joins-per-tick: 10
+spark:
+  enable-immediately: false
+  enabled: false
+update-checker:
+  enabled: false
+watchdog:
+  early-warning-delay: 10000
+  early-warning-every: 5000

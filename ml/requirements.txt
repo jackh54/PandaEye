@@ -1,0 +1,36 @@
+# PandaEye ML pipeline - exact pins, verified with `python -m pytest ml` on CPython 3.13 (linux x86_64).
+# Install: python3.13 -m venv ml/.venv && ml/.venv/bin/pip install -r ml/requirements.txt
+#
+# Direct dependencies
+numpy==2.5.4
+pandas==3.0.6
+scipy==1.18.1
+scikit-learn==1.9.1
+joblib==1.6.0
+onnx==1.23.2
+onnxruntime==1.31.0
+skl2onnx==1.20.0
+# protobuf 7.x rejects the numpy booleans skl2onnx 1.20.0 writes into TreeEnsemble int attributes
+# ("AttributeProto.ints: Expected an int, got a boolean"); stay on 6.x until skl2onnx fixes it.
+protobuf==6.33.6
+clickhouse-connect==1.11.0
+pyarrow==26.0.0
+pytest==9.1.1
+#
+# Transitive dependencies (pinned for reproducibility)
+backports.zstd==1.8.0
+certifi==2026.10.19
+cloudpickle==3.1.2
+flatbuffers==25.12.19
+iniconfig==2.3.1
+lz4==4.4.5
+ml_dtypes==0.6.0
+narwhals==2.27.1
+packaging==26.3
+pluggy==1.7.0
+Pygments==2.21.0
+python-dateutil==2.9.0.post0
+six==1.17.0
+threadpoolctl==3.7.0
+typing_extensions==4.16.0
+urllib3==2.8.0

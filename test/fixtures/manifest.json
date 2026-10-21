@@ -1,0 +1,6 @@
+[
+  {"name": "hello", "kind": "hello", "bytes": 201, "sha256": "95c713b3f1ffeb5e9274b4ff81f30de6d07ab067f6d38ce3eddbbd698b7300f9", "description": "Hello for server id 3f1c2b4a-0000-4000-8000-000000000001, protocol 1, shadow mode"},
+  {"name": "batch_small", "kind": "batch", "bytes": 190, "sha256": "e810e5fcae54303a79f744502f78678dc797ce61f69e0e1d6fe4a9b358db2305", "seq": 1, "events": 2, "description": "Batch seq 1 with a PlayerJoin and one MoveSample (below the 1 KiB threshold)"},
+  {"name": "batch_moves", "kind": "batch", "bytes": 16679, "sha256": "b0b40ccf103efeb48e5f1169e51d5509040013caef948ed175ed9ea6393c916f", "seq": 2, "events": 200, "description": "Batch seq 2, replayed, 200 MoveSamples (x = i * 0.25, tick = i + 1)"},
+  {"name": "batch_flag", "kind": "batch", "bytes": 2778, "sha256": "0d301ccea337151c16b6d2646fa344fe2693a56406e15fa4ffabd7d7bc3559d2", "seq": 3, "events": 1, "description": "Batch seq 3 with a LocalFlag (movement.speed) carrying data and 40 context moves"}
+]

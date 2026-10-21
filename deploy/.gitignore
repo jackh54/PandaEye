@@ -1,0 +1,7 @@
+# Generated secrets, NATS credentials and development certificates
+# (scripts/gen-env.sh, nats/gen-auth, scripts/gen-dev-certs.sh)
+.env
+.env.*
+!.env.example
+certs/
+nats/auth/
