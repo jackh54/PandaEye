@@ -1,0 +1,10 @@
+{
+  "id": "pandaeye",
+  "name": "PandaEye",
+  "version": "${version}",
+  "description": "Cloud anticheat (proxy integration)",
+  "main": "dev.pandascript.pandaeye.velocity.PandaEyeVelocity",
+  "dependencies": [
+    {"id": "floodgate", "optional": true}
+  ]
+}

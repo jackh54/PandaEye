@@ -65,7 +65,7 @@ type Config struct {
 func ConfigFrom(c *config.Config) Config {
 	return Config{
 		URL: c.NATS.URL, Creds: c.NATS.Creds, Token: c.NATS.Token, TLSCA: c.NATS.TLSCA,
-		Name: "pandaeye-" + string(c.Role) + "-" + c.OwnerID,
+		Name: "pandaeye-" + c.OwnerID,
 		Dir:  c.NATS.Dir, SyncAlways: c.NATS.Sync == config.SyncAlways,
 		Replicas: c.NATS.Replicas, Partitions: c.Partitions,
 		EventsMaxAge: c.EventsMaxAge, EventsMaxBytes: c.EventsMaxBytes,

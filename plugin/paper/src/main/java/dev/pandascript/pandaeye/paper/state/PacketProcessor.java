@@ -162,8 +162,12 @@ public final class PacketProcessor {
     // Server -> client
     // ---------------------------------------------------------------------------------------------
 
-    public void joinGame(int entityId, GameMode mode, String world, long nanos) {
+    /** S JOIN_GAME; {@code brand} is the brand the client sent during configuration, or null. */
+    public void joinGame(int entityId, GameMode mode, String world, String brand, long nanos) {
         state.joinGame(entityId, mode, world);
+        if (brand != null) {
+            state.brand(brand);
+        }
         checks.dispatch(new CheckInput.Reset(CheckInput.ResetReason.JOIN), nanos);
         events.joined(nanos);
     }

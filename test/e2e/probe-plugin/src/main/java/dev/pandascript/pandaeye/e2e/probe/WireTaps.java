@@ -52,6 +52,8 @@ final class WireTaps {
     private final ProbePlugin probe;
     private final Stats stats;
     final ConcurrentHashMap<Channel, Conn> conns = new ConcurrentHashMap<>();
+    /** pipeline handler names per player at the time the relative taps were attached (kept after disconnect). */
+    final ConcurrentHashMap<String, List<String>> pipelines = new ConcurrentHashMap<>();
 
     WireTaps(ProbePlugin probe, Stats stats) {
         this.probe = probe;
@@ -71,6 +73,7 @@ final class WireTaps {
         final ArrayDeque<long[]> outQ = new ArrayDeque<>();
         final ArrayDeque<long[]> inQ = new ArrayDeque<>();
         boolean outEncSeen;
+        long wireNs; // time spent in OutWire's own parsing during the current OutEnc write (excluded from costs)
         volatile boolean relativeAttached;
         long inT0;
         volatile List<String> pipelineAtAttach = List.of();
@@ -133,6 +136,7 @@ final class WireTaps {
                     c.relativeAttached = true;
                 }
                 c.pipelineAtAttach = List.copyOf(p.names());
+                if (pipelines.size() < 500) pipelines.put(c.name, c.pipelineAtAttach);
                 probe.debug("pipeline " + c.name + ": " + p.names());
             } catch (Throwable t) {
                 probe.warn("attachRelative", t);
@@ -207,8 +211,10 @@ final class WireTaps {
         public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
             try {
                 if (msg instanceof ByteBuf b && b.isReadable() && probe.enabled) {
+                    long t = System.nanoTime();
                     boolean compressed = ctx.pipeline().get("compress") != null;
                     c.outParser.feed(b, compressed, (id, crc, len) -> onOutFrame(c, id, crc, len));
+                    c.wireNs += System.nanoTime() - t;
                 }
             } catch (Throwable t) {
                 probe.warn("out-wire", t);
@@ -296,11 +302,14 @@ final class WireTaps {
             } catch (Throwable t) {
                 probe.warn("out-enc", t);
             }
+            c.wireNs = 0;
             t0 = System.nanoTime();
             try {
                 ctx.write(msg, promise);
             } finally {
-                stats.hist("cost.out.after_encoder_ns").record(System.nanoTime() - t0);
+                // everything downstream of the vanilla encoder (Via/PacketEvents encoders incl. their listeners,
+                // compression, framing) minus the probe's own wire parsing
+                stats.hist("cost.out.after_encoder_ns").record(System.nanoTime() - t0 - c.wireNs);
             }
         }
     }

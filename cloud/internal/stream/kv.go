@@ -285,7 +285,8 @@ func (w *Watch[T]) Len() int {
 	return len(w.values)
 }
 
-// OnChange registers fn for every later change.
+// OnChange registers fn for every later change. Register before relying on Get: a change applied
+// before registration is visible through Get but not reported to fn.
 func (w *Watch[T]) OnChange(fn func(key string, v T, deleted bool)) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

@@ -325,6 +325,7 @@ function reasonText (r) {
   if (r == null) return ''
   if (typeof r === 'string') return r
   try {
+    if (r.type === 'string') return r.value
     if (r.value?.translate) return r.value.translate.value || JSON.stringify(r)
     if (r.value?.text) return r.value.text.value
     return JSON.stringify(r).slice(0, 300)

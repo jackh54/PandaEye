@@ -21,6 +21,7 @@ var (
 	ErrNotFound      = errors.New("store: not found")
 	ErrConflict      = errors.New("store: conflict")
 	ErrLimitExceeded = errors.New("store: limit exceeded")
+	ErrInvalid       = errors.New("store: invalid value") // e.g. evidence that is not JSON
 )
 
 // Store is the complete relational store.

@@ -62,7 +62,7 @@ func Run(ctx context.Context, d *Deps, services ...Named) error {
 	case r := <-results:
 		pending--
 		if r.err != nil {
-			first = fmt.Errorf("%s: %w", r.name, r.err)
+			first = fmt.Errorf("service %s failed: %w", r.name, r.err)
 			d.Log.Error("service failed", "service", r.name, "err", r.err)
 		} else {
 			d.Log.Info("service stopped", "service", r.name)
@@ -78,7 +78,7 @@ func Run(ctx context.Context, d *Deps, services ...Named) error {
 			if r.err != nil && !errors.Is(r.err, context.Canceled) {
 				d.Log.Warn("service stopped with error", "service", r.name, "err", r.err)
 				if first == nil {
-					first = fmt.Errorf("%s: %w", r.name, r.err)
+					first = fmt.Errorf("service %s failed: %w", r.name, r.err)
 				}
 			}
 		case <-timeout:

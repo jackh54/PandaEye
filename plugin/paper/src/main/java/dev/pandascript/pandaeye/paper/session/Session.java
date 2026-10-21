@@ -56,6 +56,7 @@ public final class Session {
     private volatile int publishedTick;
     private volatile boolean publishedInVehicle;
     private volatile double publishedScale = 1;
+    private volatile boolean publishedSeeded;
     private volatile Set<Mitigation> mitigations = Set.of();
 
     public Session(User user, UUID uuid, String name, boolean hotLoaded, ClientInfo client, SessionSignals signals,
@@ -247,11 +248,16 @@ public final class Session {
         return true;
     }
 
-    /** Netty-published summary other players' threads may read (attack target info, env events). */
-    public void publish(int tick, boolean inVehicle, double scale) {
+    /** Netty-published summary other threads may read (attack target info, env events, status). */
+    public void publish(int tick, boolean inVehicle, double scale, boolean seeded) {
         publishedTick = tick;
         publishedInVehicle = inVehicle;
         publishedScale = scale;
+        publishedSeeded = seeded;
+    }
+
+    public boolean publishedSeeded() {
+        return publishedSeeded;
     }
 
     public int publishedTick() {

@@ -131,20 +131,40 @@ func compressDeflate(raw []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// inflate decodes a raw DEFLATE stream, reading at most max+1 bytes of output.
+// inflate decodes a raw DEFLATE stream into at most max bytes. Output is collected in chunks of
+// growing size and joined once, so a bomb costs about twice max in allocations, never more.
 func inflate(b []byte, max int) ([]byte, error) {
 	src := bytes.NewReader(b)
 	r := flate.NewReader(src)
 	defer r.Close()
-	out, err := io.ReadAll(io.LimitReader(r, int64(max)+1))
-	if err != nil {
-		return nil, malformed("deflate: %v", err)
-	}
-	if len(out) > max {
-		return nil, tooLarge("deflate output exceeds %d bytes", max)
+	var chunks [][]byte
+	total, size := 0, 16<<10
+	for done := false; !done; {
+		c := make([]byte, size)
+		n := 0
+		for n < len(c) {
+			m, err := r.Read(c[n:])
+			n += m
+			if err == io.EOF {
+				done = true
+				break
+			}
+			if err != nil {
+				return nil, malformed("deflate: %v", err)
+			}
+		}
+		if total += n; total > max {
+			return nil, tooLarge("deflate output exceeds %d bytes", max)
+		}
+		chunks = append(chunks, c[:n])
+		size = min(2*size, 1<<20)
 	}
 	if src.Len() != 0 {
 		return nil, malformed("data after the end of the deflate stream")
+	}
+	out := make([]byte, 0, total)
+	for _, c := range chunks {
+		out = append(out, c...)
 	}
 	return out, nil
 }

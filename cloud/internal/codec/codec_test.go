@@ -246,7 +246,7 @@ func TestDeflateBomb(t *testing.T) {
 	if _, err := d.Decode(ctx, msg); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("deflate bomb: %v", err)
 	}
-	if a := allocPerOp(3, func() { _, _ = d.Decode(ctx, msg) }); a > 40<<20 {
+	if a := allocPerOp(3, func() { _, _ = d.Decode(ctx, msg) }); a > 2*MaxDecompressed+(2<<20) {
 		t.Fatalf("deflate bomb allocated %d bytes per call", a)
 	}
 	ok, _ := EncodeClientFrame(sampleBatch(3), Deflate)

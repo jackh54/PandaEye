@@ -64,6 +64,8 @@ type Options struct {
 	Logger  *slog.Logger // default: NewLogger(os.Stderr, cfg.LogLevel)
 	// HTTPClient fetches the Cloudflare ranges (PE_TRUSTED_PROXIES_PRESET); default 5 s timeout.
 	HTTPClient *http.Client
+	// TuneStream adjusts the bus configuration before connecting (tests shorten lease timings).
+	TuneStream func(*stream.Config)
 }
 
 // New builds the dependencies of cfg.Role: logger, metrics, store (migrated in `all`, otherwise its
@@ -108,7 +110,11 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (*Deps, error) {
 		}
 	}
 	if cfg.Role != config.RoleMigrate && !(cfg.Role == config.RoleReplay && cfg.NATS.Embedded()) {
-		bus, err := stream.Open(ctx, stream.ConfigFrom(cfg), log.With("component", "stream"), d.Metrics)
+		sc := stream.ConfigFrom(cfg)
+		if opts.TuneStream != nil {
+			opts.TuneStream(&sc)
+		}
+		bus, err := stream.Open(ctx, sc, log.With("component", "stream"), d.Metrics)
 		if err != nil {
 			return nil, err
 		}

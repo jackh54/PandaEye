@@ -60,8 +60,8 @@ func TestLeaseSelfFencingBeforeTakeover(t *testing.T) {
 	time.Sleep(2 * testTimings.Renew)
 	cut := time.Now()
 	a.NC.Close() // owner A can no longer renew (partition, crash of its connection)
-	var fencedAt time.Time
-	go func() { <-la.Context().Done(); fencedAt = time.Now() }()
+	fenced := make(chan time.Time, 1)
+	go func() { <-la.Context().Done(); fenced <- time.Now() }()
 
 	var lb *Lease
 	for lb == nil {
@@ -73,6 +73,11 @@ func TestLeaseSelfFencingBeforeTakeover(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	takeover := time.Now()
+	var fencedAt time.Time
+	select {
+	case fencedAt = <-fenced:
+	default:
+	}
 	if fencedAt.IsZero() || !errors.Is(la.Err(), ErrFenced) || la.Valid() {
 		t.Fatalf("A not fenced before B took over: %v", la.Err())
 	}

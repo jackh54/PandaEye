@@ -84,7 +84,7 @@ public final class CheckHarness {
 
     /** JOIN_GAME in survival, abilities (not flying), a keep-alive exchange, and one tick end. */
     public CheckHarness join() {
-        processor.joinGame(1, GameMode.GAME_MODE_SURVIVAL, "minecraft:overworld", now);
+        processor.joinGame(1, GameMode.GAME_MODE_SURVIVAL, "minecraft:overworld", null, now);
         processor.serverAbilities(new Abilities(false, false, false, 0.05f), now);
         processor.tickingState(20, false, now);
         acknowledge();

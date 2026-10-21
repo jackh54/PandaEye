@@ -136,6 +136,10 @@ mitigations:
   enabled: true
 debug: $DEBUG
 EOF
+  # only read by the e2e fake (test/e2e/fake-pandaeye): deliberate shadow-invariant violations as negative controls
+  if [[ -n "${PE_E2E_FAKE_VIOLATION:-}" ]]; then
+    printf 'e2e-fake:\n  violation: %s\n' "$PE_E2E_FAKE_VIOLATION" >> "$DIR/plugins/PandaEye/config.yml"
+  fi
 }
 
 case "$PROFILE" in

@@ -67,7 +67,7 @@ var ErrConsumerGone = errors.New("stream: consumer deleted by a newer epoch")
 type pendingMsg struct {
 	seq     uint64
 	msg     jetstream.Msg
-	touched time.Time // received or last InProgress
+	touched time.Time // first received or last InProgress
 	state   int       // 0 running, 1 done, 2 failed
 }
 
@@ -200,8 +200,10 @@ func (c *consumeLoop) receive(ctx context.Context, m jetstream.Msg, h Handler) {
 	seq := meta.Sequence.Stream
 	c.b.m.ConsumerLag.WithLabelValues(c.e.Base).Set(float64(meta.NumPending))
 	c.mu.Lock()
-	if p, ok := c.bySeq[seq]; ok {
-		p.msg, p.touched = m, time.Now() // redelivery of an in-flight message
+	if _, ok := c.bySeq[seq]; ok {
+		// Redelivery of an in-flight message. Keep acking with the first delivery's handle: the
+		// server ignores an AckAll whose delivery sequence is below the last one acked, so acking
+		// with a redelivery (higher delivery sequence) would turn later acks into no-ops.
 		c.mu.Unlock()
 		return
 	}

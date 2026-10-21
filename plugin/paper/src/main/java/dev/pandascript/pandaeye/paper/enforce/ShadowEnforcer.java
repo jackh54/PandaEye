@@ -1,7 +1,7 @@
 package dev.pandascript.pandaeye.paper.enforce;
 
+import dev.pandascript.pandaeye.paper.session.SetbackTarget;
 import net.kyori.adventure.text.Component;
-import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.entity.EntityDamageEvent;
@@ -19,7 +19,7 @@ public final class ShadowEnforcer implements Enforcer {
     }
 
     @Override
-    public void setback(Player player, Location target) {
+    public void setback(Player player, SetbackTarget target) {
         counters.count(EnforcerCounters.Action.SETBACK);
     }
 

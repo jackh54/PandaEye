@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.paper.enforce;
 
+import dev.pandascript.pandaeye.paper.session.SetbackTarget;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -30,10 +31,15 @@ public final class LiveEnforcer implements Enforcer {
     }
 
     @Override
-    public void setback(Player player, Location target) {
+    public void setback(Player player, SetbackTarget target) {
         counters.count(EnforcerCounters.Action.SETBACK);
-        player.getScheduler().run(plugin,
-                task -> player.teleportAsync(target, PlayerTeleportEvent.TeleportCause.PLUGIN), null);
+        player.getScheduler().run(plugin, task -> {
+            if (player.getWorld().getUID().equals(target.worldUid())) {
+                Location location = new Location(player.getWorld(), target.x(), target.y(), target.z(),
+                        target.yaw(), target.pitch());
+                player.teleportAsync(location, PlayerTeleportEvent.TeleportCause.PLUGIN);
+            }
+        }, null);
     }
 
     @Override

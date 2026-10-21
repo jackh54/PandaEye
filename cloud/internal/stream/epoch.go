@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -23,9 +24,10 @@ const (
 
 // ConsumerSpec names the durable consumer of one leased work unit.
 type ConsumerSpec struct {
-	Stream string // e.g. StreamEvents
-	Name   string // base name, e.g. "events-07"; each epoch's durable is "<Name>-<epoch>"
-	Filter string // subject filter; empty = the whole stream
+	Stream  string        // e.g. StreamEvents
+	Name    string        // base name, e.g. "events-07"; each epoch's durable is "<Name>-<epoch>"
+	Filter  string        // subject filter; empty = the whole stream
+	AckWait time.Duration // 0 = AckWait (tests shorten it)
 }
 
 // PartitionConsumer returns the spec of a partition's consumer: "events-07" on pe.events.07 for
@@ -51,8 +53,11 @@ type Epoch struct {
 // AckFloor.Stream of the previous epochs' durable consumers, deletes them, and creates
 // "<Name>-<epoch>" delivering from AckFloor + 1; without a previous consumer it delivers from
 // now - FirstStartBack. Because every epoch has its own durable name, acks from a fenced previous
-// owner can never move the new consumer's ack floor.
+// owner can never move the new consumer's ack floor. An empty epoch picks a random one.
 func (b *Bus) ResetConsumer(ctx context.Context, spec ConsumerSpec, epoch string) (*Epoch, error) {
+	if epoch == "" {
+		epoch = newEpoch()
+	}
 	st, err := b.JS.Stream(ctx, spec.Stream)
 	if err != nil {
 		return nil, fmt.Errorf("stream: %s: %w", spec.Stream, err)
@@ -87,7 +92,7 @@ func (b *Bus) ResetConsumer(ctx context.Context, spec ConsumerSpec, epoch string
 		Durable:        e.Name,
 		FilterSubject:  spec.Filter,
 		AckPolicy:      jetstream.AckAllPolicy,
-		AckWait:        AckWait,
+		AckWait:        cmp.Or(spec.AckWait, AckWait),
 		MaxAckPending:  MaxAckPending,
 		MaxDeliver:     -1,
 		ReplayPolicy:   jetstream.ReplayInstantPolicy,

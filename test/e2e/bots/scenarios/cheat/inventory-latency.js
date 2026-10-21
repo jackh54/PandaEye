@@ -89,7 +89,7 @@ module.exports = [
         if (i % 20 === 0) { v.input.forward = d > 3.5 ? 1 : 0; v.input.yaw = 180 }
       })
     },
-    verify (tr) {
+    verify (tr, { dump }) {
       const es = tr.ch_pingspoof
       const delays = (outP, inP) => {
         const sent = new Map()
@@ -103,7 +103,16 @@ module.exports = [
       const ka = delays('KEEP_ALIVE', 'KEEP_ALIVE')
       const pg = delays('PING', 'PONG')
       const mk = T.median(ka); const mp = T.median(pg)
-      return { ok: ka.length >= 4 && mk >= 450 && (pg.length === 0 || mp < 150), summary: `${ka.length} keep-alives, median reply ${T.fmt(mk, 0)} ms; ${pg.length} pings, median pong ${T.fmt(mp, 0)} ms` }
+      // PONGs to KnockbackSync's PINGs are consumed by KnockbackSync's shaded PacketEvents before the PacketEvents
+      // plugin sees them, so they are counted at the wire instead (probe netty tap).
+      const wOut = (dump.counters['player.wire.out.ch_pingspoof'] || {})['play:PING'] || 0
+      const wIn = (dump.counters['player.wire.in.ch_pingspoof'] || {})['play:PONG'] || 0
+      const pongsOk = wOut === 0 || wIn >= 0.9 * wOut
+      return {
+        ok: ka.length >= 4 && mk >= 450 && pongsOk && (pg.length === 0 || mp < 150),
+        summary: `${ka.length} keep-alives, median reply ${T.fmt(mk, 0)} ms; wire: ${wOut} PINGs / ${wIn} PONGs (pong delay 0 ms by construction)` +
+          (pg.length ? `; PE-visible pongs median ${T.fmt(mp, 0)} ms` : '; PONGs invisible to PacketEvents listeners (consumed by KnockbackSync)')
+      }
     }
   },
   {

@@ -1,0 +1,6 @@
+# fallback defaults of the e2e fake (provision.sh writes the real config.yml)
+mode: shadow
+cloud:
+  endpoint: "ws://127.0.0.1:8080/v1/connect"
+e2e-fake:
+  violation: none

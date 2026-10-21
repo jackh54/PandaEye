@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/jackh54/PandaEye/cloud/internal/store"
@@ -71,6 +72,9 @@ func (s *Store) UpsertVerdict(ctx context.Context, v *store.Verdict) (bool, erro
 	evidence := string(v.Evidence)
 	if len(v.Evidence) == 0 {
 		evidence = "{}"
+	}
+	if !json.Valid([]byte(evidence)) {
+		return false, fmt.Errorf("%w: evidence is not JSON", store.ErrInvalid)
 	}
 	ms := make([]int32, len(v.Mitigations))
 	for i, m := range v.Mitigations {

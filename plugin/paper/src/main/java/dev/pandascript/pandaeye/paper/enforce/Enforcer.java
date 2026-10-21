@@ -1,7 +1,7 @@
 package dev.pandascript.pandaeye.paper.enforce;
 
+import dev.pandascript.pandaeye.paper.session.SetbackTarget;
 import net.kyori.adventure.text.Component;
-import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.entity.EntityDamageEvent;
@@ -18,8 +18,8 @@ public interface Enforcer {
     /** True for the implementation that really acts. */
     boolean live();
 
-    /** Sets a player back (teleportAsync on the player's entity thread). Any thread. */
-    void setback(Player player, Location target);
+    /** Sets a player back (teleportAsync on the player's entity thread, same world only). Any thread. */
+    void setback(Player player, SetbackTarget target);
 
     /** Kicks an online player on the player's entity thread. Any thread. */
     void kick(Player player, Component message);

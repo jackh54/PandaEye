@@ -315,6 +315,10 @@ func testVerdicts(t *testing.T, s store.Store) {
 	}
 	_, err = s.GetVerdict(ctx, b, v.ID)
 	wantErr(t, err, store.ErrNotFound)
+	bad := verdict(a, srv, player, pb.Action_ACTION_ALERT, t0)
+	bad.Evidence = json.RawMessage("{not json")
+	_, err = s.UpsertVerdict(ctx, bad)
+	wantErr(t, err, store.ErrInvalid)
 
 	for i := 0; i < 5; i++ {
 		x := verdict(a, srv, player, pb.Action_ACTION_ALERT, t0.Add(time.Duration(i+1)*time.Minute))
@@ -768,6 +772,7 @@ func testAudit(t *testing.T, s store.Store) {
 			Target: a, Detail: json.RawMessage(fmt.Sprintf(`{"i":%d}`, i)), CreatedAt: t0.Add(time.Duration(i) * time.Second)}))
 	}
 	check(t, s.InsertAudit(ctx, &store.AuditEntry{TenantID: b, Principal: "system", Action: "x", CreatedAt: t0}))
+	wantErr(t, s.InsertAudit(ctx, &store.AuditEntry{TenantID: b, Principal: "system", Action: "x", Detail: json.RawMessage("nope")}), store.ErrInvalid)
 	p1, next, err := s.ListAudit(ctx, a, store.Page{Limit: 3})
 	check(t, err)
 	p2, next2, err := s.ListAudit(ctx, a, store.Page{Limit: 3, Cursor: next})

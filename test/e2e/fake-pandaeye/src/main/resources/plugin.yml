@@ -1,0 +1,15 @@
+# Test double with the real plugin's name/command (ARCHITECTURE 4.1) - NOT the real PandaEye.
+name: PandaEye
+version: '${version}'
+main: dev.pandascript.pandaeye.e2efake.FakePandaEye
+api-version: '1.21'
+folia-supported: true
+depend: [packetevents]
+description: PandaEye e2e test double (shadow-mode citizen with switchable violations)
+commands:
+  pandaeye:
+    aliases: [peye]
+    permission: pandaeye.command
+permissions:
+  pandaeye.command:
+    default: op

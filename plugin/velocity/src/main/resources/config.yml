@@ -1,0 +1,11 @@
+# shadow = observe only; live = enforcement allowed when the dashboard also enables enforcement.
+mode: shadow
+network-id: ""
+# HMAC secret for the pandaeye:session message sent to backends (must match proxy.secret on the backends).
+session-secret: ""
+cloud:
+  enabled: true
+  endpoint: "wss://cloud.pandaeye.dev/v1/connect"
+  license-key: ""
+  # ws:// is refused except to a loopback address unless this is true (cloud on a private network only).
+  allow-insecure: false

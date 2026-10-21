@@ -226,6 +226,7 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
                 case "reset" -> {
                     stats.clear();
                     tick.reset();
+                    taps.pipelines.clear();
                     pe.traces.clear();
                     kicks.clear();
                     quits.clear();
@@ -549,7 +550,7 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
             root.add("plugin_events", j);
         }
         JsonObject pipes = new JsonObject();
-        for (WireTaps.Conn c : taps.conns.values()) pipes.add(c.name, Stats.arr(c.pipelineAtAttach));
+        for (Map.Entry<String, List<String>> e : new java.util.TreeMap<>(taps.pipelines).entrySet()) pipes.add(e.getKey(), Stats.arr(e.getValue()));
         root.add("pipelines", pipes);
         JsonObject pend = new JsonObject();
         taps.pendingQueues().forEach(pend::addProperty);

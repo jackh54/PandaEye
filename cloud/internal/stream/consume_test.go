@@ -129,8 +129,8 @@ func TestConsumeOrderedWithContiguousAcks(t *testing.T) {
 	if r.err != nil || r.res.LastAcked != seqs[299] || r.res.LastApplied != seqs[299] {
 		t.Fatalf("result %+v %v", r.res, r.err)
 	}
-	e2, err := b.ResetConsumer(ctxT(t, 10*time.Second), PartitionConsumer(GroupEvents, 1), newEpoch())
-	if err != nil || e2.StartSeq != seqs[299]+1 {
+	e2, err := b.ResetConsumer(ctxT(t, 10*time.Second), PartitionConsumer(GroupEvents, 1), "")
+	if err != nil || e2.StartSeq != seqs[299]+1 || e2.Name == e.Name {
 		t.Fatalf("next epoch must start after the ack floor: %+v %v", e2, err)
 	}
 }
@@ -464,5 +464,70 @@ func TestPinnedConsumerAdmitsOnePuller(t *testing.T) {
 	defer bmu.Unlock()
 	if bGot != 0 {
 		t.Fatalf("an unpinned puller received %d messages", bGot)
+	}
+}
+
+// TestConsumeRedeliveries: a slow message whose ack wait expires is redelivered together with the
+// unacked ones behind it; the handler still sees every message once and the floor reaches the end.
+func TestConsumeRedeliveries(t *testing.T) {
+	srv := startServer(t)
+	b := openBus(t, testConfig(srv.ClientURL(), "owner-a"))
+	l := acquire(t, b, PartitionLeaseKey(GroupEvents, 0))
+	spec := PartitionConsumer(GroupEvents, 0)
+	spec.AckWait = time.Second
+	for _, progress := range []bool{false, true} {
+		seqs := publishN(t, b, 0, 20, fmt.Sprintf("rd-%v", progress))
+		e, err := b.ResetConsumer(ctxT(t, 10*time.Second), spec, newEpoch())
+		if err != nil {
+			t.Fatal(err)
+		}
+		release := make(chan struct{})
+		var seen recorder
+		var redelivered bool
+		var mu sync.Mutex
+		o := ConsumeOptions{InProgressAfter: time.Hour}
+		if progress {
+			o.InProgressAfter = 250 * time.Millisecond
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			b.Consume(ctx, e, l, func(_ context.Context, m *Msg, finish func(error)) {
+				seen.add(m.Seq)
+				mu.Lock()
+				redelivered = redelivered || m.Delivered > 1
+				mu.Unlock()
+				if m.Seq == seqs[4] {
+					go func() { <-release; finish(nil) }()
+					return
+				}
+				finish(nil)
+			}, o)
+		}()
+		eventually(t, 10*time.Second, "delivered", func() bool { return len(seen.get()) == 20 })
+		time.Sleep(2500 * time.Millisecond) // past the ack wait of everything behind the slow message
+		if f := ackFloor(t, e); f != seqs[3] {
+			t.Fatalf("floor %d, want %d", f, seqs[3])
+		}
+		info, _ := e.Consumer.Info(ctxT(t, 5*time.Second))
+		if progress && info.NumRedelivered != 0 {
+			t.Fatalf("InProgress did not prevent %d redeliveries", info.NumRedelivered)
+		}
+		if !progress && info.NumRedelivered == 0 {
+			t.Fatal("expected redeliveries without InProgress")
+		}
+		close(release)
+		eventually(t, 10*time.Second, "floor reaches the end after redeliveries", func() bool { return ackFloor(t, e) == seqs[19] })
+		if got := seen.get(); len(got) != 20 {
+			t.Fatalf("handler saw %d messages (redeliveries must not be handled again)", len(got))
+		}
+		mu.Lock()
+		if redelivered {
+			t.Fatal("handler was given a redelivery")
+		}
+		mu.Unlock()
+		cancel()
+		<-done
 	}
 }

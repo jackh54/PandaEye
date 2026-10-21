@@ -3,6 +3,7 @@ package sqlstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
@@ -17,6 +18,9 @@ func (s *Store) InsertAudit(ctx context.Context, e *store.AuditEntry) error {
 	detail := string(e.Detail)
 	if len(e.Detail) == 0 {
 		detail = "{}"
+	}
+	if !json.Valid([]byte(detail)) {
+		return fmt.Errorf("%w: audit detail is not JSON", store.ErrInvalid)
 	}
 	_, err := s.exec(ctx, s.w, `INSERT INTO audit_log (id, tenant_id, principal, action, target, detail, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, e.ID, e.TenantID, e.Principal, e.Action, e.Target, detail, e.CreatedAt.UnixMicro())
