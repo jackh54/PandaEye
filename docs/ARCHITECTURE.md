@@ -85,7 +85,8 @@ prometheus/client_golang, dchest/siphash. Pin the newest versions that build wit
 
 Authoritative field list: wire.proto. Key rules:
 
-- One WebSocket per server at `wss://<host>/v1/connect` (plugins refuse `ws://` except to loopback).
+- One WebSocket per server at `wss://<host>/v1/connect` (plugins refuse `ws://` except to loopback, or when
+  `cloud.allow-insecure: true` for a same-host/private network, with a warning at enable).
   Binary messages only. Byte 0 = codec (`0x00` raw, `0x01` zstd frame with content size, `0x02` raw
   DEFLATE). Compressed <= 1 MiB, decompressed <= 8 MiB. Hello is codec 0x00 and <= 16 KiB. The plugin
   compresses frames whose raw size is > 1 KiB. The cloud never compresses.
@@ -372,6 +373,7 @@ network-id: ""
 cloud:
   enabled: true
   endpoint: "wss://cloud.pandaeye.dev/v1/connect"
+  allow-insecure: false    # true allows ws:// to a non-loopback host (same host / private network only)
   license-key: ""
   batch-interval-ms: 50
   max-buffer-mb: 64
