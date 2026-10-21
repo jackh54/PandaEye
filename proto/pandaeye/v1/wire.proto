@@ -1,0 +1,527 @@
+// PandaEye wire protocol v1: game-server plugin <-> cloud gateway.
+//
+// Transport: one WebSocket per game server (or proxy), path /v1/connect.
+// Every WebSocket message is BINARY and starts with a one-byte codec header:
+//   0x00 = the rest is a raw protobuf message
+//   0x01 = the rest is a single zstd frame (with Frame_Content_Size set) wrapping the protobuf message
+// Plugin -> cloud messages are ClientFrame, cloud -> plugin messages are ServerFrame.
+// Limits: compressed message <= 1 MiB, decompressed <= 8 MiB. The cloud never compresses ServerFrames
+// in protocol v1 (they are small); plugins must still accept codec 0x01 for forward compatibility.
+//
+// Session: the first ClientFrame must be Hello (within 10 s of the upgrade). The cloud answers with
+// Welcome or with Error{fatal=true} and closes. After Welcome the plugin streams Batch frames.
+// Every Batch is acknowledged with BatchAck once it is durably in the event stream; the plugin keeps
+// unacknowledged batches and resends them (replayed=true) after a reconnect. Delivery is at-least-once;
+// the cloud de-duplicates by (server_id, seq).
+//
+// Time: every Event carries time_us = Unix time in microseconds derived from the plugin's monotonic
+// clock (unix_us_at_start + (System.nanoTime() - nano_at_start) / 1000), so it never goes backwards
+// and is comparable across events of one plugin process.
+//
+// UUIDs are 16 raw bytes, big-endian (most significant 64 bits first).
+syntax = "proto3";
+
+package pandaeye.v1;
+
+option go_package = "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1;pandaeyev1";
+option java_package = "dev.pandascript.pandaeye.protocol.v1";
+option java_multiple_files = true;
+option optimize_for = LITE_RUNTIME;
+
+// ---------------------------------------------------------------------------------------------
+// Frames
+// ---------------------------------------------------------------------------------------------
+
+message ClientFrame {
+  oneof kind {
+    Hello hello = 1;
+    Batch batch = 2;
+    Ping ping = 3;
+    VerdictAck verdict_ack = 4;
+    Goodbye goodbye = 5;
+  }
+}
+
+message ServerFrame {
+  oneof kind {
+    Welcome welcome = 1;
+    BatchAck batch_ack = 2;
+    Pong pong = 3;
+    Verdict verdict = 4;
+    Error error = 5;
+    ProbeResult probe_result = 6;
+    WatchRequest watch = 7;
+    PlayerRisk player_risk = 8;
+    RemoteConfig config_update = 9;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Handshake
+// ---------------------------------------------------------------------------------------------
+
+enum Platform {
+  PLATFORM_UNSPECIFIED = 0;
+  PLATFORM_PAPER = 1;
+  PLATFORM_FOLIA = 2;
+  PLATFORM_VELOCITY = 3;
+}
+
+message Hello {
+  uint32 protocol_version = 1;        // 1
+  string license_key = 2;
+  string server_id = 3;               // stable random UUID string generated on first start, kept in the data folder
+  string server_name = 4;             // human name shown in the dashboard ("SMP", "Hub-01")
+  string network_id = 5;              // optional: backends and proxy of one network share it
+  Platform platform = 6;
+  string platform_version = 7;        // e.g. Bukkit.getVersion()
+  string plugin_version = 8;
+  string minecraft_version = 9;       // server's Minecraft version, e.g. "1.21.11"
+  bool shadow_mode = 10;              // the plugin's local safety lock: true = never enforces anything
+  uint64 client_time_unix_ms = 11;
+  repeated string capabilities = 12;  // e.g. "tick_end", "env_sampling", "target_history", "probe"
+  uint32 online_players = 13;
+}
+
+message Welcome {
+  string connection_id = 1;           // unique per WebSocket connection
+  string tenant_id = 2;               // the license's tenant
+  uint64 server_time_unix_ms = 3;
+  RemoteConfig config = 4;
+  uint32 heartbeat_interval_ms = 5;   // plugin sends Ping at this interval (default 5000)
+  uint32 max_batch_events = 6;        // plugin must not put more events than this in one Batch (default 4096)
+  uint64 last_acked_seq = 7;          // highest batch seq the cloud already holds for this server_id (0 = none)
+}
+
+// Settings the tenant controls from the dashboard. Pushed in Welcome and again as config_update.
+message RemoteConfig {
+  uint32 leniency = 1;                // 1 (strict) .. 5 (lenient); default 4
+  bool autoban = 2;                   // cloud may issue BAN verdicts
+  bool autokick = 3;                  // cloud may issue KICK verdicts
+  bool mitigations = 4;               // cloud may issue MITIGATE verdicts
+  bool reputation_on_join = 5;        // send PlayerRisk on join (opt-in reputation network)
+  bool enforcement = 6;               // master switch on the cloud side; the plugin enforces only if
+                                      // this is true AND its local mode is "live"
+}
+
+message Goodbye {
+  string reason = 1;
+}
+
+message Error {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    CODE_BAD_REQUEST = 1;
+    CODE_UNAUTHENTICATED = 2;         // license invalid / expired / wrong product
+    CODE_LICENSE_LIMIT = 3;           // too many servers on this license
+    CODE_RATE_LIMITED = 4;
+    CODE_UNSUPPORTED_PROTOCOL = 5;
+    CODE_INTERNAL = 6;
+    CODE_SHUTTING_DOWN = 7;
+  }
+  Code code = 1;
+  string message = 2;
+  bool fatal = 3;                     // the cloud closes the connection after a fatal error
+  uint32 retry_after_ms = 4;          // hint for reconnect backoff (0 = use default backoff)
+}
+
+message Ping {
+  uint64 nonce = 1;
+  uint64 client_time_us = 2;
+}
+
+message Pong {
+  uint64 nonce = 1;
+  uint64 client_time_us = 2;          // echoed
+  uint64 server_time_us = 3;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Event batches
+// ---------------------------------------------------------------------------------------------
+
+message Batch {
+  uint64 seq = 1;                     // starts at 1, +1 per batch, never reused within one server_id
+                                      // (the plugin persists the next seq in its data folder on shutdown
+                                      // and adds 1_000_000 to it on an unclean start)
+  uint64 sent_unix_ms = 2;
+  bool replayed = 3;                  // true when resent after a reconnect / outage
+  repeated Event events = 4;
+}
+
+message BatchAck {
+  uint64 seq = 1;                     // every batch with seq <= this value is durable
+}
+
+message Vec3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message Vec3i {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+
+message TimedPos {
+  uint64 time_us = 1;                 // when the plugin received the position (event clock)
+  double x = 2;
+  double y = 3;
+  double z = 4;
+}
+
+enum Hand {
+  HAND_MAIN = 0;
+  HAND_OFF = 1;
+}
+
+enum GameMode {
+  GAME_MODE_SURVIVAL = 0;
+  GAME_MODE_CREATIVE = 1;
+  GAME_MODE_ADVENTURE = 2;
+  GAME_MODE_SPECTATOR = 3;
+}
+
+enum Face {
+  FACE_DOWN = 0;                      // -Y
+  FACE_UP = 1;                        // +Y
+  FACE_NORTH = 2;                     // -Z
+  FACE_SOUTH = 3;                     // +Z
+  FACE_WEST = 4;                      // -X
+  FACE_EAST = 5;                      // +X
+  FACE_OTHER = 6;                     // "special"/unknown face
+}
+
+enum Category {
+  CATEGORY_UNSPECIFIED = 0;
+  CATEGORY_AUTO_CLICKER = 1;
+  CATEGORY_HEURISTICS = 2;            // combat behaviour: aim, killaura, reach, velocity
+  CATEGORY_INVALID_PROTOCOL = 3;
+  CATEGORY_MOVEMENT = 4;
+  CATEGORY_TICK_SPEED = 5;
+  CATEGORY_INVENTORY = 6;
+  CATEGORY_WORLD_INTERACTION = 7;
+  CATEGORY_LATENCY_ABUSE = 8;
+}
+
+message Event {
+  bytes player = 1;                   // 16-byte UUID of the player this event is about
+  uint64 time_us = 2;                 // plugin event clock (see header)
+  uint32 tick = 3;                    // player's client tick counter at the event (count of client tick-end
+                                      // packets since join); 0 when the client does not send tick ends
+  oneof kind {
+    PlayerJoin join = 10;
+    PlayerQuit quit = 11;
+    MoveSample move = 12;
+    Attack attack = 13;
+    Swing swing = 14;
+    BlockPlace place = 15;
+    BlockDig dig = 16;
+    InventoryClick click = 17;
+    VelocityApplied velocity = 18;
+    LatencySample latency = 19;
+    LocalFlag flag = 20;
+    TeleportApplied teleport = 21;
+    EnvSample env = 22;
+    StateChange state = 23;
+    Probe probe = 24;
+    UseItem use_item = 25;
+    ServerSwitch server_switch = 26;  // sent by the proxy plugin only
+  }
+}
+
+message PlayerJoin {
+  string name = 1;
+  int32 protocol_version = 2;         // client's protocol number (ViaVersion-resolved), -1 if unknown
+  string client_version = 3;          // e.g. "1.21.4"
+  string brand = 4;                   // client brand from the minecraft:brand channel, may arrive later
+                                      // (then a second PlayerJoin with brand set and hot_loaded unchanged is sent)
+  bool bedrock = 5;                   // Geyser/Floodgate player (exempt from checks)
+  int32 entity_id = 6;
+  GameMode game_mode = 7;
+  bool hot_loaded = 8;                // the player was already online when the plugin was enabled
+  bool exempt = 9;                    // has the bypass permission
+  bytes ip_hash = 10;                 // optional (off by default): HMAC-SHA256(ip, per-install secret), first 16 bytes
+  string network_session = 11;        // set by the proxy plugin; backends leave it empty
+}
+
+message PlayerQuit {
+  string reason = 1;
+}
+
+// Movement flag bits used in MoveSample.flags and StateChange
+enum MoveFlag {
+  MOVE_FLAG_NONE = 0;
+  MOVE_FLAG_SPRINTING = 1;
+  MOVE_FLAG_SNEAKING = 2;
+  MOVE_FLAG_SWIMMING = 4;
+  MOVE_FLAG_GLIDING = 8;
+  MOVE_FLAG_IN_VEHICLE = 16;
+  MOVE_FLAG_FLYING = 32;              // abilities.flying
+  MOVE_FLAG_RIPTIDE = 64;
+  MOVE_FLAG_USING_ITEM = 128;
+  MOVE_FLAG_TELEPORT_PENDING = 256;
+  MOVE_FLAG_VELOCITY_PENDING = 512;
+  MOVE_FLAG_CONTAINER_OPEN = 1024;    // the server has a non-player container open for this player
+  MOVE_FLAG_DEAD = 2048;
+}
+
+// One client movement packet (position and/or rotation and/or ground state).
+message MoveSample {
+  double x = 1;                       // current (post-packet) position
+  double y = 2;
+  double z = 3;
+  float yaw = 4;                      // current (post-packet) rotation, unwrapped as sent by the client
+  float pitch = 5;
+  bool on_ground = 6;
+  bool has_pos = 7;                   // the packet carried a position
+  bool has_rot = 8;                   // the packet carried a rotation
+  uint32 flags = 9;                   // MoveFlag bits
+  uint32 ticks_since_last = 10;       // client ticks since the previous MoveSample that was SENT to the cloud
+  bool focus = 11;                    // true = full-rate (every packet sent); false = down-sampled idle sample
+  bool horizontal_collision = 12;     // 1.21.2+ clients report it in the movement packet
+}
+
+// The player attacked an entity (INTERACT_ENTITY action ATTACK).
+message Attack {
+  int32 target_entity_id = 1;
+  bytes target_player = 2;            // target UUID when the target is a tracked player, else empty
+  string target_type = 3;             // entity type key when known, e.g. "minecraft:player"
+  Vec3 eye = 4;                       // attacker eye position at the attack (last position + eye height)
+  float yaw = 5;                      // attacker's last rotation received before the attack
+  float pitch = 6;
+  bool sprinting = 7;
+  bool sneaking = 8;
+  float target_width = 9;             // target hitbox (scaled); 0 if unknown
+  float target_height = 10;
+  repeated TimedPos target_history = 11; // target's positions received in the last 1000 ms, oldest first
+  uint32 ping_ms = 12;                // attacker's best current RTT estimate
+  float entity_reach = 13;            // attacker's entity_interaction_range attribute (3.0 default)
+  GameMode game_mode = 14;
+  float eye_height = 15;              // eye height used for `eye`
+  bool target_in_vehicle = 16;        // target is riding something (its own position history is stale)
+  bool attacker_in_vehicle = 17;
+}
+
+message Swing {
+  Hand hand = 1;
+}
+
+message BlockPlace {
+  Vec3i block = 1;                    // the block that was clicked (placed against)
+  Face face = 2;
+  float cursor_x = 3;                 // cursor position on the face, 0..1 for vanilla clients
+  float cursor_y = 4;
+  float cursor_z = 5;
+  Hand hand = 6;
+  Vec3 eye = 7;                       // eye position at the click
+  float yaw = 8;
+  float pitch = 9;
+  bool sneaking = 10;
+  float block_reach = 11;             // block_interaction_range attribute (4.5 default)
+  bool inside_block = 12;             // 1.19+ "inside block" flag
+  string item = 13;                   // held item type key when known, empty if unknown
+}
+
+message BlockDig {
+  enum Action {
+    ACTION_START = 0;
+    ACTION_CANCEL = 1;
+    ACTION_FINISH = 2;
+    ACTION_OTHER = 3;
+  }
+  Action action = 1;
+  Vec3i block = 2;
+  Face face = 3;
+}
+
+message InventoryClick {
+  int32 window_id = 1;
+  int32 slot = 2;
+  int32 button = 3;
+  int32 mode = 4;                     // click type ordinal as in the vanilla protocol (0=PICKUP .. 6=PICKUP_ALL)
+  bool container_open = 5;            // the server had a container open for this player with this window id
+  string container_type = 6;          // e.g. "minecraft:generic_9x3", empty for the player inventory
+}
+
+message VelocityApplied {
+  enum Source {
+    SOURCE_VELOCITY_PACKET = 0;
+    SOURCE_EXPLOSION = 1;
+  }
+  Source source = 1;
+  double vx = 2;                      // blocks per tick
+  double vy = 3;
+  double vz = 4;
+}
+
+message LatencySample {
+  enum Kind {
+    KIND_KEEPALIVE = 0;               // server keep-alive -> client keep-alive response
+    KIND_PONG = 1;                    // server ping (sent by any plugin) -> client pong; passively observed
+  }
+  Kind kind = 1;
+  uint32 rtt_us = 2;
+  bool unmatched = 3;                 // a response arrived for an id we never saw sent (or out of order)
+}
+
+message LocalFlag {
+  string check_id = 1;                // e.g. "movement.speed"
+  Category category = 2;
+  double vl = 3;                      // violation level after this flag
+  double severity = 4;                // 0..1, how far beyond the limit this one was
+  double confidence = 5;              // 0..1
+  string info = 6;                    // short human-readable detail
+  map<string, double> data = 7;
+  bool confirmed = 8;                 // the world-state confirmation step ran and agreed
+}
+
+message TeleportApplied {
+  int32 teleport_id = 1;
+  double x = 2;
+  double y = 3;
+  double z = 4;
+  bool confirmed = 5;                 // false = server sent it, true = client confirmed it
+}
+
+// Coarse environment flags sampled on the player's region thread (~2 Hz) and on change.
+enum EnvFlag {
+  ENV_FLAG_NONE = 0;
+  ENV_FLAG_IN_WATER = 1;
+  ENV_FLAG_IN_LAVA = 2;
+  ENV_FLAG_CLIMBING = 4;
+  ENV_FLAG_ON_ICE = 8;
+  ENV_FLAG_ON_SLIME = 16;
+  ENV_FLAG_IN_WEB = 32;
+  ENV_FLAG_ON_HONEY = 64;
+  ENV_FLAG_IN_POWDER_SNOW = 128;
+  ENV_FLAG_IN_BUBBLE_COLUMN = 256;
+  ENV_FLAG_ON_SOUL_SPEED_BLOCK = 512;
+  ENV_FLAG_NEAR_SOLID = 1024;         // any collidable block within 1 block of the hitbox
+  ENV_FLAG_IN_VEHICLE = 2048;
+  ENV_FLAG_GLIDING = 4096;
+  ENV_FLAG_RIPTIDING = 8192;
+  ENV_FLAG_SWIMMING = 16384;
+  ENV_FLAG_NEAR_ENTITY = 32768;       // another entity (boat, shulker, player...) within 1.5 blocks
+  ENV_FLAG_LOW_CEILING = 65536;       // a collidable block within 1 block above the head
+}
+
+message EnvSample {
+  uint32 flags = 1;                   // EnvFlag bits
+  double x = 2;                       // server-side position at sampling time
+  double y = 3;
+  double z = 4;
+}
+
+message PotionLevel {
+  string effect = 1;                  // effect key, e.g. "minecraft:speed"
+  int32 amplifier = 2;                // 0 = level I
+}
+
+// Sent on join and whenever one of the fields changes (full state, not a delta).
+message StateChange {
+  GameMode game_mode = 1;
+  bool flying = 2;
+  bool allow_flight = 3;
+  float fly_speed = 4;
+  double movement_speed = 5;          // movement_speed attribute value incl. modifiers (0.1 default)
+  double jump_strength = 6;           // 0.42 default
+  double gravity = 7;                 // 0.08 default
+  double step_height = 8;             // 0.6 default
+  double scale = 9;                   // 1.0 default
+  double entity_reach = 10;           // 3.0 default
+  double block_reach = 11;            // 4.5 default
+  repeated PotionLevel effects = 12;
+  bool in_vehicle = 13;
+  int32 held_slot = 14;
+}
+
+// Phase-1 "dummy check": the plugin sends a probe, the whole pipeline (gateway -> stream -> worker ->
+// verdict service -> gateway) carries it, and a ProbeResult comes back. Measures true verdict latency.
+message Probe {
+  uint64 probe_id = 1;
+}
+
+message ProbeResult {
+  uint64 probe_id = 1;
+  bytes player = 2;                   // echoed (may be empty for server-level probes)
+  uint64 event_time_us = 3;           // echoed Event.time_us
+  uint64 gateway_recv_unix_us = 4;
+  uint64 worker_unix_us = 5;
+  uint64 verdict_unix_us = 6;
+  uint64 gateway_send_unix_us = 7;
+}
+
+message UseItem {
+  Hand hand = 1;
+  string item = 2;                    // held item type key when known
+}
+
+message ServerSwitch {
+  string from_server = 1;
+  string to_server = 2;
+  string network_session = 3;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Cloud -> plugin
+// ---------------------------------------------------------------------------------------------
+
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_ALERT = 1;                   // tell staff, change nothing
+  ACTION_MITIGATE = 2;                // quietly nerf the player until they leave (see mitigations)
+  ACTION_KICK = 3;
+  ACTION_BAN = 4;
+  ACTION_UNMITIGATE = 5;              // remove mitigations (e.g. after a staff override)
+  ACTION_UNBAN = 6;                   // a ban was overturned in the dashboard: run the unban command
+}
+
+enum Mitigation {
+  MITIGATION_UNSPECIFIED = 0;
+  MITIGATION_HIT_CANCEL = 1;          // cancel a share of the player's melee hits
+  MITIGATION_DAMAGE_REDUCE = 2;       // reduce damage the player deals
+  MITIGATION_VELOCITY_BOOST = 3;      // increase knockback the player takes
+  MITIGATION_SETBACK = 4;             // set back on movement violations
+  MITIGATION_PLACE_CANCEL = 5;        // cancel a share of the player's block placements
+}
+
+message Verdict {
+  string verdict_id = 1;              // UUID string, unique
+  bytes player = 2;
+  string player_name = 3;
+  Action action = 4;
+  repeated Mitigation mitigations = 5;
+  double strength = 6;                // 0..1 mitigation strength
+  string reason = 7;                  // short human summary, e.g. "Combat heuristics (killaura.hitbox x7, aim.snap x3)"
+  Category category = 8;              // dominant category
+  double score = 9;
+  double confidence = 10;             // 0..1
+  repeated string checks = 11;        // contributing check ids, strongest first
+  uint64 created_unix_ms = 12;
+  bool shadow = 13;                   // the tenant/cloud is in shadow mode: informational only
+  string evidence_url = 14;           // dashboard link, may be empty
+  uint32 ban_duration_s = 15;         // 0 = permanent / use the server's configured command
+}
+
+message VerdictAck {
+  string verdict_id = 1;
+  bool executed = 2;                  // false when the plugin only logged it (shadow, exempt, offline...)
+  string note = 3;
+}
+
+// Ask the plugin to send full-rate telemetry for a player for a while (suspicion without a verdict).
+message WatchRequest {
+  bytes player = 1;
+  uint32 seconds = 2;
+}
+
+// Opt-in cross-network reputation, sent after a PlayerJoin when the tenant enabled it.
+message PlayerRisk {
+  bytes player = 1;
+  double risk = 2;                    // 0..1
+  uint32 networks_flagged = 3;        // how many other networks have a confirmed cheat verdict
+  uint32 confirmed_bans = 4;
+}

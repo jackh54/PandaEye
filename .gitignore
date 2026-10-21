@@ -1,0 +1,21 @@
+# build outputs
+**/build/
+**/.gradle/
+**/out/
+**/bin/
+!cloud/cmd/**/
+**/node_modules/
+**/dist/
+**/.wrangler/
+**/__pycache__/
+*.pyc
+.venv/
+# local runtime data
+**/data/
+test/e2e/run/
+test/e2e/vendor/
+*.log
+.DS_Store
+.idea/
+*.iml
+.vscode/

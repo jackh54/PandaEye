@@ -1,0 +1,79 @@
+// PandaEye internal stream messages (NATS JetStream payloads). Never sent to plugins.
+// See docs/ARCHITECTURE.md "Event stream" for subjects, streams and partitioning.
+syntax = "proto3";
+
+package pandaeye.v1;
+
+import "pandaeye/v1/wire.proto";
+
+option go_package = "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1;pandaeyev1";
+option java_package = "dev.pandascript.pandaeye.protocol.v1";
+option java_multiple_files = true;
+option optimize_for = LITE_RUNTIME;
+
+// Identifies where events came from. Carried on every stream message.
+message Origin {
+  string tenant_id = 1;
+  string server_id = 2;
+  string server_name = 3;
+  string network_id = 4;
+  string connection_id = 5;
+  bool shadow_mode = 6;               // plugin's local lock at the time
+  Platform platform = 7;
+}
+
+// Subject pe.events.<partition>. All events of one gateway Batch whose player hashes to <partition>,
+// in their original order.
+message StreamBatch {
+  Origin origin = 1;
+  uint64 batch_seq = 2;
+  uint64 gateway_recv_unix_us = 3;
+  bool replayed = 4;
+  repeated Event events = 5;
+}
+
+// Subject pe.signals.<partition>. One detection result from a worker (cloud check) or a forwarded
+// plugin LocalFlag.
+message Signal {
+  Origin origin = 1;
+  bytes player = 2;
+  string player_name = 3;
+  string check_id = 4;                // e.g. "killaura.hitbox"
+  Category category = 5;
+  double points = 6;                  // score contribution before decay (already scaled by confidence)
+  double confidence = 7;              // 0..1
+  uint64 event_time_us = 8;           // time of the triggering event (plugin clock)
+  uint64 gateway_recv_unix_us = 9;    // when the gateway received the triggering batch
+  uint64 worker_unix_us = 10;         // when the worker emitted the signal
+  string info = 11;
+  map<string, double> data = 12;
+  string clip_id = 13;                // replay clip stored for this signal (may be empty)
+  bool local = 14;                    // forwarded plugin LocalFlag
+  bool replayed = 15;                 // triggering events were replayed (outage catch-up)
+  bool hot_loaded = 16;               // the player's session started before the plugin was enabled
+}
+
+// Subject pe.probes.<partition>: worker -> verdict service, for the latency probe.
+message ProbeHop {
+  Origin origin = 1;
+  bytes player = 2;
+  uint64 probe_id = 3;
+  uint64 event_time_us = 4;
+  uint64 gateway_recv_unix_us = 5;
+  uint64 worker_unix_us = 6;
+}
+
+// Subject pe.out.<server_id>: verdict service -> the gateway that holds the server's connection.
+// Core NATS (not JetStream); verdicts that cannot be delivered stay "pending" in the database and are
+// delivered when the server reconnects.
+message Outbound {
+  string server_id = 1;
+  oneof kind {
+    Verdict verdict = 2;
+    ProbeResult probe_result = 3;
+    WatchRequest watch = 4;
+    PlayerRisk player_risk = 5;
+    RemoteConfig config_update = 6;
+  }
+  uint64 source_gateway_recv_unix_us = 7; // for latency metrics
+}
