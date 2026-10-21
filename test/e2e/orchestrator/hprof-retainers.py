@@ -198,9 +198,6 @@ def main():
             p, end = seg_off, seg_off + seg_len
             while p < end:
                 p = d._skip_sub(p, visit=scan)
-        # instances also keep their class (and so its loader) alive: add class objects of frontier instances
-        for o in frontier:
-            c = kind.get(o)
         frontier = nxt
         print(f'  depth {depth + 1}: {len(frontier)} referrers')
     for r in found[:maxpaths]:

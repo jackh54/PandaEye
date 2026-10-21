@@ -545,3 +545,14 @@ func (e *R1Entry[T]) setMove(m Move) {
 		e.R1Server = m.Has(pb.MoveFlag_MOVE_FLAG_SERVER_ROTATION)
 	}
 }
+
+// cwCountTrue counts the true values of a ring.
+func cwCountTrue(r *Ring[bool]) int {
+	n := 0
+	for i := 0; i < r.Len(); i++ {
+		if r.At(i) {
+			n++
+		}
+	}
+	return n
+}

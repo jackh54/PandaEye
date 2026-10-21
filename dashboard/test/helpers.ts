@@ -1,6 +1,7 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createApp } from "../src/app";
+import type { Env } from "../src/env";
 import { randomToken } from "../src/lib/crypto";
 import { hashPassword } from "../src/lib/password";
 import type { Role } from "../src/lib/roles";
@@ -29,6 +30,8 @@ export class MockApi {
   calls: ApiCall[] = [];
   turnstileCalls: URLSearchParams[] = [];
   turnstileOk = true;
+  /** Hostname Turnstile reports for a solved challenge. */
+  turnstileHostname = new URL(ORIGIN).hostname;
   down = false;
   private routes: { method: string; match: string | RegExp; handler: Handler }[] = [];
 
@@ -50,7 +53,7 @@ export class MockApi {
     const url = new URL(req.url);
     if (url.href === TURNSTILE_VERIFY_URL) {
       this.turnstileCalls.push(new URLSearchParams(new TextDecoder().decode(await req.arrayBuffer())));
-      return Response.json({ success: this.turnstileOk });
+      return Response.json({ success: this.turnstileOk, hostname: this.turnstileHostname });
     }
     if (this.down) throw new TypeError("fetch failed: connection refused");
     const text = await req.text();
@@ -80,6 +83,9 @@ export class Client {
   cookies = new Map<string, string>();
   readonly app: ReturnType<typeof createApp>;
 
+  /** Binding overrides applied to every request of this client (e.g. a misconfigured environment). */
+  envOverride: Partial<Env> = {};
+
   constructor(
     readonly api: MockApi = new MockApi(),
     readonly ip = "203.0.113.7",
@@ -100,7 +106,7 @@ export class Client {
     }
     if (method !== "GET" && !opts.noOrigin && !headers.has("Origin")) headers.set("Origin", ORIGIN);
     const ctx = createExecutionContext();
-    const res = await this.app.fetch(new Request(ORIGIN + path, { method, headers, body, redirect: "manual" }), env, ctx);
+    const res = await this.app.fetch(new Request(ORIGIN + path, { method, headers, body, redirect: "manual" }), { ...env, ...this.envOverride }, ctx);
     await waitOnExecutionContext(ctx);
     for (const sc of res.headers.getSetCookie()) {
       const [pair] = sc.split(";");

@@ -108,9 +108,10 @@ describe("invites", () => {
     const admin = await seedUser({ role: "admin" });
     const adminClient = new Client();
     const csrf = await signIn(adminClient, admin);
-    const page = await adminClient.post("/users/invites", { _csrf: csrf, role: "staff" });
-    expect(page.status).toBe(200);
-    const html = await page.text();
+    const post = await adminClient.post("/users/invites", { _csrf: csrf, role: "staff" });
+    expect(post.status).toBe(303);
+    expect(post.headers.get("Location")).toMatch(/^\/users\?flash=[A-Za-z0-9_-]{22}$/);
+    const html = await (await adminClient.get(post.headers.get("Location")!)).text();
     const link = /value="(https:\/\/dash\.pandaeye\.test\/invite\/([A-Za-z0-9_-]{43}))"/.exec(html);
     expect(link).not.toBeNull();
     const token = link![2]!;
@@ -136,6 +137,7 @@ describe("invites", () => {
     const c = new Client();
     const csrf = await signIn(c, admin);
     expect((await c.post("/users/invites", { _csrf: csrf, role: "admin" })).status).toBe(400);
+    expect((await c.post("/users/invites", { _csrf: csrf, role: "staff" })).status).toBe(303);
     expect((await c.post("/users/invites", { _csrf: csrf, role: "owner" })).status).toBe(400);
     const staff = await seedUser({ role: "staff" });
     const s = new Client();

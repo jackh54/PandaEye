@@ -1,26 +1,11 @@
-// Package gateway is the plugin WebSocket server (ARCHITECTURE 5.3): handshake, licences, server identity, batches to the event stream, backpressure, outbound delivery and the verdict sweep, metering of online players, /status.
+// Package gateway is the plugin WebSocket server (ARCHITECTURE 3 and 5.3): the handshake (licence,
+// tenant, server identity and secrets, duplicate installs, the PE_CONNECTIONS registration and the
+// licence's server limit), batches to the event stream (acknowledged only after every PubAck),
+// backpressure by delaying socket reads, heartbeats, signed outbound delivery, the pending verdict
+// sweep, verdict acks, PlayerRisk, probe RTT statistics, /healthz and the public /status.
 //
-// This is the foundation placeholder: New and Run have their final signatures; Run reports
-// ErrNotImplemented until the package is implemented.
+// One session (session.go) runs per WebSocket: a reader goroutine hands messages one at a time to
+// the processing loop, so a message being processed or waiting for budget tokens stops the socket
+// from being read. Outbound frames go through a bounded queue drained by a writer goroutine; a timer
+// goroutine renews the connection registration, sweeps pending verdicts and watches for silence.
 package gateway
-
-import (
-	"context"
-	"errors"
-
-	"github.com/jackh54/PandaEye/cloud/internal/app"
-)
-
-// ErrNotImplemented is returned by Run until the service exists.
-var ErrNotImplemented = errors.New("gateway: not implemented")
-
-// Service is the gateway service.
-type Service struct{ d *app.Deps }
-
-var _ app.Service = (*Service)(nil)
-
-// New builds the service from the shared dependencies.
-func New(d *app.Deps) (*Service, error) { return &Service{d: d}, nil }
-
-// Run serves until ctx is cancelled.
-func (s *Service) Run(ctx context.Context) error { return ErrNotImplemented }

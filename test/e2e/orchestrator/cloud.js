@@ -12,6 +12,10 @@
  *           json = {tenant, user_id, username, role, method, path, exp}
  *   verdicts: GET /api/v1/verdicts?player=<uuid>&since=<RFC3339>&limit=200 (+cursor)
  *   signals : `pandaeye replay --tenant T --player UUID --since RFC3339 --until RFC3339` (stdout lines; JSON or text)
+ * Verified against cloud/internal/api (auth.go, verdicts.go) on 2026-10-21: assertion = RawURL base64 of the JSON,
+ * HMAC-SHA256 over that base64 text; verdict list = {"verdicts": [...], "next_cursor"}; since/until RFC 3339;
+ * replay flags --tenant/--player/--since/--until. auth/license and worker.Replay were not implemented yet; replay
+ * opens the same data dir (embedded NATS), so the harness runs it after `all` has been stopped.
  */
 const fs = require('fs')
 const path = require('path')

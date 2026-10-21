@@ -43,6 +43,7 @@ type Store interface {
 	ErasureStore
 	MetaStore
 	APIStore
+	VerdictExtraStore
 
 	// Ping checks the database connection.
 	Ping(ctx context.Context) error

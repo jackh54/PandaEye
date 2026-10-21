@@ -3,7 +3,7 @@
 
 import type { Flash } from "../views/layout";
 
-const OK: Record<string, string> = {
+const OK = new Map<string, string>(Object.entries({
   confirmed: "Verdict confirmed and labelled as cheating.",
   overturned: "Verdict overturned. If the ban was executed, an unban is pending until the server acknowledges it.",
   appeal_accepted: "Appeal accepted: the verdict was overturned.",
@@ -19,18 +19,20 @@ const OK: Record<string, string> = {
   watch_requested: "Full-rate telemetry requested for this player.",
   welcome: "Welcome to PandaEye.",
   logged_out: "You have been signed out.",
-};
+}));
 
-const ERR: Record<string, string> = {
+const ERR = new Map<string, string>(Object.entries({
   csrf: "Your form expired. Please try again.",
   forbidden: "Your role does not allow this action.",
   invalid: "Some fields were invalid.",
   api: "The PandaEye API rejected the request.",
   session_expired: "Your session expired. Please sign in again.",
-};
+}));
 
 export function flashFromQuery(q: { ok?: string; err?: string }): Flash | null {
-  if (q.ok && OK[q.ok]) return { kind: "ok", text: OK[q.ok]! };
-  if (q.err && ERR[q.err]) return { kind: "error", text: ERR[q.err]! };
+  const ok = q.ok ? OK.get(q.ok) : undefined;
+  if (ok) return { kind: "ok", text: ok };
+  const err = q.err ? ERR.get(q.err) : undefined;
+  if (err) return { kind: "error", text: err };
   return null;
 }

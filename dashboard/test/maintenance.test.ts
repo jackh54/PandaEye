@@ -24,18 +24,18 @@ describe("hourly cleanup", () => {
 describe("Turnstile", () => {
   const api = new MockApi();
   it("fails closed without a secret outside development", async () => {
-    expect(await verifyTurnstile({ ...env, TURNSTILE_SECRET: undefined, ENVIRONMENT: "production" }, api.fetch, "tok", null, "setup")).toEqual({ ok: false, reason: "not_configured" });
-    expect(await verifyTurnstile({ ...env, TURNSTILE_SECRET: undefined, ENVIRONMENT: "development" }, api.fetch, "tok", null, "setup")).toEqual({ ok: true });
+    expect(await verifyTurnstile({ ...env, TURNSTILE_SECRET: undefined, ENVIRONMENT: "production" }, api.fetch, "tok", null, "setup", "dash.pandaeye.test")).toEqual({ ok: false, reason: "not_configured" });
+    expect(await verifyTurnstile({ ...env, TURNSTILE_SECRET: undefined, ENVIRONMENT: "development" }, api.fetch, "tok", null, "setup", "dash.pandaeye.test")).toEqual({ ok: true });
   });
 
   it("requires a token and a successful siteverify answer", async () => {
-    expect(await verifyTurnstile(env, api.fetch, "", null, "setup")).toEqual({ ok: false, reason: "missing" });
-    expect(await verifyTurnstile(env, api.fetch, "tok", "192.0.2.1", "setup")).toEqual({ ok: true });
+    expect(await verifyTurnstile(env, api.fetch, "", null, "setup", "dash.pandaeye.test")).toEqual({ ok: false, reason: "missing" });
+    expect(await verifyTurnstile(env, api.fetch, "tok", "192.0.2.1", "setup", "dash.pandaeye.test")).toEqual({ ok: true });
     api.turnstileOk = false;
-    expect(await verifyTurnstile(env, api.fetch, "tok", null, "setup")).toEqual({ ok: false, reason: "invalid" });
+    expect(await verifyTurnstile(env, api.fetch, "tok", null, "setup", "dash.pandaeye.test")).toEqual({ ok: false, reason: "invalid" });
     const failing = async () => {
       throw new TypeError("network");
     };
-    expect(await verifyTurnstile(env, failing, "tok", null, "setup")).toEqual({ ok: false, reason: "unavailable" });
+    expect(await verifyTurnstile(env, failing, "tok", null, "setup", "dash.pandaeye.test")).toEqual({ ok: false, reason: "unavailable" });
   });
 });

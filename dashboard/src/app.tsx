@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { missingSecrets } from "./env";
+import { missingSecrets, TURNSTILE_CONFIG } from "./env";
 import { ApiError } from "./lib/api";
 import { originGuard, requestContext, securityHeaders, sessionLoader } from "./middleware";
 import { authRoutes } from "./routes/auth";
@@ -35,9 +35,12 @@ export function createApp(overrides: Partial<Deps> = {}): Hono<AppEnv> {
   });
 
   app.use("*", async (c, next) => {
-    const missing = missingSecrets(c.env).filter((n) => n !== "TURNSTILE_SECRET");
+    const all = missingSecrets(c.env);
+    if (all.length) console.error(`pandaeye-dashboard: missing or invalid configuration: ${all.join(", ")}`);
+    // Missing Turnstile configuration disables only /setup and /appeal (they fail closed); anything else
+    // makes the whole dashboard unavailable. /healthz reports both (see routes/public.tsx).
+    const missing = all.filter((n) => !(TURNSTILE_CONFIG as readonly string[]).includes(n));
     if (missing.length && c.req.path !== "/healthz") {
-      console.error(`pandaeye-dashboard: missing or too short configuration: ${missing.join(", ")}`);
       return c.html(
         <ErrorPage
           nonce={c.get("nonce")}

@@ -1,5 +1,6 @@
 import { PASSWORD_MIN_LENGTH } from "../../lib/password";
 import { ROLE_LABEL, type Role } from "../../lib/roles";
+import type { TurnstileMode } from "../../lib/turnstile";
 import type { Session } from "../../lib/session";
 import { AbsTime, Csrf, Notice, PageHeader } from "../components";
 import { Layout, type Flash } from "../layout";
@@ -33,8 +34,15 @@ export function LoginPage(props: { nonce: string; csrf: string; next: string; us
   );
 }
 
-function TurnstileWidget(props: { sitekey: string | undefined; action: string }) {
-  if (!props.sitekey) return <p class="muted small">Human verification is disabled in this development environment.</p>;
+export function TurnstileWidget(props: { sitekey: string | undefined; mode: TurnstileMode; action: string }) {
+  if (props.mode === "dev") return <p class="muted small">Human verification is disabled in this development environment.</p>;
+  if (props.mode === "unconfigured" || !props.sitekey) {
+    return (
+      <Notice kind="error" title="Human verification is not configured">
+        This dashboard has no Turnstile configuration, so this form cannot be submitted.
+      </Notice>
+    );
+  }
   return <div class="cf-turnstile" data-sitekey={props.sitekey} data-action={props.action}></div>;
 }
 
@@ -42,11 +50,12 @@ export function SetupPage(props: {
   nonce: string;
   csrf: string;
   sitekey: string | undefined;
+  turnstile: TurnstileMode;
   username?: string;
   error?: string | null;
 }) {
   return (
-    <Layout title="Set up" nonce={props.nonce} turnstile={!!props.sitekey}>
+    <Layout title="Set up" nonce={props.nonce} turnstile={props.turnstile === "widget"}>
       <section class="auth-card">
         <h1>Set up PandaEye</h1>
         <p>
@@ -74,7 +83,7 @@ export function SetupPage(props: {
             Repeat password
             <input name="password_confirm" type="password" autocomplete="new-password" required minlength={PASSWORD_MIN_LENGTH} maxlength={1024} />
           </label>
-          <TurnstileWidget sitekey={props.sitekey} action="setup" />
+          <TurnstileWidget sitekey={props.sitekey} mode={props.turnstile} action="setup" />
           <button type="submit" class="btn btn-primary">
             Create owner account
           </button>

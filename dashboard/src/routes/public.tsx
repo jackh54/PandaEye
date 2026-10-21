@@ -1,10 +1,11 @@
 // Public pages: /status, /appeal, /privacy, /healthz
 
 import { Hono } from "hono";
+import { missingSecrets } from "../env";
 import { ApiError } from "../lib/api";
 import type { PublicStatus } from "../lib/pandaeye";
 import { hitFixedWindow, ipKey, LIMITS } from "../lib/ratelimit";
-import { turnstileMessage, verifyTurnstile } from "../lib/turnstile";
+import { turnstileMessage, turnstileMode, verifyTurnstile } from "../lib/turnstile";
 import { APPEAL_CODE_RE, field, isId } from "../lib/validate";
 import { preCsrfToken, verifyPreCsrf } from "../middleware";
 import type { AppEnv } from "../types";
@@ -13,7 +14,7 @@ import { AppealPage, PrivacyPage, StatusPage, type AppealForm } from "../views/p
 export function publicRoutes(): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
 
-  r.get("/healthz", (c) => c.text("ok"));
+  r.get("/healthz", (c) => (missingSecrets(c.env).length ? c.text("misconfigured", 503) : c.text("ok")));
 
   r.get("/status", async (c) => {
     let status: PublicStatus | null = null;
@@ -35,7 +36,7 @@ export function publicRoutes(): Hono<AppEnv> {
     const code = c.req.query("code");
     if (v && isId(v)) form.verdict_id = v;
     if (code && APPEAL_CODE_RE.test(code)) form.appeal_code = code;
-    return c.html(<AppealPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} form={form} />);
+    return c.html(<AppealPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} turnstile={turnstileMode(c.env)} form={form} />);
   });
 
   r.post("/appeal", async (c) => {
@@ -49,7 +50,7 @@ export function publicRoutes(): Hono<AppEnv> {
       contact: field(body, "contact").trim(),
     };
     const render = (error: string, status: 400 | 403 | 429 | 503) =>
-      c.html(<AppealPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} form={form} error={error} />, status);
+      c.html(<AppealPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} turnstile={turnstileMode(c.env)} form={form} error={error} />, status);
 
     if (!verifyPreCsrf(c, body)) return render("Your form expired. Please try again.", 403);
     const limit = await hitFixedWindow(c.env.DB, await ipKey("appeal", c.get("clientIp") ?? "0.0.0.0", c.env.PASSWORD_PEPPER), LIMITS.appealIp.limit, LIMITS.appealIp.windowMs, now);
@@ -58,7 +59,7 @@ export function publicRoutes(): Hono<AppEnv> {
     if (form.message.length < 10 || form.message.length > 2000) return render("Write a message of 10 to 2000 characters.", 400);
     if (form.contact.length > 200) return render("The contact field can hold at most 200 characters.", 400);
 
-    const ts = await verifyTurnstile(c.env, c.get("deps").fetch, field(body, "cf-turnstile-response"), c.get("clientIp"), "appeal");
+    const ts = await verifyTurnstile(c.env, c.get("deps").fetch, field(body, "cf-turnstile-response"), c.get("clientIp"), "appeal", new URL(c.req.url).hostname);
     if (!ts.ok) return render(turnstileMessage(ts.reason), ts.reason === "unavailable" || ts.reason === "not_configured" ? 503 : 400);
 
     try {
@@ -74,7 +75,7 @@ export function publicRoutes(): Hono<AppEnv> {
       }
       return render("Appeals cannot be submitted right now. Please try again later.", 503);
     }
-    return c.html(<AppealPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} done />);
+    return c.html(<AppealPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} turnstile={turnstileMode(c.env)} done />);
   });
 
   return r;

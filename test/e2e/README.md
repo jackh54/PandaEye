@@ -14,9 +14,11 @@ test/e2e/
     console-wrapper.py      headless console: commands through the FIFO <server>/console.in
     templates/              server.properties, bukkit.yml, spigot.yml, paper configs (low CPU), KnockbackSync config
   probe-plugin/             PandaEyeProbe: wire counters, PacketEvents LOWEST/MONITOR state, kicks, TPS, test commands
-  fake-pandaeye/            a test double named "PandaEye" (NOT the product) to exercise the PandaEye phases now
+  fake-pandaeye/            a test double named "PandaEye" (NOT the product) to exercise the PandaEye phases now;
+                            config `e2e-fake.violation: ping|wrap|cancel|leak-thread|slow-disable` = negative controls
   bots/                     Node 22: mineflayer legit bots, vanilla-mover oracle, raw cheat clients, scenario runner
-  orchestrator/             phases, comparison, cloud adapter, PandaEye log readers, report
+  orchestrator/             phases, comparison, cloud adapter, PandaEye log readers, report,
+                            selftest.js (offline test of the comparison), hprof-retainers.py (class loader leaks)
   run/                      (gitignored) servers, caches, reports
 ```
 
@@ -205,6 +207,15 @@ Confirm/adjust these in `orchestrator/cloud.js` once `cloud/internal/api` exists
   the baseline; the shadow comparison only fails on an *increase* of these counts.
 * Paper 1.21.11 sends a keep-alive about every second (not every 15 s); KnockbackSync pings combat-tagged players
   every 5 ticks.
+* **`plugman unload` cannot free the class loader of a plugin that was enabled at server start if it declares a
+  command in plugin.yml**: `CraftServer.helpMap -> SimpleHelpMap.helpTopics -> GenericCommandHelpTopic ->
+  PluginCommand.owningPlugin` keeps it (help topics are built at startup and PlugManX does not remove them).
+  Instances loaded later with `plugman load` are collected after `plugman unload` (verified with the e2e fake on
+  Folia). PandaEye declares `/pandaeye` in plugin.yml, so the "class loader collectable" gate can only hold for the
+  startup instance if PandaEye removes its help topic on disable (reflection on `SimpleHelpMap.helpTopics`) or
+  registers the command at runtime. The cycles phase therefore asserts collection for plugman-loaded instances and
+  reports the startup instance separately; `PE_E2E_HEAP_ANALYSIS=1` dumps the heap on a leak and prints the
+  retention path (`orchestrator/hprof-retainers.py <dump> <class>`).
 
 ## Known limitations
 
@@ -219,6 +230,9 @@ Confirm/adjust these in `orchestrator/cloud.js` once `cloud/internal/api` exists
 * Wire byte-identity across runs is not achievable (entity ids, positions, keep-alive ids, timing), so the shadow
   assertion is per-type counts within measured noise plus the exact in-flight/PacketEvents anomaly counters
   (which are byte-level: CRC of every packet before/after the PacketEvents encoders).
+* `cheat/pingspoof` turns on `probe pinger 10` (the probe sends PINGs, like a second anticheat would) because
+  KnockbackSync's own PONGs are invisible to PacketEvents listeners; this is the only place the probe sends
+  packets, never in shadow-invariant runs.
 * Timer/pingspoof need >= 60-90 s by design of the checks; `--quick` shortens them (pattern still verified,
   detection then not expected).
 * Cloud adapter (`orchestrator/cloud.js`) is written against the spec; exact response shapes and the assertion

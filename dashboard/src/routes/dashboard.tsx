@@ -2,12 +2,15 @@
 // role permission (the API enforces roles again from the assertion).
 
 import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
 import { ApiError } from "../lib/api";
 import { recentAudit } from "../lib/audit";
 import { cloudChecks } from "../lib/checks";
+import { putFlash, takeFlash, type FlashSession } from "../lib/flash";
+import { SESSION_COOKIE } from "../lib/session";
 import { normalizeAction, withQuery, type ActionName } from "../lib/format";
 import { flashFromQuery } from "../lib/messages";
-import { API_KEY_SCOPES, VERDICT_STATUSES, type CheckConfig, type TenantPatch, type VerdictStatus } from "../lib/pandaeye";
+import { API_KEY_SCOPES, VERDICT_STATUSES, type ApiKey, type CheckConfig, type TenantPatch, type VerdictStatus } from "../lib/pandaeye";
 import { invitableRoles, isRole, type Role } from "../lib/roles";
 import {
   createInvite,
@@ -37,6 +40,24 @@ async function settle<T>(p: Promise<T>): Promise<Section<T>> {
     return { ok: false };
   }
 }
+
+/** The signed-in browser's session for flash rows (requireSession has run). */
+function flashSession(c: Ctx): FlashSession {
+  return { raw: getCookie(c, SESSION_COOKIE) ?? "", hash: c.get("session")!.idHash };
+}
+
+interface ErasureFlash {
+  uuid: string;
+  counts: [string, string][];
+}
+
+interface InviteFlash {
+  url: string;
+  role: Role;
+  expiresAt: number;
+}
+
+type ApiKeyFlash = ApiKey & { key: string };
 
 function flash(c: Ctx) {
   return flashFromQuery({ ok: c.req.query("ok"), err: c.req.query("err") });
@@ -84,7 +105,7 @@ export function dashboardRoutes(): Hono<AppEnv> {
       settle(api.latency()),
       settle(api.servers()),
       settle(api.verdicts({ limit: 10 }).then((p) => p.items)),
-      settle(api.appeals("open").then((p) => p.items.length)),
+      settle(api.appeals("open").then((p) => ({ count: p.items.length, more: p.nextCursor !== null }))),
     ]);
     return c.html(
       <OverviewPage
@@ -205,7 +226,15 @@ export function dashboardRoutes(): Hono<AppEnv> {
   r.get("/players", async (c) => {
     const q = (c.req.query("q") ?? "").trim().slice(0, 64);
     if (isUuid(q)) return c.redirect(`/players/${q.toLowerCase()}`, 303);
-    if (!q) return c.html(<PlayersPage nonce={c.get("nonce")} session={c.get("session")!} query="" players={null} next={null} flash={flash(c)} />);
+    if (!q) {
+      const erased = await takeFlash<ErasureFlash>(c.env.DB, flashSession(c), "erasure", c.req.query("flash"), c.get("deps").now());
+      const text = erased
+        ? `Erasure finished for ${erased.uuid}${erased.counts.length ? `: ${erased.counts.map(([k, v]) => `${k} ${v}`).join(", ")}` : ""}.`
+        : null;
+      return c.html(
+        <PlayersPage nonce={c.get("nonce")} session={c.get("session")!} query="" players={null} next={null} flash={text ? { kind: "ok", text } : flash(c)} />,
+      );
+    }
     const cursor = c.req.query("cursor");
     const page = await c.get("api").players(q, cursor && cursor.length <= 512 ? cursor : undefined);
     const next = page.nextCursor ? withQuery("/players", { q, cursor: page.nextCursor }) : null;
@@ -246,8 +275,9 @@ export function dashboardRoutes(): Hono<AppEnv> {
       if (isClientError(e)) return rejected(c, e);
       throw e;
     }
-    const text = `Erasure finished for ${uuid}${counts.length ? `: ${counts.map(([k, v]) => `${k} ${v}`).join(", ")}` : ""}.`;
-    return c.html(<PlayersPage nonce={c.get("nonce")} session={c.get("session")!} query="" players={null} next={null} flash={{ kind: "ok", text }} />);
+    // Post-redirect-get: the result page survives a reload without re-running the erasure.
+    const id = await putFlash(c.env.DB, flashSession(c), "erasure", { uuid, counts } satisfies ErasureFlash, c.get("deps").now());
+    return c.redirect(`/players?flash=${id}`, 303);
   });
 
   // ---- bans and appeals ---------------------------------------------------------------------------
@@ -376,7 +406,10 @@ export function dashboardRoutes(): Hono<AppEnv> {
     return c.html(<UsersPage nonce={c.get("nonce")} session={s} users={users} invites={invites} flash={flash(c)} {...extra} />, status);
   }
 
-  r.get("/users", requirePerm("users:view"), (c) => renderUsers(c, {}));
+  r.get("/users", requirePerm("users:view"), async (c) => {
+    const invite = await takeFlash<InviteFlash>(c.env.DB, flashSession(c), "invite", c.req.query("flash"), c.get("deps").now());
+    return renderUsers(c, invite ? { newInvite: invite } : {});
+  });
 
   r.post("/users/invites", requirePerm("invites:manage"), async (c) => {
     const s = c.get("session")!;
@@ -385,7 +418,10 @@ export function dashboardRoutes(): Hono<AppEnv> {
     if (!isRole(role) || !invitableRoles(s.user.role).includes(role)) return renderUsers(c, { error: "You cannot invite users with this role." }, 400);
     const inv = await createInvite(c.env.DB, { tenantId: s.user.tenantId, role, createdBy: s.user.id, principal: `user:${s.user.username}`, now: c.get("deps").now() });
     const url = `${new URL(c.req.url).origin}/invite/${inv.token}`;
-    return renderUsers(c, { newInvite: { url, role, expiresAt: inv.expiresAt } });
+    // Post-redirect-get: the link is shown once on the next GET; a reload neither shows it again nor
+    // creates another invite.
+    const id = await putFlash(c.env.DB, flashSession(c), "invite", { url, role, expiresAt: inv.expiresAt } satisfies InviteFlash, c.get("deps").now());
+    return c.redirect(`/users?flash=${id}`, 303);
   });
 
   r.post("/users/invites/:hash/revoke", requirePerm("invites:manage"), async (c) => {
@@ -424,8 +460,9 @@ export function dashboardRoutes(): Hono<AppEnv> {
   // ---- API keys ---------------------------------------------------------------------------------
 
   r.get("/apikeys", requirePerm("apikeys:manage"), async (c) => {
+    const created = await takeFlash<ApiKeyFlash>(c.env.DB, flashSession(c), "apikey", c.req.query("flash"), c.get("deps").now());
     const keys = await c.get("api").apiKeys();
-    return c.html(<ApiKeysPage nonce={c.get("nonce")} session={c.get("session")!} keys={keys} flash={flash(c)} />);
+    return c.html(<ApiKeysPage nonce={c.get("nonce")} session={c.get("session")!} keys={keys} created={created} flash={flash(c)} />);
   });
 
   r.post("/apikeys", requirePerm("apikeys:manage"), async (c) => {
@@ -436,15 +473,17 @@ export function dashboardRoutes(): Hono<AppEnv> {
     if (!name || name.length > 64) {
       return c.html(<ApiKeysPage nonce={c.get("nonce")} session={c.get("session")!} keys={await api.apiKeys()} error="Give the key a name of at most 64 characters." />, 400);
     }
-    let created;
+    let created: ApiKeyFlash;
     try {
       created = await api.createApiKey(name, scopes.length ? scopes : ["read"]);
     } catch (e) {
       if (isClientError(e)) return rejected(c, e);
       throw e;
     }
-    const keys = await api.apiKeys().catch(() => []);
-    return c.html(<ApiKeysPage nonce={c.get("nonce")} session={c.get("session")!} keys={keys} created={created} />);
+    // Post-redirect-get: the plaintext is shown exactly once, on the next GET (read-once, encrypted, bound to
+    // this session); a reload cannot create a second key or show the plaintext again.
+    const id = await putFlash(c.env.DB, flashSession(c), "apikey", created, c.get("deps").now());
+    return c.redirect(`/apikeys?flash=${id}`, 303);
   });
 
   r.post("/apikeys/:id/revoke", requirePerm("apikeys:manage"), async (c) => {

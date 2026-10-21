@@ -110,3 +110,77 @@ func TestReviewAckAfterOverturn(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewDSNInErrors(t *testing.T) {
+	for _, dsn := range []string{
+		"postgres://pe:supersecret1@127.0.0.1:1/db?sslmode=disable",
+		"postgres://pe:supersecret2@127.0.0.1:99999/db?sslmode=disable",
+		"host=127.0.0.1 port=1 user=pe password=supersecret3 sslmode=disable",
+		"host=127.0.0.1 port=abc user=pe password=supersecret4",
+		"postgres://pe:supersecret5@127.0.0.1:55432/db?sslmode=bogus",
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, err := Open(ctx, DriverPostgres, dsn, Options{})
+		cancel()
+		t.Logf("leak=%v err=%v", err != nil && strings.Contains(err.Error(), "supersecret"), err)
+	}
+}
+
+func TestReviewNameSearchUnicode(t *testing.T) {
+	ctx := context.Background()
+	for name, s := range reviewStores(t) {
+		tid := identity.NewTenantID()
+		if err := s.CreateTenant(ctx, store.NewTenant(tid, "n", "slug-"+tid[2:8], time.Now())); err != nil {
+			t.Fatal(err)
+		}
+		p := identity.NewUUID().String()
+		if err := s.UpsertPlayer(ctx, tid, p, "Äpfel", "", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		for _, q := range []string{"Äp", "äp", "ÄP"} {
+			got, err := s.FindPlayersByName(ctx, tid, q, 10)
+			t.Logf("%s: FindPlayersByName(%q) -> %d err=%v", name, q, len(got), err)
+		}
+	}
+}
+
+func TestReviewConcurrentMigratePostgres(t *testing.T) {
+	dsn := os.Getenv("PE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip()
+	}
+	admin, _ := sql.Open("pgx", dsn)
+	defer admin.Close()
+	failures := 0
+	for round := 0; round < 10; round++ {
+		schema := "pe_mig_" + strings.ToLower(identity.NewTenantID()[2:])
+		admin.Exec("CREATE SCHEMA " + schema)
+		var stores []*Store
+		for i := 0; i < 6; i++ {
+			s, err := Open(context.Background(), DriverPostgres, withSearchPath(dsn, schema), Options{MaxConns: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stores = append(stores, s)
+		}
+		errs := make(chan error, len(stores))
+		start := make(chan struct{})
+		for _, s := range stores {
+			go func(s *Store) { <-start; _, err := s.Migrate(context.Background()); errs <- err }(s)
+		}
+		close(start)
+		for range stores {
+			if err := <-errs; err != nil {
+				failures++
+				if failures == 1 {
+					t.Logf("concurrent migrate error: %v", err)
+				}
+			}
+		}
+		for _, s := range stores {
+			s.Close()
+		}
+		admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+	}
+	t.Logf("failed Migrate calls: %d of 60", failures)
+}

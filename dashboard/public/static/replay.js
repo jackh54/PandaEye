@@ -147,7 +147,8 @@
     var suspect = uuidOf(get(clip, "player") || get(clip, "player_uuid") || (dataObj && get(dataObj, "player")) || "");
     if (!suspect) {
       // Most frequent event player.
-      var counts = {};
+      // Keyed by untrusted strings: no prototype, so "__proto__" / "constructor" are ordinary keys.
+      var counts = Object.create(null);
       var best = "";
       for (var c = 0; c < Math.min(events.length, 5000); c++) {
         var pu = uuidOf(get(events[c], "player"));
@@ -170,7 +171,8 @@
       teleports: [],
       envs: [],
       flags: [],
-      targets: {},
+      // Keyed by untrusted target ids: no prototype (a "__proto__" or "constructor" id must not hit Object.prototype).
+      targets: Object.create(null),
       start: Infinity,
       end: -Infinity,
       skipped: 0,

@@ -2,10 +2,33 @@
 
 import { auditStmt } from "./audit";
 import { randomToken, sha256Hex } from "./crypto";
-import { isRole, type Role } from "./roles";
+import { can, invitableRoles, isRole, ROLE_RANK, ROLES, type Role } from "./roles";
 import { destroyUserSessionsStmt } from "./session";
 
 export const INVITE_TTL_MS = 48 * 60 * 60_000;
+
+// An invite is only as good as its creator's current authority: the creator (alias `c`) must be enabled, in
+// the invite's tenant, and still allowed to issue the invite's role (alias `i`). Built from constants only.
+function rankSql(col: string): string {
+  return `(CASE ${col} ${ROLES.map((r) => `WHEN '${r}' THEN ${ROLE_RANK[r]}`).join(" ")} ELSE 0 END)`;
+}
+const INVITER_ROLES = ROLES.filter((r) => can(r, "invites:manage"))
+  .map((r) => `'${r}'`)
+  .join(", ");
+const CREATOR_STILL_ALLOWED = `c.disabled = 0 AND c.tenant_id = i.tenant_id AND c.role IN (${INVITER_ROLES}) AND ${rankSql("c.role")} > ${rankSql("i.role")}`;
+const INVITE_ROLES: Role[] = ["admin", "staff", "viewer"];
+
+/** Deletes unused invites of `creatorId` whose role the creator may no longer issue as `role`. */
+function revokeInvitesBeyondStmt(db: D1Database, tenantId: string, creatorId: string, role: Role | null): D1PreparedStatement | null {
+  const allowed = role ? invitableRoles(role) : [];
+  const revoked = INVITE_ROLES.filter((r) => !allowed.includes(r));
+  if (!revoked.length) return null;
+  return db
+    .prepare(
+      `DELETE FROM invites WHERE created_by = ?1 AND tenant_id = ?2 AND used_at IS NULL AND role IN (${revoked.map((_, k) => `?${k + 3}`).join(", ")})`,
+    )
+    .bind(creatorId, tenantId, ...revoked);
+}
 
 export interface UserRow {
   id: string;
@@ -115,7 +138,10 @@ export async function createInvite(
 export async function findValidInvite(db: D1Database, token: string, now: number): Promise<InviteRow | null> {
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
   const row = await db
-    .prepare("SELECT * FROM invites WHERE token_hash = ?1 AND used_at IS NULL AND expires_at > ?2")
+    .prepare(
+      `SELECT i.* FROM invites i JOIN users c ON c.id = i.created_by
+        WHERE i.token_hash = ?1 AND i.used_at IS NULL AND i.expires_at > ?2 AND ${CREATOR_STILL_ALLOWED}`,
+    )
     .bind(await sha256Hex(token), now)
     .first<InviteRow>();
   return row && isRole(row.role) ? row : null;
@@ -129,7 +155,10 @@ export async function listPendingInvites(db: D1Database, tenantId: string, now: 
   return r.results ?? [];
 }
 
-/** Consumes an invite and creates the user atomically (batch = transaction). */
+/**
+ * Consumes an invite and creates the user atomically (batch = transaction). The invite must be unused,
+ * unexpired, and its creator must still be enabled and allowed to issue its role.
+ */
 export async function acceptInvite(
   db: D1Database,
   a: { token: string; userId: string; username: string; passwordHash: string; now: number },
@@ -141,12 +170,14 @@ export async function acceptInvite(
       db
         .prepare(
           `INSERT INTO users (id, tenant_id, username, password_hash, role, created_at, disabled, password_changed_at)
-           SELECT ?1, tenant_id, ?2, ?3, role, ?4, 0, ?4 FROM invites
-            WHERE token_hash = ?5 AND used_at IS NULL AND expires_at > ?4`,
+           SELECT ?1, i.tenant_id, ?2, ?3, i.role, ?4, 0, ?4 FROM invites i JOIN users c ON c.id = i.created_by
+            WHERE i.token_hash = ?5 AND i.used_at IS NULL AND i.expires_at > ?4 AND ${CREATOR_STILL_ALLOWED}`,
         )
         .bind(a.userId, a.username, a.passwordHash, a.now, hash),
       db
-        .prepare("UPDATE invites SET used_at = ?2, used_by = ?3 WHERE token_hash = ?1 AND used_at IS NULL AND expires_at > ?2")
+        .prepare(
+          "UPDATE invites SET used_at = ?2, used_by = ?3 WHERE token_hash = ?1 AND used_at IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = ?3)",
+        )
         .bind(hash, a.now, a.userId),
       db
         .prepare(
@@ -172,20 +203,28 @@ export async function revokeInvite(db: D1Database, tenantId: string, hash: strin
   return (r?.meta.changes ?? 0) === 1;
 }
 
-/** Role change: sessions of the user are deleted in the same transaction. */
+/**
+ * Role change: sessions of the user are deleted, and so are the user's unused invites for roles the new role
+ * may not issue, in the same transaction.
+ */
 export async function setUserRole(db: D1Database, tenantId: string, userId: string, role: Role, principal: string, now: number): Promise<boolean> {
+  const revoke = revokeInvitesBeyondStmt(db, tenantId, userId, role);
   const [r] = await db.batch([
     db.prepare("UPDATE users SET role = ?3 WHERE id = ?1 AND tenant_id = ?2").bind(userId, tenantId, role),
     destroyUserSessionsStmt(db, userId),
+    ...(revoke ? [revoke] : []),
     auditStmt(db, { tenantId, principal, action: "user.role_changed", target: userId, detail: { role }, now }),
   ]);
   return (r?.meta.changes ?? 0) === 1;
 }
 
+/** Disabling deletes the user's sessions and unused invites in the same transaction. */
 export async function setUserDisabled(db: D1Database, tenantId: string, userId: string, disabled: boolean, principal: string, now: number): Promise<boolean> {
+  const revoke = disabled ? revokeInvitesBeyondStmt(db, tenantId, userId, null) : null;
   const [r] = await db.batch([
     db.prepare("UPDATE users SET disabled = ?3 WHERE id = ?1 AND tenant_id = ?2").bind(userId, tenantId, disabled ? 1 : 0),
     destroyUserSessionsStmt(db, userId),
+    ...(revoke ? [revoke] : []),
     auditStmt(db, { tenantId, principal, action: disabled ? "user.disabled" : "user.enabled", target: userId, now }),
   ]);
   return (r?.meta.changes ?? 0) === 1;
@@ -207,5 +246,6 @@ export async function cleanup(db: D1Database, now: number): Promise<void> {
     db.prepare("DELETE FROM invites WHERE (used_at IS NULL AND expires_at <= ?1) OR (used_at IS NOT NULL AND used_at <= ?2)").bind(now - 7 * 86_400_000, now - 30 * 86_400_000),
     db.prepare("DELETE FROM login_attempts WHERE window_start <= ?1 AND locked_until <= ?2").bind(now - 86_400_000, now),
     db.prepare("DELETE FROM audit_log WHERE created_at <= ?1").bind(now - 365 * 86_400_000),
+    db.prepare("DELETE FROM flashes WHERE expires_at <= ?1").bind(now),
   ]);
 }

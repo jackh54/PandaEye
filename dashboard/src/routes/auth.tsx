@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { ApiError } from "../lib/api";
 import { audit } from "../lib/audit";
+import { inBackground } from "../lib/background";
 import { flashFromQuery } from "../lib/messages";
 import { DUMMY_PASSWORD_HASH, hashPassword, needsRehash, passwordProblem, verifyPassword } from "../lib/password";
 import {
@@ -16,7 +17,7 @@ import {
   userKey,
 } from "../lib/ratelimit";
 import { createSession, destroySession, SESSION_ABSOLUTE_MS, SESSION_COOKIE } from "../lib/session";
-import { turnstileMessage, verifyTurnstile } from "../lib/turnstile";
+import { turnstileMessage, turnstileMode, verifyTurnstile } from "../lib/turnstile";
 import {
   acceptInvite,
   countUsers,
@@ -96,11 +97,13 @@ export function authRoutes(): Hono<AppEnv> {
       return render(`Too many failed attempts for this account. Try again in ${retryText(claim.retryAfterS)}.`, 429);
     }
 
+    // Unknown users and wrong passwords do the same work before the response: one user lookup, one PBKDF2
+    // verification, one backoff update. The audit row for a known user is written after the response.
     const user = await findUserByUsername(db, username);
     const ok = await verifyPassword(password, user ? user.password_hash : DUMMY_PASSWORD_HASH, c.env.PASSWORD_PEPPER);
     if (!user || !ok) {
       await recordBackoffFailure(db, key, now);
-      if (user) await audit(db, { tenantId: user.tenant_id, principal: `user:${user.username}`, action: "login.failed", target: user.id, now });
+      if (user) inBackground(c, audit(db, { tenantId: user.tenant_id, principal: `user:${user.username}`, action: "login.failed", target: user.id, now }));
       return render("Invalid username or password.", 401);
     }
     await clearBackoff(db, key);
@@ -110,7 +113,7 @@ export function authRoutes(): Hono<AppEnv> {
       await db.prepare("UPDATE users SET password_hash = ?2 WHERE id = ?1").bind(user.id, await hashPassword(password, c.env.PASSWORD_PEPPER)).run();
     }
     await startSession(c, user.id);
-    await audit(db, { tenantId: user.tenant_id, principal: `user:${user.username}`, action: "login", target: user.id, now });
+    inBackground(c, audit(db, { tenantId: user.tenant_id, principal: `user:${user.username}`, action: "login", target: user.id, now }));
     return c.redirect(next, 303);
   });
 
@@ -124,7 +127,7 @@ export function authRoutes(): Hono<AppEnv> {
 
   r.get("/setup", (c) => {
     c.set("turnstile", true);
-    return c.html(<SetupPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} />);
+    return c.html(<SetupPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} turnstile={turnstileMode(c.env)} />);
   });
 
   r.post("/setup", async (c) => {
@@ -134,7 +137,7 @@ export function authRoutes(): Hono<AppEnv> {
     const body = await c.req.parseBody();
     const username = normalizeUsername(field(body, "username"));
     const render = (error: string, status: 400 | 403 | 409 | 429 | 503) =>
-      c.html(<SetupPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} username={username} error={error} />, status);
+      c.html(<SetupPage nonce={c.get("nonce")} csrf={preCsrfToken(c)} sitekey={c.env.TURNSTILE_SITEKEY} turnstile={turnstileMode(c.env)} username={username} error={error} />, status);
 
     if (!verifyPreCsrf(c, body)) return render("Your form expired. Please try again.", 403);
     const limit = await hitFixedWindow(db, await ipKey("setup", clientIp(c), c.env.PASSWORD_PEPPER), LIMITS.setupIp.limit, LIMITS.setupIp.windowMs, now);
@@ -151,7 +154,7 @@ export function authRoutes(): Hono<AppEnv> {
     if (problem) return render(problem, 400);
     if (password !== field(body, "password_confirm")) return render("The passwords do not match.", 400);
 
-    const ts = await verifyTurnstile(c.env, c.get("deps").fetch, field(body, "cf-turnstile-response"), c.get("clientIp"), "setup");
+    const ts = await verifyTurnstile(c.env, c.get("deps").fetch, field(body, "cf-turnstile-response"), c.get("clientIp"), "setup", new URL(c.req.url).hostname);
     if (!ts.ok) return render(turnstileMessage(ts.reason), ts.reason === "unavailable" || ts.reason === "not_configured" ? 503 : 400);
 
     let license: { tenantId: string; slug: string };

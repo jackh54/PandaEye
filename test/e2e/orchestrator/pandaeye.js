@@ -57,12 +57,15 @@ function parseStatus (text) {
   if (us) { o.handlerAvgUs = Number(us[1]); if (us[2]) o.handlerP99Us = Number(us[2]) }
   const mode = text.match(/mode[:= ]+(shadow|live)/i)
   if (mode) o.mode = mode[1].toLowerCase()
-  const cloud = text.match(/cloud[^:\n]*[:=]\s*([A-Za-z_]+)/i)
+  // real plugin: "cloud: CONNECTED - detail (server id ..)" on its own line; the mode line also contains "cloud enforcement"
+  const cloud = text.match(/(?:^|\]:?\s|\n)cloud:\s*([A-Za-z_]+)/i) || text.match(/\bcloud:\s*([A-Za-z_]+)/i)
   if (cloud) o.cloud = cloud[1]
   const enf = text.match(/enforcement[:= ]+(true|false|on|off)/i)
   if (enf) o.enforcement = enf[1]
-  const att = text.match(/(?:enforcer|attempted)[^0-9\n]*([0-9]+)/i)
-  if (att) o.enforcerAttempts = Number(att[1])
+  const att = text.match(/enforcer calls attempted in shadow:\s*([^;\n]*)/i) || text.match(/enforcer attempts\s*([0-9]+)/i)
+  if (att) o.enforcerAttempts = att[1].trim()
+  const pk = text.match(/packet handler:\s*([0-9]+) packets/i)
+  if (pk) o.handlerPackets = Number(pk[1])
   return o
 }
 

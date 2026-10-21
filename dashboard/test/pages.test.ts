@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { Client, MockApi, signedInClient, tenantFixture, verdictFixture } from "./helpers";
 
@@ -160,8 +161,13 @@ describe("dashboard pages against the mocked API", () => {
     expect((await client.post(`/players/${uuid}/erase`, { _csrf: csrf, confirm: "nope" })).headers.get("Location")).toBe(`/players/${uuid}?err=invalid`);
     expect(api.calls).toHaveLength(0);
     const res = await client.post(`/players/${uuid}/erase`, { _csrf: csrf, confirm: uuid });
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("verdicts 3, clips 1");
+    expect(res.status).toBe(303);
+    const location = res.headers.get("Location")!;
+    expect(location).toMatch(/^\/players\?flash=[A-Za-z0-9_-]{22}$/);
+    expect(await (await client.get(location)).text()).toContain("verdicts 3, clips 1");
+    // A reload neither repeats the erasure nor shows the result again.
+    expect(await (await client.get(location)).text()).not.toContain("verdicts 3, clips 1");
+    expect(api.callsTo("DELETE", `/api/v1/players/${uuid}`)).toHaveLength(1);
   });
 });
 
@@ -230,11 +236,25 @@ describe("API keys", () => {
       .json("GET", "/api/v1/apikeys", { api_keys: [{ id: "k1", name: "bot", scopes: ["read"] }] })
       .json("POST", "/api/v1/apikeys", { id: "k2", name: "bot2", scopes: ["read", "verdicts:write"], key: "pe_k2_SECRETSECRET" });
     const res = await client.post("/apikeys", { _csrf: csrf, name: "bot2", "scope:read": "on", "scope:verdicts:write": "on", "scope:bogus": "on" });
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Cache-Control")).toBe("no-store");
-    expect(await res.text()).toContain("pe_k2_SECRETSECRET");
+    expect(res.status).toBe(303);
+    expect(await res.text()).not.toContain("pe_k2_SECRETSECRET");
+    const location = res.headers.get("Location")!;
+    expect(location).toMatch(/^\/apikeys\?flash=[A-Za-z0-9_-]{22}$/);
     expect(api.callsTo("POST", "/api/v1/apikeys")[0]!.body).toEqual({ name: "bot2", scopes: ["read", "verdicts:write"] });
-    expect(await (await client.get("/apikeys")).text()).not.toContain("pe_k2_SECRETSECRET");
+
+    // Another signed-in user cannot read the one-time result, and it is not stored in plaintext.
+    const other = await signedInClient("owner", api);
+    expect(await (await other.client.get(location)).text()).not.toContain("pe_k2_SECRETSECRET");
+    const stored = await env.DB.prepare("SELECT data FROM flashes WHERE id = ?1").bind(location.split("=")[1]!).first<{ data: string }>();
+    expect(stored).not.toBeNull();
+    expect(stored!.data).not.toContain("SECRET");
+
+    const shown = await client.get(location);
+    expect(shown.headers.get("Cache-Control")).toBe("no-store");
+    expect(await shown.text()).toContain("pe_k2_SECRETSECRET");
+    // Exactly once: a reload of the same URL no longer shows it, and no second key is created.
+    expect(await (await client.get(location)).text()).not.toContain("pe_k2_SECRETSECRET");
+    expect(api.callsTo("POST", "/api/v1/apikeys")).toHaveLength(1);
   });
 
   it("is owner-only", async () => {

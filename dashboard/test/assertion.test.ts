@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { ApiClient, ApiError } from "../src/lib/api";
-import { buildClaims, signAssertion, type Principal } from "../src/lib/assertion";
+import { ASSERTION_TTL_S, buildClaims, signAssertion, type Principal } from "../src/lib/assertion";
 import { MockApi } from "./helpers";
 
 const KEY = "assertion-key-for-unit-tests-0123456789";
@@ -36,7 +36,7 @@ describe("assertion signing", () => {
       role: "staff",
       method: "GET",
       path: "/api/v1/verdicts",
-      exp: 1_760_000_060,
+      exp: 1_760_000_045,
     });
   });
 
@@ -51,9 +51,10 @@ describe("assertion signing", () => {
     expect(await referenceVerify(KEY, `${forged}.${mac}`)).toBeNull();
   });
 
-  it("expires 60 seconds ahead", () => {
+  it("expires 45 seconds ahead (the API allows <= 60 s plus 5 s leeway)", () => {
     const c = buildClaims(principal, "GET", "/x", 1_000_500);
-    expect(c.exp).toBe(1000 + 60);
+    expect(c.exp).toBe(1000 + 45);
+    expect(ASSERTION_TTL_S).toBe(45);
   });
 });
 

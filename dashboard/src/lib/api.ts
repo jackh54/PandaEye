@@ -4,7 +4,7 @@
 //   X-PandaEye-Client-IP: the visitor's CF-Connecting-IP (when known)
 // Failures surface as ApiError; callers render a friendly page instead of crashing.
 
-import type { Env } from "../env";
+import { apiUrlAllowed, type Env } from "../env";
 import { buildClaims, signAssertion, type Principal } from "./assertion";
 
 export type FetchFn = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
@@ -62,7 +62,9 @@ export class ApiClient {
 
   url(path: string, query?: Query): URL {
     const base = (this.env.PANDAEYE_API_URL || "").replace(/\/+$/, "");
-    if (!/^https?:\/\//.test(base)) throw new ApiError("misconfigured", 0, "misconfigured", "PANDAEYE_API_URL is not configured");
+    if (!apiUrlAllowed(this.env)) {
+      throw new ApiError("misconfigured", 0, "misconfigured", "PANDAEYE_API_URL is not configured (https is required outside development)");
+    }
     const u = new URL(base + path);
     if (query) {
       for (const [k, v] of Object.entries(query)) {

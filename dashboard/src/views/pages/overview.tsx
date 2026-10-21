@@ -112,7 +112,7 @@ export function OverviewPage(props: {
   latency: Section<Latency>;
   servers: Section<Server[]>;
   recent: Section<Verdict[]>;
-  openAppeals: Section<number>;
+  openAppeals: Section<{ count: number; more: boolean }>;
 }) {
   const servers = props.servers.ok ? props.servers.value : [];
   const online = servers.filter((s) => s.online);
@@ -140,9 +140,9 @@ export function OverviewPage(props: {
         />
         <Stat
           label="Open appeals"
-          value={props.openAppeals.ok ? formatNumber(props.openAppeals.value) : "—"}
+          value={props.openAppeals.ok ? `${formatNumber(props.openAppeals.value.count)}${props.openAppeals.value.more ? "+" : ""}` : "—"}
           hint={<a href="/appeals">Review appeals</a>}
-          tone={props.openAppeals.ok && props.openAppeals.value > 0 ? "warn" : undefined}
+          tone={props.openAppeals.ok && props.openAppeals.value.count > 0 ? "warn" : undefined}
         />
       </div>
 

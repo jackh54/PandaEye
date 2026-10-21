@@ -86,7 +86,8 @@ function findPandaEyeJar () {
     .map((f) => path.join(dir, f)).sort((x, y) => fs.statSync(y).mtimeMs - fs.statSync(x).mtimeMs)
   return jars[0] || null
 }
-const CLOUD_BIN = process.env.PE_CLOUD_BIN || path.join(REPO, 'cloud', 'bin', 'pandaeye')
+// cloud/README.md builds with `go build -o pandaeye ./cmd/pandaeye` inside cloud/
+const CLOUD_BIN = process.env.PE_CLOUD_BIN || [path.join(REPO, 'cloud', 'bin', 'pandaeye'), path.join(REPO, 'cloud', 'pandaeye')].find((f) => fs.existsSync(f)) || path.join(REPO, 'cloud', 'pandaeye')
 const LICENSE = process.env.PE_E2E_LICENSE || 'pe-e2e-static-license-0000000000000001'
 
 function artifacts () {
@@ -369,7 +370,21 @@ async function phaseCycles () {
       // loaders of all but the current instance must be collected
       await server.probe('gc probe/cycles-final-gc.json', 60000)
       res.finalGc = readJsonLenient(path.join(server.dir, 'probe', 'cycles-final-gc.json'))
-      res.leakedLoaders = (res.finalGc.watched || []).filter((w) => !w.collected && !w.is_current_instance).length
+      // watched[0] is the instance enabled at server start: Bukkit's help map (CraftServer.helpMap ->
+      // GenericCommandHelpTopic -> PluginCommand -> plugin) keeps it, and PlugManX does not clear it (see README).
+      // Instances loaded by plugman must all be collected.
+      const w = res.finalGc.watched || []
+      res.startupLoaderCollected = w.length ? w[0].collected : null
+      res.leakedLoaders = w.slice(1).filter((x) => !x.collected && !x.is_current_instance).length
+      if (res.leakedLoaders && process.env.PE_E2E_HEAP_ANALYSIS) {
+        const hp = path.join(RUN_DIR, 'heap', 'cycles.hprof')
+        fs.mkdirSync(path.dirname(hp), { recursive: true })
+        try {
+          execFileSync('jcmd', [String(server.pid()), 'GC.heap_dump', hp], { timeout: 120000 })
+          res.retainers = execFileSync('python3', ['-I', path.join(__dirname, 'hprof-retainers.py'), hp, process.env.PE_E2E_HEAP_CLASS || 'dev.pandascript.pandaeye.paper.PandaEyePlugin', '--max', '2'], { encoding: 'utf8', timeout: 1800000 })
+        } catch (e) { res.retainers = 'heap analysis failed: ' + e.message }
+        fs.rmSync(hp, { force: true })
+      }
       res.errorsTotal = consoleErrors(server, from0, /PandaEye/i)
       await stopWalkers(bots)
     })
@@ -463,10 +478,8 @@ async function phaseDetect () {
         if (cloud) {
           for (const p of rec.suspects) {
             try { rec.verdicts.push(...await cloud.verdicts({ player: offlineUuid(p), since: rec.startMs - 1000 })) } catch (e) { rec.cloudError = e.message }
-            const rp = await cloud.replay({ player: offlineUuid(p), since: rec.startMs - 1000, until: Date.now() })
-            rec.signals.push(...rp.signals)
-            if (rp.error) rec.replayError = rp.error
           }
+          rec.replayWindow = { since: rec.startMs - 1000, until: Date.now() }
         }
         const seen = new Set([...rec.flags.filter((f) => f.confirmed).map((f) => f.check), ...rec.verdicts.flatMap(verdictChecks), ...rec.signals.map((s) => s.check)])
         rec.observedChecks = [...seen].filter(Boolean).sort()
@@ -480,12 +493,31 @@ async function phaseDetect () {
         }
         log(`    observed: ${rec.observedChecks.join(', ') || '-'}${rec.kind === 'cheat' ? ' missed: ' + (rec.missed.join(', ') || '-') : ''}`)
       }
-      res.legit = await runSuite(server, listScenarios('legit'), { tag: 'detect-legit', onEach })
-      res.cheats = await runSuite(server, listScenarios('cheat'), { tag: 'detect-cheat', trace: true, onEach })
+      const sel = O.scenarios === 'legit' ? listScenarios('all') : listScenarios(O.scenarios)
+      res.legit = await runSuite(server, sel.filter((m) => m.kind === 'legit'), { tag: 'detect-legit', onEach })
+      res.cheats = await runSuite(server, sel.filter((m) => m.kind === 'cheat'), { tag: 'detect-cheat', trace: true, onEach })
       res.status = await pandaeyeStatus(server)
       res.peaks = PE.peaks(server.dir).length
     })
   } finally { if (cloud) await cloud.stop() }
+  // cloud signals per scenario window with `pandaeye replay` (needs the stopped `all` process' data dir)
+  if (cloud) {
+    for (const rec of [...res.legit, ...res.cheats]) {
+      if (!rec.replayWindow) continue
+      for (const p of rec.suspects) {
+        const rp = await cloud.replay({ player: offlineUuid(p), ...rec.replayWindow })
+        rec.signals.push(...rp.signals)
+        if (rp.error) rec.replayError = rp.error
+      }
+      const seen = new Set([...(rec.observedChecks || []), ...rec.signals.map((s) => s.check)])
+      rec.observedChecks = [...seen].filter(Boolean).sort()
+      if (rec.kind === 'cheat') {
+        rec.detected = rec.checks.filter((c) => seen.has(c))
+        rec.missed = rec.checks.filter((c) => !seen.has(c))
+        rec.detectOk = rec.missed.length === 0
+      }
+    }
+  }
   return res
 }
 

@@ -104,3 +104,82 @@ func TestReviewConsumeSlowConsumerLoss(t *testing.T) {
 	sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
 	t.Logf("consume err=%v res=%+v handled=%d/%d ackFloor=%d; acked but never handled: %d %v", err, res, len(seen), n, info.AckFloor.Stream, len(missing), missing)
 }
+
+// ResetConsumer deletes the old epochs before creating the new one; if the create fails, the next
+// reset finds no consumer and starts at now-2min, skipping the backlog after the old ack floor.
+func TestReviewResetConsumerLosesFloor(t *testing.T) {
+	srv := startServer(t)
+	b := openBus(t, testConfig(srv.ClientURL(), "owner-a"))
+	seqs := publishN(t, b, 0, 10, "old")
+	spec := PartitionConsumer(GroupEvents, 0)
+	st, _ := b.JS.Stream(ctxT(t, 5*time.Second), StreamEvents)
+	if _, err := st.CreateConsumer(ctxT(t, 5*time.Second), jetstream.ConsumerConfig{Durable: spec.Name + "-e1", FilterSubject: spec.Filter,
+		AckPolicy: jetstream.AckAllPolicy, DeliverPolicy: jetstream.DeliverByStartSequencePolicy, OptStartSeq: seqs[0]}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := st.Consumer(ctxT(t, 5*time.Second), spec.Name+"-e1")
+	batch, _ := c.Fetch(3)
+	var last jetstream.Msg
+	for m := range batch.Messages() {
+		last = m
+	}
+	last.DoubleAck(ctxT(t, 5*time.Second)) // ack floor = seqs[2]
+	t.Logf("old epoch ack floor: %d (backlog %d..%d unprocessed)", seqs[2], seqs[3], seqs[9])
+	time.Sleep(FirstStartBack + 5*time.Second) // the backlog is now older than FirstStartBack
+	// A create failure after the deletes (any error: timeout, ctx cancelled at shutdown, crash).
+	_, err := b.ResetConsumer(ctxT(t, 5*time.Second), spec, "bad.epoch")
+	t.Logf("reset with failing create: %v", err)
+	e, err := b.ResetConsumer(ctxT(t, 5*time.Second), spec, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _ := e.Consumer.Info(ctxT(t, 5*time.Second))
+	t.Logf("next epoch: StartSeq=%d StartTime=%v NumPending=%d (want %d pending)", e.StartSeq, !e.StartTime.IsZero(), info.NumPending, 7)
+}
+
+func reviewGaps(t *testing.T, opt jetstream.PullConsumeOpt) (handled, gaps int) {
+	srv := startServer(t)
+	b := openBus(t, testConfig(srv.ClientURL(), "owner-a"))
+	payload := make([]byte, 2<<20)
+	for i := 0; i < 220; i += 20 {
+		var msgs []Message
+		for j := i; j < i+20; j++ {
+			msgs = append(msgs, Message{Subject: EventsSubject(0), Data: payload, MsgID: fmt.Sprintf("g:%d", j)})
+		}
+		if _, err := b.PublishAll(ctxT(t, 60*time.Second), msgs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e, err := b.ResetConsumer(ctxT(t, 5*time.Second), PartitionConsumer(GroupEvents, 0), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan jetstream.Msg, PullBatch)
+	cc, err := e.Consumer.Consume(func(m jetstream.Msg) { ch <- m }, opt, jetstream.PullPriorityGroup(PriorityGroup))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cc.Stop()
+	var last uint64
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case m := <-ch:
+			time.Sleep(15 * time.Millisecond)
+			md, _ := m.Metadata()
+			if md.Sequence.Consumer != last+1 {
+				gaps++
+			}
+			last = md.Sequence.Consumer
+			handled++
+		case <-deadline:
+			return
+		}
+	}
+}
+
+func TestReviewPullBytesLimitMitigates(t *testing.T) {
+	h1, g1 := reviewGaps(t, jetstream.PullMaxMessages(PullBatch))
+	h2, g2 := reviewGaps(t, jetstream.PullMaxMessagesWithBytesLimit(PullBatch, 32<<20))
+	t.Logf("PullMaxMessages(100): handled %d, delivery-seq gaps %d; WithBytesLimit(100, 32 MiB): handled %d, gaps %d", h1, g1, h2, g2)
+}

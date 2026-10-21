@@ -2,6 +2,8 @@ import { formatDuration, formatMsFromUs, formatNumber } from "../../lib/format";
 import type { PublicStatus } from "../../lib/pandaeye";
 import { Csrf, Notice, Stat } from "../components";
 import { Layout } from "../layout";
+import { TurnstileWidget } from "./auth";
+import type { TurnstileMode } from "../../lib/turnstile";
 
 export function StatusPage(props: { nonce: string; status: PublicStatus | null; checkedAt: number }) {
   const s = props.status;
@@ -87,6 +89,7 @@ export function AppealPage(props: {
   nonce: string;
   csrf: string;
   sitekey: string | undefined;
+  turnstile: TurnstileMode;
   form?: Partial<AppealForm>;
   error?: string | null;
   done?: boolean;
@@ -109,7 +112,7 @@ export function AppealPage(props: {
     );
   }
   return (
-    <Layout title="Appeal a ban" nonce={props.nonce} turnstile={!!props.sitekey}>
+    <Layout title="Appeal a ban" nonce={props.nonce} turnstile={props.turnstile === "widget"}>
       <section class="auth-card wide">
         <h1>Appeal a ban</h1>
         <p>
@@ -139,7 +142,7 @@ export function AppealPage(props: {
             <input name="contact" maxlength={200} autocomplete="off" value={f.contact ?? ""} placeholder="Discord name, e-mail, forum name..." />
             <span class="hint">Deleted 30 days after the appeal is decided.</span>
           </label>
-          <TurnstileBox sitekey={props.sitekey} />
+          <TurnstileWidget sitekey={props.sitekey} mode={props.turnstile} action="appeal" />
           <button type="submit" class="btn btn-primary">
             Submit appeal
           </button>
@@ -149,10 +152,6 @@ export function AppealPage(props: {
   );
 }
 
-function TurnstileBox(props: { sitekey: string | undefined }) {
-  if (!props.sitekey) return <p class="muted small">Human verification is disabled in this development environment.</p>;
-  return <div class="cf-turnstile" data-sitekey={props.sitekey} data-action="appeal"></div>;
-}
 
 export function PrivacyPage(props: { nonce: string }) {
   return (

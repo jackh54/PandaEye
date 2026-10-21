@@ -89,7 +89,9 @@ function writeReport (dir, R) {
         if (!c.ok) fail = true
         L.push(`| ${c.i} | ${f2(c.disable?.disable_ms)} | ${c.jcmdAfterUnload ? c.jcmdAfterUnload.pandaeye.length : '?'} | ${c.kicked.length} | ${c.errors.length} | ${c.ok ? 'OK' : 'FAIL'} |`)
       }
-      if (P.cycles.leakedLoaders) { fail = true; L.push('', `class loaders not collected: ${P.cycles.leakedLoaders}`) }
+      if (P.cycles.leakedLoaders) { fail = true; L.push('', `class loaders of plugman-loaded instances not collected: ${P.cycles.leakedLoaders}`) }
+      if (P.cycles.startupLoaderCollected === false) L.push('', 'note: the instance enabled at server start is retained by CraftServer.helpMap (PlugManX does not remove help topics; see README findings)')
+      if (P.cycles.retainers) L.push('', '```', P.cycles.retainers.trim().slice(0, 4000), '```')
       L.push('')
     }
   }
