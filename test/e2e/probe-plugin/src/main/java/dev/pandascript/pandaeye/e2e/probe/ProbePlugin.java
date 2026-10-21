@@ -271,14 +271,18 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
                 }
                 case "tp" -> {
                     Player p = player(a[1]);
-                    World w = p.getWorld();
-                    Location l = new Location(w, d(a[2]), d(a[3]), d(a[4]),
-                            a.length > 5 ? (float) d(a[5]) : p.getLocation().getYaw(),
-                            a.length > 6 ? (float) d(a[6]) : p.getLocation().getPitch());
-                    p.teleportAsync(l).whenComplete((r, err) -> {
-                        if (err != null || !Boolean.TRUE.equals(r)) err(line, String.valueOf(err));
-                        else ok(line);
-                    });
+                    // on the player's own thread: leave a vehicle first (Folia refuses to teleport passengers)
+                    var task = p.getScheduler().run(this, t -> {
+                        Location cur = p.getLocation();
+                        Location l = new Location(p.getWorld(), d(a[2]), d(a[3]), d(a[4]),
+                                a.length > 5 ? (float) d(a[5]) : cur.getYaw(), a.length > 6 ? (float) d(a[6]) : cur.getPitch());
+                        if (p.isInsideVehicle()) p.leaveVehicle();
+                        p.teleportAsync(l).whenComplete((r, err) -> {
+                            if (err != null || !Boolean.TRUE.equals(r)) err(line, "teleportAsync=" + r + " " + err);
+                            else ok(line);
+                        });
+                    }, () -> err(line, "player retired"));
+                    if (task == null) err(line, "player scheduler retired");
                 }
                 case "gm" -> onPlayer(a[1], line, p -> p.setGameMode(GameMode.valueOf(a[2].toUpperCase(Locale.ROOT))));
                 case "give" -> onPlayer(a[1], line, p -> {
