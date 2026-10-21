@@ -4,15 +4,19 @@
 // Every WebSocket message is BINARY and starts with a one-byte codec header:
 //   0x00 = the rest is a raw protobuf message
 //   0x01 = the rest is a single zstd frame (with Frame_Content_Size set) wrapping the protobuf message
+//   0x02 = the rest is a raw DEFLATE stream (RFC 1951, java.util.zip.Deflater(nowrap=true)) of the message;
+//          plugins fall back to it when the pure-Java zstd codec is unavailable
 // Plugin -> cloud messages are ClientFrame, cloud -> plugin messages are ServerFrame.
-// Limits: compressed message <= 1 MiB, decompressed <= 8 MiB. The cloud never compresses ServerFrames
-// in protocol v1 (they are small); plugins must still accept codec 0x01 for forward compatibility.
+// Limits: compressed message <= 1 MiB, decompressed <= 8 MiB, Hello is always codec 0x00 and <= 16 KiB.
+// The cloud never compresses ServerFrames in protocol v1 (they are small); plugins must still accept
+// codecs 0x01 and 0x02 for forward compatibility.
 //
 // Session: the first ClientFrame must be Hello (within 10 s of the upgrade). The cloud answers with
 // Welcome or with Error{fatal=true} and closes. After Welcome the plugin streams Batch frames.
-// Every Batch is acknowledged with BatchAck once it is durably in the event stream; the plugin keeps
-// unacknowledged batches and resends them (replayed=true) after a reconnect. Delivery is at-least-once;
-// the cloud de-duplicates by (server_id, seq).
+// Every Batch is acknowledged with BatchAck once it is stored in the event stream (never before); the
+// plugin keeps unacknowledged batches and resends them (replayed=true) after a reconnect. Delivery is
+// at-least-once; the cloud de-duplicates by (tenant, server_id, seq). Rate limits are enforced as
+// backpressure (the gateway stops reading and delays BatchAck), never by acknowledging dropped data.
 //
 // Time: every Event carries time_us = Unix time in microseconds derived from the plugin's monotonic
 // clock (unix_us_at_start + (System.nanoTime() - nano_at_start) / 1000), so it never goes backwards
@@ -81,6 +85,8 @@ message Hello {
   uint64 client_time_unix_ms = 11;
   repeated string capabilities = 12;  // e.g. "tick_end", "env_sampling", "target_history", "probe"
   uint32 online_players = 13;
+  string instance_id = 14;            // random UUID per plugin process start (detects cloned installs)
+  string server_secret = 15;          // secret issued by the cloud in the first Welcome; empty on first connect
 }
 
 message Welcome {
@@ -91,6 +97,10 @@ message Welcome {
   uint32 heartbeat_interval_ms = 5;   // plugin sends Ping at this interval (default 5000)
   uint32 max_batch_events = 6;        // plugin must not put more events than this in one Batch (default 4096)
   uint64 last_acked_seq = 7;          // highest batch seq the cloud already holds for this server_id (0 = none)
+  string server_secret = 8;           // set only when the cloud registered this server_id just now: store it
+  uint32 max_events_per_s = 9;        // live budget for this connection
+  uint32 max_bytes_per_s = 10;
+  uint32 replay_max_events_per_s = 11; // the plugin paces resends of buffered batches to at most this
 }
 
 // Settings the tenant controls from the dashboard. Pushed in Welcome and again as config_update.
@@ -118,6 +128,8 @@ message Error {
     CODE_UNSUPPORTED_PROTOCOL = 5;
     CODE_INTERNAL = 6;
     CODE_SHUTTING_DOWN = 7;
+    CODE_DUPLICATE_SERVER = 8;        // another live install uses this server_id (cloned plugin folder?)
+    CODE_TOO_LARGE = 9;               // the batch was too large or invalid; it was acknowledged and dropped
   }
   Code code = 1;
   string message = 2;
@@ -128,12 +140,15 @@ message Error {
 message Ping {
   uint64 nonce = 1;
   uint64 client_time_us = 2;
+  uint32 last_probe_rtt_us = 3;       // the plugin's latest measured end-to-end probe RTT (0 = none yet)
+  uint32 online_players = 4;
 }
 
 message Pong {
   uint64 nonce = 1;
   uint64 client_time_us = 2;          // echoed
   uint64 server_time_us = 3;
+  RemoteConfig config = 4;            // current tenant settings (heals a lost config_update)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -229,6 +244,7 @@ message Event {
     Probe probe = 24;
     UseItem use_item = 25;
     ServerSwitch server_switch = 26;  // sent by the proxy plugin only
+    ServerStall stall = 27;           // server-level (player empty): the plugin saw a server-side stall
   }
 }
 
@@ -244,7 +260,10 @@ message PlayerJoin {
   bool hot_loaded = 8;                // the player was already online when the plugin was enabled
   bool exempt = 9;                    // has the bypass permission
   bytes ip_hash = 10;                 // optional (off by default): HMAC-SHA256(ip, per-install secret), first 16 bytes
-  string network_session = 11;        // set by the proxy plugin; backends leave it empty
+  string network_session = 11;        // set by the proxy plugin; backends set it only from a verified proxy message
+  bool update = 12;                   // metadata refresh (brand, network_session, periodic re-announce):
+                                      // never resets session state
+  string session = 13;                // random UUID per player session on this server (new on every real join)
 }
 
 message PlayerQuit {
@@ -266,6 +285,9 @@ enum MoveFlag {
   MOVE_FLAG_VELOCITY_PENDING = 512;
   MOVE_FLAG_CONTAINER_OPEN = 1024;    // the server has a non-player container open for this player
   MOVE_FLAG_DEAD = 2048;
+  MOVE_FLAG_SERVER_ROTATION = 4096;   // the rotation in this sample was set by the server (teleport, rotate, look-at)
+  MOVE_FLAG_CANCELLED = 8192;         // another plugin cancelled this packet server-side (the client still sent it)
+  MOVE_FLAG_SCOPING = 16384;          // using a spyglass (mouse sensitivity is scaled)
 }
 
 // One client movement packet (position and/or rotation and/or ground state).
@@ -303,6 +325,9 @@ message Attack {
   float eye_height = 15;              // eye height used for `eye`
   bool target_in_vehicle = 16;        // target is riding something (its own position history is stale)
   bool attacker_in_vehicle = 17;
+  bool extended_reach = 18;           // the held item may have a custom attack range (attack_range component, spear)
+  bool stab = 19;                     // spear stab (PLAYER_DIGGING STAB): no target id is known
+  uint32 rtt_high_ms = 20;            // max of the attacker's last 5 RTT samples
 }
 
 message Swing {
@@ -376,6 +401,19 @@ message LocalFlag {
   string info = 6;                    // short human-readable detail
   map<string, double> data = 7;
   bool confirmed = 8;                 // the world-state confirmation step ran and agreed
+  repeated ContextMove context = 9;   // the player's last <= 40 movement packets before the flag (full rate)
+}
+
+message ContextMove {
+  uint64 time_us = 1;
+  uint32 tick = 2;
+  MoveSample move = 3;
+}
+
+message ServerStall {
+  uint64 start_us = 1;                // event clock
+  uint64 end_us = 2;
+  float stalled_share = 3;            // share of active players that had no packets during the stall
 }
 
 message TeleportApplied {
@@ -406,6 +444,8 @@ enum EnvFlag {
   ENV_FLAG_SWIMMING = 16384;
   ENV_FLAG_NEAR_ENTITY = 32768;       // another entity (boat, shulker, player...) within 1.5 blocks
   ENV_FLAG_LOW_CEILING = 65536;       // a collidable block within 1 block above the head
+  ENV_FLAG_STUCK = 131072;            // in cobweb, sweet berry bush or powder snow (stuck-in-block multiplier)
+  ENV_FLAG_EXTENDED_REACH_ITEM = 262144; // main-hand item has a custom attack range (attack_range component, spear)
 }
 
 message EnvSample {
@@ -413,6 +453,7 @@ message EnvSample {
   double x = 2;                       // server-side position at sampling time
   double y = 3;
   double z = 4;
+  float server_tick_ms = 5;           // measured duration of the player's (region) tick, 50 at 20 TPS
 }
 
 message PotionLevel {
@@ -504,6 +545,8 @@ message Verdict {
   bool shadow = 13;                   // the tenant/cloud is in shadow mode: informational only
   string evidence_url = 14;           // dashboard link, may be empty
   uint32 ban_duration_s = 15;         // 0 = permanent / use the server's configured command
+  string supersedes = 16;             // UNBAN/UNMITIGATE: the verdict_id they revert
+  string appeal_code = 17;            // short random code shown in the ban message, required to appeal
 }
 
 message VerdictAck {

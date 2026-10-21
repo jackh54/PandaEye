@@ -1,325 +1,393 @@
-# PandaEye checks
+# PandaEye checks (v2)
 
-Every check, where it runs, its algorithm, thresholds, and how it scores. Plugin (local) checks and cloud
-checks share ids, categories and scoring. Physics constants are vanilla 1.21.x unless stated.
+Every check, where it runs, its algorithm, thresholds, and how it scores. Plugin (local) checks and
+cloud checks share ids, categories and scoring. Physics are vanilla 1.21.11 client code (verified against
+decompiled sources during the design review) unless stated.
 
-Conventions
+## 0. Conventions
 
-- "consecutive" packets: packet n directly follows packet n-1 with exactly one client tick between them
-  (tick-end clients: tick counter differs by 1; other clients: no flying packet without a position in
-  between). Checks that need consecutive packets skip otherwise.
-- "tick clients": clients whose protocol is >= 768 (1.21.2) or newer than PacketEvents knows; they send
-  `CLIENT_TICK_END` natively. Older clients (translated by ViaVersion) are never judged by tick-based
-  logic.
+- **Tick clients**: client protocol >= 768 (1.21.2) or newer than PacketEvents knows. They send
+  `CLIENT_TICK_END` once per client tick and at most one movement packet per tick (plus one PosRot per
+  teleport and one Rot per server `PLAYER_ROTATION`). **All tick-based and all local movement checks run
+  only for tick clients.** Older clients (ViaVersion-translated 1.8-1.21.1) get protocol checks and the
+  cloud combat/world checks with legacy geometry (section 2.1); their local movement checks are off in v1.
+- **Consecutive**: packet n is the first movement packet of the tick directly after packet n-1's tick.
+  Checks that need consecutive packets skip otherwise (no tick-end seen between, or more than one).
 - dy, h: vertical and horizontal displacement of one movement packet relative to the previous position.
-- VL: local violation level (plugin only). Points: what one confirmed violation adds to the cloud score.
-- half-life: decay of the check's accumulator in the verdict service. cap: max contribution of the
-  check to the player score. certain: the check alone may justify a BAN (see ARCHITECTURE 5.6).
-- Every check is configurable (enabled, thresholds) and every threshold below is the shipped default.
-  Defaults are deliberately lenient: the shadow rollout measures per-check peak values on real players
-  and thresholds are tightened from that evidence (peak-per-player method), never by guessing.
+- **VL**: local violation level (plugin only). **Points**: what one violation adds to the cloud score.
+  **Half-life**: decay of the check's accumulator. **Cap**: max contribution of the check.
+  **Family**: the id prefix before the first dot; families have their own cap (section 4).
+  **Certain**: the check alone may justify a BAN (ARCHITECTURE 5.6).
+- Thresholds below are the shipped defaults. They are deliberately lenient. The shadow rollout measures
+  per-player peak values on real players and thresholds are tightened from that evidence (peak-per-player
+  method), never by guessing. Every check is configurable (enabled, thresholds).
 
-## Common exemptions (local movement checks)
+## 1. Local checks (plugin)
 
-Skip (no flag, no candidate) when any holds: player exempt (Bedrock, `pandaeye.bypass`), warm-up after
-hot load, creative or spectator, dead, in a vehicle, flying (server or client abilities) or flying ended
-less than 1 s ago, gliding (metadata or env), riptide (metadata or env), a teleport is pending or was
-confirmed less than 3 position packets ago, a velocity/explosion knockback was sent less than
-`ping + 1000 ms` ago, a RESPAWN/JOIN_GAME less than 2 s ago, or the env sampler saw within the last
-1000 ms: IN_WATER, IN_LAVA, IN_BUBBLE_COLUMN, CLIMBING, IN_WEB, IN_POWDER_SNOW, ON_HONEY.
+### 1.1 Shared machinery
 
-## Confirmation step (local)
+**Client acknowledgement (passive).** PandaEye never sends packets. It observes every server KEEP_ALIVE
+and PING that any plugin or the server sends (id + send time, per-id FIFO, entries expire after 30 s) and
+the client's KEEP_ALIVE/PONG/TELEPORT_CONFIRM replies. `ackedUpTo` = send time of the newest server
+packet the client has provably processed. A server-side change sent at time t is **applied by the client**
+once `ackedUpTo >= t` and one more movement packet has arrived. Fallback when no acknowledgement arrives:
+5 s after t. (Vulcan, TotemGuard and KnockbackSync send pings constantly, so acknowledgement normally
+takes about one RTT.)
 
-A movement candidate records the positions it used. On the player's region thread one tick later:
+**Pending state (old/new pairs).** Every check-relevant server state (abilities, game mode, potion
+effects, attributes, vehicle) is kept as `(applied, pending)`. Until the pending value is applied by the
+client, checks use the more lenient of the two (higher speed/jump/step/gravity tolerance, flying or
+levitating = exempt). Decreases therefore never make a check stricter before the client has them.
 
-- `exemptNear(box)`: any block in `box` that is a liquid, bubble column, ladder/vine/scaffolding/
-  climbable, cobweb, powder snow, honey block, slime block, bed, piston/moving piston/piston head, or any
-  entity other than the player (boats, shulkers, minecarts, other players, item frames excluded) ->
-  discard.
-- `movement.speed` recomputes the bound with the real friction (max slipperiness of the blocks under the
-  0.6x0.6 footprint at `y - 0.5000001`) and discards if the movement now fits. Soul sand / soul soil
-  under the player -> discard (soul speed).
-- `movement.fly` and `movement.step` require "open air": no collidable block intersects the hitbox
-  (0.6 x 1.8, scaled) at either position expanded by 1.0 horizontally and vertically; otherwise discard.
-- `movement.groundspoof` requires: no block with a collision shape intersects the box
-  `[x-0.3, y-0.6, z-0.3] .. [x+0.3, y+0.1, z+0.3]` at the last two positions and no entity within 1.5.
+**Pending velocity.** Every S `ENTITY_VELOCITY` for the own entity and every S `EXPLOSION` with player
+knockback, plus every Bukkit `PlayerVelocityEvent` seen at MONITOR (covers packets other plugins write
+silently), adds a pending velocity. It stays pending until a movement matching it is observed (consumed),
+or until it is applied by the client plus 2 movement packets, with a 5 s fallback. While any velocity is
+pending, movement.speed/fly/step/groundspoof skip.
 
-## Local checks (plugin)
+**Teleports.** A FIFO of pending server teleports (`PLAYER_POSITION_AND_LOOK`, relative flags resolved
+against the last known position). `TELEPORT_CONFIRM` pops entries up to its id; the confirm's PosRot sets
+the baseline (its `onGround=false` is ignored). Movement checks skip while the FIFO is non-empty and for
+3 position packets after it empties. S `PLAYER_ROTATION` and S `FACE_PLAYER` are server rotations: the
+next rotation-bearing packet is marked `SERVER_ROTATION`.
 
-### timer.balance - TICK_SPEED
+**Common exemptions (local movement checks).** Skip when any holds: player exempt (Bedrock via Floodgate
+or UUID msb == 0; `pandaeye.bypass` outside shadow mode), session not yet seeded (hot load snapshot not
+applied) or fewer than 40 movement packets since join/seed, any required state unknown, creative or
+spectator (applied or pending), dead (S `UPDATE_HEALTH` health <= 0 until RESPAWN), in a vehicle, flying
+(applied or pending) or flying ended < 1 s ago, gliding (metadata, env, or the provisional elytra
+exemption), riptide (metadata, env, or the provisional riptide exemption), levitation or slow falling
+(applied or pending), teleport pending (above), velocity pending (above), less than 3 position packets
+after JOIN_GAME/RESPAWN and before the client's `PLAYER_LOADED` (1.21.4+), server tick rate not 20 or
+the game frozen (S `TICKING_STATE`), the packet was marked cancelled by another plugin and the previous
+one too (positions may be inconsistent), or the env sampler saw within the last 1000 ms: IN_WATER,
+IN_LAVA, IN_BUBBLE_COLUMN, CLIMBING, IN_WEB, IN_POWDER_SNOW, ON_HONEY, STUCK, NEAR_ENTITY.
 
-Tick clients only. Minimum-offset drift: a legitimate client sends tick `k` at client time
-`c0 + 50k` ms, the server receives it at `r_k = c0 + 50k + d_k` with network delay `d_k >= d_min`, so
-`offset_k = r_k - 50k` never falls below `c0 + d_min`. A timer cheat makes `offset` fall without bound.
+**Provisional exemptions.** C `PLAYER_DIGGING RELEASE_USE_ITEM` starts a provisional riptide exemption
+for 2 s + ping. C `ENTITY_ACTION START_FLYING_WITH_ELYTRA` starts a provisional gliding exemption until
+the server metadata says otherwise (max 2 s). The confirmation step validates them against authoritative
+state (`isRiptiding`/`isGliding`, a riptide trident in hand and `isInWaterOrRain`); a player whose
+provisional exemptions keep failing validation (3 in 60 s) stops receiving them for 10 minutes.
+
+**Confirmation step.** A movement candidate records the world UID and the positions it used. On the
+player's entity scheduler one tick later it is discarded unless the world still matches, the positions
+are owned by the current region (`Bukkit.isOwnedByCurrentRegion`) and all touched chunks are loaded. It
+then re-evaluates the common exemptions from authoritative server state (`isRiptiding`, `isGliding`,
+`isFlying`, `isInsideVehicle`, a `PlayerVelocityEvent` in the last 2 s, game mode) and:
+
+- `exemptNear(box)`: discard if the box (player box at positions n-2..n inflated by 0.3) intersects any
+  liquid, bubble column, climbable, cobweb, sweet berry bush, powder snow, honey block, slime block, bed,
+  piston/moving piston/piston head, or any entity that is pushable or collidable (players, all living
+  entities, boats, minecarts, shulkers, happy ghasts, anything with a collision box). Only non-collidable
+  entities are ignored (items, XP orbs, item frames, paintings, markers, displays, projectiles).
+- `movement.speed` recomputes the bound with real friction: `f` from the **maximum** slipperiness under the
+  0.6x0.6 footprint at `y - 0.5000001` of position n-2, `a` from the **minimum** slipperiness under the
+  footprint at position n-1 (both are supersets of what vanilla's single supporting block can produce).
+  Soul sand/soul soil under the player -> discard.
+- `movement.fly`/`movement.step` require open air: `!world.hasCollisionsIn(box)` for the player box at both
+  positions expanded by 1.0 in every direction.
+- `movement.groundspoof` requires no collision in `[x-0.3, y-0.6, z-0.3]..[x+0.3, y+0.1, z+0.3]` at the last
+  two positions and no collidable entity within 1.5.
+
+Limits: max 4 outstanding confirmations and 2 per second per player, 200 per second server-wide (token
+bucket); extra candidates are dropped and counted.
+
+### 1.2 timer.balance - TICK_SPEED
+
+Tick clients only. A legitimate client sends tick k at client time `c0 + 50k` ms and the server receives
+it at `r_k = c0 + 50k + d_k` with network delay `d_k >= d_min`, so `offset_k = r_k - 50k` never falls below
+`c0 + d_min`. Lag only raises offsets; catch-up after a stall returns to the floor, never below it (the
+client never runs faster than 20 TPS and drops catch-up beyond 10 ticks per frame). A timer cheat makes the
+floor fall continuously. A one-off drop of the network floor (queue drain, Wi-Fi roam) is a single step.
 
 ```
 on CLIENT_TICK_END at receive time t (ms, double, System.nanoTime based):
-  if not started: t0 = t, ticks = 0, minOffset = 0, bucket = 0, calibrateUntil = t + 60_000, last = t; return
-  ticks += 1
-  offset = (t - t0) - 50 * ticks
-  bucket = max(0, bucket - (t - last) * 0.0005)          # 0.5 ms/s clock-drift allowance
-  if offset < minOffset:
-      if t >= calibrateUntil: bucket += minOffset - offset
-      minOffset = offset
-  last = t
-  if bucket > 300: violation(severity = min(1, (bucket - 300) / 300 + 0.25)); bucket = 0
+  if not started or reset: t0 = t, ticks = 0, bins = [], start = t; return
+  ticks += 1; offset = (t - t0) - 50 * ticks
+  bin = floor((t - start) / 2000); binMin[bin] = min(binMin[bin], offset)
+  when a bin closes (t passes its end):
+     if t - start < 60_000: continue                        # calibration
+     runMin = minimum over all closed bins before it
+     newLow[bin] = binMin[bin] < runMin - 2 - driftAllowance(bin)   # driftAllowance = 0.5 ms/s since start
+  violation when, over the last 10 closed bins: >= 8 bins were new lows AND the running minimum fell by
+  >= 150 ms over those bins AND it still fell by >= 100 ms when the single largest bin-to-bin drop is
+  excluded. After a violation, the check starts counting again from the next bin.
 ```
 
-Lag only raises offsets (never flags); catch-up bursts after a stall return offsets to the floor, not
-below it. Timer 1.01x flags after ~32 s, 1.05x after ~6 s. VL +1, decay 1 per 120 s. Points 4,
-confidence 0.8, half-life 300 s, cap 60. Live setback at VL >= 3. Reset entirely after the player
-re-enters the PLAY state from configuration.
+Timer 1.01x flags after ~60 s + 20 s, 1.05x after the 20-s window; steps and lag never flag. Reset on
+re-entry to PLAY from configuration, on S `TICKING_STATE` with a rate other than 20 or frozen, and on
+RESPAWN with a dimension change. VL +1, decay 1 per 120 s. Points 6, confidence 0.85. Live setback at
+VL >= 2.
 
-### movement.speed - MOVEMENT
+### 1.3 movement.speed - MOVEMENT
 
-Consecutive position packets n-2, n-1, n. With `bf = 0.6` (default block friction):
+Consecutive position packets n-2, n-1, n; not sneaking-on-ground at n-1 (edge clipping hides momentum).
+With `bf = 0.6` (netty-side default; the confirmation recomputes):
 
 ```
 f      = onGround[n-2] ? bf * 0.91 : 0.91          # friction applied at the end of tick n-1
-sprint = movementSpeed (without the sprint modifier) * 1.3
-a      = onGround[n-1] ? sprint * 0.21600002 / bf^3 : 0.026   # acceleration in tick n
-jump   = (onGround[n-1] and dy[n] > 0) ? 0.2 : 0               # sprint-jump boost
+sprint = speedLenient * 1.3                          # speedLenient = movement_speed without the sprint
+                                                     # modifier, max(applied, pending)
+a      = onGround[n-1] ? sprint * 0.21600002 / bf^3 : 0.026
+jump   = onGround[n-1] and (dy[n] > 0 or ceilingWithin0.42) ? 0.2 : 0   # ceiling checked in confirmation
 bound  = h[n-1] * f + a + jump + 0.01
 excess = h[n] - bound
 ```
 
 `excess > 0` adds 1 to a buffer (buffer decays 0.1 per non-excess packet, min 0); buffer >= 3 or a single
-`excess > 0.5` makes a candidate (buffer reset). Confirmation recomputes with the real friction (block
-under position n-2 for `f`, under n-1 for `a`). Severity `min(1, excess / 0.3)`. VL +1 (+2 if
-excess > 0.3), decay 1 per 30 s. Points `2 + 4*severity`, confidence 0.75, half-life 120 s, cap 50.
-Live setback at VL >= 5.
+`excess > 0.5` makes a candidate (buffer reset). Severity `min(1, excess / 0.3)`. VL +1 (+2 if
+excess > 0.3), decay 1 per 30 s. Points `2 + 4*severity`, confidence 0.75. Live setback at VL >= 5.
 
-### movement.fly - MOVEMENT
+### 1.4 movement.fly - MOVEMENT
 
-Consecutive packets n-2, n-1, n, airborne at n-1 and n (`onGround` false), not on ground at n-2 either
-(so dy[n-1] is a pure air tick). Levitation or slow falling active -> skip. Gravity `g` = gravity
-attribute (0.08).
+Consecutive packets n-2, n-1, n, all airborne (`onGround` false at n-2, n-1 and n). Gravity
+`g = max(applied, pending)` of the gravity attribute (0.08).
 
 ```
 expected = (dy[n-1] - g) * 0.98 ; if |expected| < 0.003: expected = 0
 diff     = dy[n] - expected
+legit if |dy[n] + 0.098| < 0.001                     # client without the chunk below: motion.y = -0.1
 ```
 
-Candidate when `diff > 0.03` on two consecutive packets, or `diff > 0.5` once. Confirmation requires
-open air. Severity `min(1, diff / 0.5)`. VL +1, decay 1 per 30 s. Points `4 + 6*severity`, confidence 0.8,
-half-life 120 s, cap 60. Live setback at VL >= 3.
+Candidate when `diff > 0.03` on two consecutive packets, or `diff > 0.5` once. Confirmation requires open
+air. Severity `min(1, diff / 0.5)`. VL +1, decay 1 per 30 s. Points `4 + 6*severity`, confidence 0.8.
+Live setback at VL >= 3.
 
-### movement.step - MOVEMENT
+### 1.5 movement.step - MOVEMENT
 
-Consecutive packets, `onGround[n-1]` true, `dy[n] > max(stepHeight, jumpStrength + 0.1*(jumpBoost+1 if
-active)) + 0.001`. Candidate immediately; confirmation requires open air around position n (pistons,
-slime, beds excluded by `exemptNear`). Severity `min(1, (dy - limit) / 0.5)`. VL +1, decay 1 per 60 s.
-Points `4 + 4*severity`, confidence 0.8, half-life 120 s, cap 50.
+Consecutive packets, `onGround[n-1]` true, `dy[n] > max(stepHeight, jumpStrength + jumpBoost) + 0.001` with
+`stepHeight`, `jumpStrength` = max(applied, pending) attribute values and `jumpBoost = 0.1*(amplifier+1)`
+if jump boost is applied or pending. Candidate immediately; confirmation requires open air around
+position n. Severity `min(1, (dy - limit) / 0.5)`. VL +1, decay 1 per 60 s. Points `4 + 4*severity`,
+confidence 0.8.
 
-### movement.groundspoof - MOVEMENT
+### 1.6 movement.groundspoof - MOVEMENT
 
-Consecutive packets n-1 and n both claim `onGround = true` while `dy[n-1] < -0.1` and `dy[n] < -0.1`
-(still falling). Confirmation: no supporting block or entity (see above). Severity `min(1, |dy[n]|)`.
-VL +1, decay 1 per 60 s. Points `3 + 3*severity`, confidence 0.8, half-life 300 s, cap 40.
+Consecutive packets n-1 and n both claim `onGround = true` while `dy[n-1] < -0.1` and `dy[n] < -0.1`.
+Confirmation: no supporting block or entity. Severity `min(1, |dy[n]|)`. VL +1, decay 1 per 60 s.
+Points `3 + 3*severity`, confidence 0.8.
 
-### protocol.pitch - INVALID_PROTOCOL (certain)
+### 1.7 protocol.pitch - INVALID_PROTOCOL (certain)
 
-A rotation-bearing packet with `|pitch| > 90.001`. Disabled until the next teleport when the last
-server teleport itself carried `|pitch| > 90`. Max one flag per second. Points 25, confidence 1.0,
-half-life 3600 s, cap 200.
+A rotation-bearing packet with `|pitch| > 90.001`, not marked SERVER_ROTATION, and not after a server
+teleport/rotation whose own pitch was outside [-90, 90] (until the next server rotation). Max one flag per
+second. Points 25, confidence 1.0.
 
-### protocol.position - INVALID_PROTOCOL (certain)
+### 1.8 protocol.position - INVALID_PROTOCOL (certain)
 
 NaN/Infinity in x, y, z, yaw or pitch, or `|x| > 3.0e7`, `|z| > 3.0e7`, `|y| > 2.0e7`. Max one flag per
-second. Points 25, confidence 1.0, half-life 3600 s, cap 200.
+second. Points 25, confidence 1.0.
 
-### protocol.slot - INVALID_PROTOCOL
+### 1.9 protocol.slot - INVALID_PROTOCOL
 
-`HELD_ITEM_CHANGE` with slot outside 0..8: points 10, confidence 0.95. Change to the slot already held
-(known from the last client change or server `SET_HELD_ITEM`; unknown after hot load until the first
-change): points 0.5, confidence 0.6. Half-life 600 s, cap 20.
+The plugin mirrors the client's `carriedIndex`: 0 on JOIN_GAME and on re-entry from configuration,
+updated only by C `HELD_ITEM_CHANGE`. A server `SET_HELD_ITEM(s)` with `s != mirror` expects one echo
+`HELD_ITEM_CHANGE(s)`, which is not flagged. Slot outside 0..8: points 10, confidence 0.95. A change to the
+slot equal to the mirror (a truly redundant packet): logged with points 0 until shadow data exists.
 
-### protocol.selfhit - INVALID_PROTOCOL (certain)
+### 1.10 protocol.selfhit - INVALID_PROTOCOL (certain)
 
-`INTERACT_ENTITY` whose target is the player's own entity id. Points 25, confidence 1.0, half-life
-3600 s, cap 200.
+`INTERACT_ENTITY` (or 26.1+ `ATTACK`) whose target is the player's own entity id (known from JOIN_GAME or
+the hot-load snapshot; unknown = skip). Points 25, confidence 1.0.
 
-### protocol.cursor - INVALID_PROTOCOL
+### 1.11 protocol.cursor - INVALID_PROTOCOL
 
-`PLAYER_BLOCK_PLACEMENT` cursor component NaN or outside `[-0.001, 1.001]`. Some building mods encode
-data in the cursor, so this is weak. Points 3, confidence 0.6, half-life 600 s, cap 15.
+`PLAYER_BLOCK_PLACEMENT` cursor component NaN or outside `[-0.001, 1.001]`. Building mods encode data in
+the cursor, so this is weak. Points 3, confidence 0.6.
 
-### protocol.flood - INVALID_PROTOCOL
+### 1.12 protocol.flood - INVALID_PROTOCOL
 
-Tick clients only. Flying packets between two tick ends must be `<= 1 + teleport confirms in that tick`.
-A tick over the limit is an excess tick; >= 3 excess ticks in the last 20 ticks -> violation (window
-reset). Points 3, confidence 0.7, half-life 600 s, cap 20.
+Tick clients only. Flying packets between two tick ends must be `<= 1 + teleports confirmed in that tick +
+server PLAYER_ROTATIONs received in that tick`. >= 3 excess ticks in the last 20 ticks -> violation (window
+reset). Points 3, confidence 0.7.
 
-### protocol.abilities - INVALID_PROTOCOL
+### 1.13 protocol.abilities - INVALID_PROTOCOL
 
-Client `PLAYER_ABILITIES` with flying = true while the server-side allowFlight is known false, game
-mode survival/adventure, and the server has not changed abilities in the last 1000 ms. Points 5,
-confidence 0.9, half-life 600 s, cap 30.
+Client `PLAYER_ABILITIES` with flying = true while allowFlight is false in both the applied and pending
+state, game mode survival/adventure. Points 5, confidence 0.9.
 
-### inventory.closed - INVENTORY
+### 1.14 inventory.closed - INVENTORY
 
-`CLICK_WINDOW` with window id > 0 that is not the open container (known from `OPEN_WINDOW` /
-`CLOSE_WINDOW`; unknown after hot load until the first of those), not within 500 ms after a server-side
-close. Points 3, confidence 0.8, half-life 300 s, cap 20.
+`CLICK_WINDOW` with window id > 0 that was never opened in this session, or that was closed/replaced
+(an S `OPEN_WINDOW` while another container is open replaces it) and the client has already applied the
+close (passive acknowledgement, fallback 1.5*ping + 250 ms). Unknown after hot load until the first
+OPEN_WINDOW/CLOSE_WINDOW. Points 3, confidence 0.8.
 
-## Cloud checks (workers)
+## 2. Cloud checks (workers)
 
-Geometry (shared, `internal/geom`): Minecraft look vector for yaw/pitch in degrees:
-`x = -sin(yaw)*cos(pitch)`, `y = -sin(pitch)`, `z = cos(yaw)*cos(pitch)`. Player hitbox width 0.6,
-height 1.8 (times scale). Eye heights: standing 1.62, sneaking 1.27, swimming/gliding/crawling 0.4
-(times scale). Target boxes always use the largest possible player box (superset), expanded by
-`m = 0.1`. Attack timing window: `[T - ping - 250 ms, T]` over the target's received positions, with
-the segments between consecutive positions sampled at 0, 0.25, 0.5, 0.75, 1. Rotation candidates:
-`R0` = the last rotation before the event, `R1` = the rotation of the next move sample within 100 ms
-(if any), plus R0->R1 interpolations at 0.25 steps (shortest angular path). Eye candidates: the event eye
-and the alternative standing/sneaking eye height, plus the next move sample's eye (if within 100 ms).
-Skip attacks/placements by players in creative/spectator or in a vehicle, against targets in a vehicle,
-with ping > 600 ms, and in the 1 s after a teleport of either player.
+### 2.1 Geometry and timing (shared, `internal/geom`)
 
-### reach.distance - HEURISTICS
+- Look vector for yaw/pitch in degrees: `x = -sin(yaw)*cos(pitch)`, `y = -sin(pitch)`, `z = cos(yaw)*cos(pitch)`.
+- Player hitbox 0.6 x 1.8 (times scale). Eye heights: standing 1.62, sneaking 1.27 (1.54 for clients
+  before 1.14), swimming/gliding/crawling 0.4, times scale. Target boxes always use the largest possible
+  player box (superset), expanded by `m = 0.1` (plus the item's hitbox margin when `extended_reach`).
+- Eye position uncertainty: 0.03 for clients before 1.18.2, 0.0002 after.
+- **Rotation of an attack/placement.** Tick clients pick the target at the start of the tick with the
+  rotation that the same tick's movement packet sends: `R1` = the rotation of the next movement packet with
+  the same tick number. Candidates: R1, R0 (the previous rotation) and R0->R1 interpolations at 0.25 steps
+  (shortest angular path). Non-tick clients: R0, R1 (next move within 100 ms) and interpolations. Precision
+  metrics (aim.precision) use R1 only for tick clients.
+- **Attack timing window** (what the attacker could have seen): `[T - rttHigh - 2*serverTickMs - 300 ms, T]`
+  over the target's received positions, where `rttHigh` = max of the attacker's last 5 RTT samples
+  (`Attack.rtt_high_ms`) and `serverTickMs` from the latest EnvSample (50 at 20 TPS). The segments between
+  consecutive positions are sampled at 0, 0.25, 0.5, 0.75, 1. `target_history` covers >= 1500 ms.
+- **Skip**: attacks/placements by sessions that are bedrock or exempt, players in creative/spectator or a
+  vehicle, targets in a vehicle, `extended_reach` or `stab` attacks (reach and hitbox checks), ping > 600 ms,
+  the 1 s after a teleport of either player, and samples marked SERVER_ROTATION.
+
+### 2.2 reach.distance - HEURISTICS
 
 `dist` = min distance from any eye candidate to any target box candidate in the window (0 inside).
-`limit` = entity_interaction_range (3.0). `excess = dist - limit`. Violation when `excess > 0.05` on 2 of
-the player's last 5 attacks on players. Points `3 + 10*min(excess, 1.5)/1.5`, confidence
-`0.7 + 0.25*min(excess/0.5, 1)`, half-life 300 s, cap 80.
+`limit` = entity_interaction_range (3.0) + eye uncertainty. `excess = dist - limit`. Violation when
+`excess > 0.05` on 2 of the player's last 5 attacks on players. Points `3 + 10*min(excess, 1.5)/1.5`,
+confidence `0.7 + 0.25*min(excess/0.5, 1)`.
 
-### killaura.hitbox - HEURISTICS
+### 2.3 killaura.hitbox - HEURISTICS
 
-Miss = no (eye, rotation) candidate ray intersects any target box candidate (expanded by an extra 0.1
-for rotation timing). Violation when >= 3 of the last 8 attacks on players missed. Points 5, confidence
-0.85, half-life 300 s, cap 80.
+Miss = no (eye, rotation) candidate ray intersects any target box candidate (expanded by an extra 0.1 for
+rotation timing). Violation when >= 3 of the last 8 attacks on players missed. Points 5, confidence 0.85.
 
-### killaura.multi - HEURISTICS (certain)
+### 2.4 killaura.multi - HEURISTICS (certain)
 
-Tick clients only. Attacks on >= 2 distinct entity ids within one client tick (vanilla picks one target
-per tick). Points 10, confidence 0.95, half-life 900 s, cap 120.
+Tick clients only. Attacks on >= 2 distinct entity ids within one client tick (vanilla picks one target per
+tick). Points 10, confidence 0.95.
 
-### killaura.noswing - HEURISTICS
+### 2.5 killaura.noswing - HEURISTICS
 
-Tick clients only. Every attack in tick T must be accompanied by a main-hand swing in tick T (evaluated
-once an event from a later tick arrives). Violation when >= 3 of the last 10 attacks had no swing.
-Points 6, confidence 0.9, half-life 600 s, cap 80.
+Tick clients only. Every INTERACT_ENTITY attack in tick T must be accompanied by a main-hand swing in tick T
+(evaluated once an event from a later tick arrives; swings cancelled by other plugins still count, the
+plugin reports all client packets). Violation when >= 3 of the last 10 attacks had no swing. Points 6,
+confidence 0.9.
 
-### aim.gcd - HEURISTICS
+### 2.6 aim.gcd - HEURISTICS
 
-Mouse rotations are multiples of `step = (s*0.6 + 0.2)^3 * 8 * 0.15` degrees for sensitivity `s` in
-[0, 1]. Calibration (no attack in the last 2 s, not in a vehicle, not within 2 packets after a teleport,
-`|pitch| < 89`): keep the last 200 non-zero rotation deltas (both axes) below 10 degrees. For candidate
-steps (s from 0 to 1 in 0.005 increments) compute the share of deltas `d` with
-`|d/step - round(d/step)| < 0.05` and `round >= 1`; take the largest step with share >= 0.9 over >= 60
-deltas -> calibrated (trackpads and fractional DPI never calibrate, which disables the check for them).
-In combat (attack in the last 1 s): share of deltas below 30 degrees that are off-grid. Violation when
-calibrated and the off-grid share is > 0.4 over >= 30 combat deltas; at most one violation per 30 s.
-Points 4, confidence 0.75, half-life 300 s, cap 40.
+Mouse rotations are multiples of `step = (s*0.6 + 0.2)^3 * 8 * 0.15` degrees for sensitivity s (a
+continuous value in [0, 1]); spyglass scoping divides the step by 8 (samples marked SCOPING are dropped).
 
-### aim.snap - HEURISTICS
+- Calibration (no attack in the last 2 s, not in a vehicle, not SERVER_ROTATION, not within 2 packets after
+  a teleport, `|pitch| < 89`): keep the last 300 non-zero deltas (both axes) below 10 degrees; at least
+  20% of them must be >= 10 counts of the candidate step. Coarse search s in 0..1 step 0.005, then refine
+  s by least squares over `n = round(d/step)`. On-grid: `|d - n*step| < 0.05*step + n*sigma_step +
+  2*ulp(|yaw|)`. Calibrated when >= 90% on-grid over >= 80 deltas.
+- In combat (attack in the last 1 s): share of deltas < 30 degrees that are off-grid. Violation when
+  calibrated, off-grid share > 0.4 over >= 30 combat deltas, AND the non-combat deltas after the combat
+  window are still >= 90% on-grid (otherwise recalibrate instead). At most one violation per 30 s.
+- Points 4, confidence 0.75, cap 30 (alone it never reaches MITIGATE).
 
-A snap = `|dyaw| >= 40` in the attack tick or the tick before, followed within 2 ticks by `|dyaw| >= 30`
-in the opposite direction. Violation when >= 3 snaps in the last 20 attacks. Points 5, confidence 0.8,
-half-life 300 s, cap 50.
+### 2.7 aim.snap - HEURISTICS
 
-### aim.precision - HEURISTICS
+A snap = `|dyaw| >= 40` in the attack tick or the tick before, followed within 2 ticks by `|dyaw| >= 30` in
+the opposite direction, none of the samples SERVER_ROTATION. Violation when >= 3 snaps in the last 20
+attacks. Points 5, confidence 0.8.
 
-For attacks on players at distance 1.5..4 whose target moves > 0.15 blocks/tick: angle between R0 and
-the direction from the eye to the target box centre (target position closest to `T - ping/2`). Over the
-last 25 such attacks: mean < 1.2 degrees and standard deviation < 0.6 -> violation, at most once per
-60 s. Points 4, confidence 0.7, half-life 300 s, cap 40.
+### 2.8 aim.precision - HEURISTICS
 
-### velocity.vertical - HEURISTICS
+For attacks on players at distance 1.5..4 whose target moves > 0.15 blocks/tick: angle between the
+attack rotation (R1 for tick clients) and the direction from the eye to the target box centre at the
+target position closest to `T - ping/2`. Over the last 25 such attacks: mean < 1.2 degrees and standard
+deviation < 0.6 -> violation, at most once per 60 s. Points 4, confidence 0.7, cap 30.
 
-On `VelocityApplied` (velocity packet) with `vy > 0.15`: the player must have a consecutive position
-move with `|dy - vy| < 0.012` within `[T, T + ping + 400 ms]`. A newer velocity in the window replaces
-the older one; a teleport cancels it. Not eligible when env had water/lava/web/climbing/powder
-snow/bubble column/honey/LOW_CEILING in the last 1 s, or the player was gliding/flying/in a vehicle.
-Ignored = window ended with >= 3 position moves and no match. Violation when >= 4 of the last 6 eligible
-velocities were ignored. Points 6, confidence 0.85, half-life 300 s, cap 60.
+### 2.9 velocity.vertical - HEURISTICS
 
-### velocity.horizontal - HEURISTICS
+Only `VelocityApplied` with source VELOCITY_PACKET (explosions add to motion and are excluded from both
+velocity checks in v1) and `vy > 0.15`. The first consecutive move (`ticks_since_last == 1`) within
+`[T, T + rttHigh + 400 ms]` must satisfy one of: `|dy - vy| < 0.012`; a jump reset
+`|dy - max(vy, jumpPower)| < 0.012` when onGround on the previous move (`jumpPower` = jump_strength +
+jump boost); or `dy <= vy + 0.012` with LOW_CEILING. `|vy| < 0.003` counts as 0. A newer velocity in the
+window replaces the older one; a teleport cancels it. Not eligible when env had water/lava/web/climbing/
+powder snow/bubble column/honey/STUCK in the last 1 s, or the player was gliding/flying/in a vehicle.
+Ignored = the window ended with >= 3 consecutive position moves and no match. Violation when >= 4 of the
+last 6 eligible velocities were ignored. Points 6, confidence 0.85.
 
-For matched velocities with `|v_xz| >= 0.3` and no horizontal collision on that move (tick clients
-report it): `ratio = h / |v_xz|`. Violation when the mean ratio over the last 6 is < 0.55 and >= 4 of them
-are < 0.6. Points 5, confidence 0.8, half-life 300 s, cap 50.
+### 2.10 velocity.horizontal - HEURISTICS
 
-### autoclicker.cps / autoclicker.consistency / autoclicker.pattern - AUTO_CLICKER
+For matched velocities with `|v_xz| >= 0.3` and no horizontal collision on that move (tick clients report
+it): `h_min = max(0, |v_xz| - a_max - (onGround[prev] ? 0.2 : 0) - 0.003)` with `a_max` =
+movement_speed (no sprint) * 1.3 on the ground, 0.026 in the air. Shortfall `s = (h_min - h) / |v_xz|`
+when `h < h_min`, else 0. Violation when >= 4 of the last 6 matched velocities have `s > 0.15`. Points 5,
+confidence 0.8.
 
-Tick clients only. Clicks = main-hand swings within 1.5 s of an attack by the player and not while
-digging (a dig START less than 10 ticks ago without CANCEL/FINISH). Windows of 40 clicks whose duration
-is <= 5 s (CPS >= 8). Intervals in ticks between ticks that have clicks.
+### 2.11 autoclicker.* - AUTO_CLICKER
 
-- `autoclicker.cps`: two consecutive windows with CPS >= 20 -> points `2 + min(6, (cps - 20)*0.5)`,
-  confidence 0.6.
-- `autoclicker.consistency`: CPS >= 9 and >= 95% of intervals identical and interval SD < 0.25 ticks ->
-  points 4, confidence 0.7.
-- `autoclicker.pattern`: CPS >= 9, >= 2 distinct intervals, and a repeating sequence of period 2..4
+Tick clients only. Clicks = main-hand ANIMATION packets within 1.5 s of an attack by the player, excluding:
+swings from a dig START until its CANCEL/FINISH (no time limit) plus 6 ticks, and swings in a tick that also
+has a PLAYER_BLOCK_PLACEMENT or USE_ITEM. Clicks are counted per tick (several ANIMATION packets between two
+tick ends = several clicks). Windows of 40 clicks whose duration is <= 5 s.
+
+- `autoclicker.consistency`: 8 <= CPS <= 16 and >= 95% of the intervals between click ticks identical and
+  interval SD < 0.25 ticks -> points 4, confidence 0.7.
+- `autoclicker.pattern`: 8 <= CPS <= 16, >= 2 distinct intervals, and a repeating sequence of period 2..4
   explains >= 90% of the intervals -> points 4, confidence 0.7.
+- `autoclicker.cps`: two consecutive windows with CPS >= `limit` (default 25) -> points
+  `2 + min(6, (cps - limit)*0.5)`, confidence 0.6. **Disabled by default** (drag/butterfly clicking is a
+  server policy question).
 
-Half-life 300 s, cap 50 each.
+### 2.12 scaffold.* - WORLD_INTERACTION
 
-### scaffold.face - WORLD_INTERACTION
+Skip placements with `inside_block` set, cursors outside [0, 1] (for scaffold.cursor), and clients before
+1.11 for scaffold.cursor (byte cursor).
 
-The clicked face must be visible from some eye candidate (superset over block shapes):
-UP `E.y > B.y - 0.03`, DOWN `E.y < B.y + 1.03`, EAST `E.x > B.x - 0.03`, WEST `E.x < B.x + 1.03`,
-SOUTH `E.z > B.z - 0.03`, NORTH `E.z < B.z + 1.03`. Points 8, confidence 0.95, half-life 600 s, cap 80.
+- `scaffold.face`: the clicked face must be visible from some eye candidate (superset over block shapes):
+  UP `E.y > B.y - u`, DOWN `E.y < B.y + 1 + u`, EAST `E.x > B.x - u`, WEST `E.x < B.x + 1 + u`, SOUTH
+  `E.z > B.z - u`, NORTH `E.z < B.z + 1 + u` with `u = 0.03 + eye uncertainty`. Points 8, confidence 0.95.
+- `scaffold.ray`: miss = no (eye, rotation) candidate ray intersects the unit cube of the clicked block
+  (expanded by 0.05) within `block_reach + 1.5`. Violation when >= 3 of the last 10 placements missed.
+  Points 6, confidence 0.85.
+- `scaffold.cursor`: `P = B + cursor`; mismatch = for every (eye, rotation) candidate the angle between the
+  look vector and `P - E` is > 3 degrees (skip when `|P - E| < 0.3`). Violation when >= 3 of the last 10
+  placements mismatched. Points 5, confidence 0.8.
+- `scaffold.reach`: distance from every eye candidate to the clicked block's cube > `block_reach + 0.6`.
+  Points `3 + 5*min(excess, 1)`, confidence 0.8.
 
-### scaffold.ray - WORLD_INTERACTION
+### 2.13 inventory.move / inventory.rotate - INVENTORY
 
-Miss = no (eye, rotation) candidate ray intersects the unit cube of the clicked block (expanded by 0.05)
-within `block_reach + 1.5`. Violation when >= 3 of the last 10 placements missed. Points 6, confidence
-0.85, half-life 300 s, cap 80.
+Tick clients only. A tick counts as "screen open" only if it has a window click (window 0 or the open
+container), the previous tick also had one, and neither that tick nor the previous one has a C/S
+CLOSE_WINDOW or S OPEN_WINDOW.
 
-### scaffold.cursor - WORLD_INTERACTION
+- `inventory.move`: in a screen-open tick, a consecutive position move with `h > 0.1` and
+  `h > h_prev * 0.91 + 0.02` (still accelerating = movement input), no pending velocity, and no
+  water/lava/ice/bubble/vehicle/gliding env. Violation when >= 3 such ticks in 5 s. Points 4, conf 0.75.
+- `inventory.rotate`: a rotation change > 1 degree in a screen-open tick, not in a vehicle, not
+  SERVER_ROTATION. Violation when >= 4 in 5 s. Points 3, confidence 0.7.
 
-Only when the cursor is inside [0, 1]. `P = B + cursor`; mismatch = for every (eye, rotation) candidate
-the angle between the look vector and `P - E` is > 3 degrees. Violation when >= 3 of the last 10
-placements mismatched. Points 5, confidence 0.8, half-life 300 s, cap 60.
+### 2.14 latency.pingspoof - LATENCY_ABUSE
 
-### scaffold.reach - WORLD_INTERACTION
+Keep-alive samples exclude ids that were sent more than once within 30 s (plugin-injected keep-alives).
+Each keep-alive sample is paired with the median of pong samples within +-2 s of it. Excess when the
+keep-alive RTT > paired pong + 150 ms and > 1.6x paired pong. Violation when >= 3 of the last 4 paired
+keep-alives are in excess (needs >= 4 keep-alives); at most once per 60 s. Unmatched responses: 0 points
+in v1. Points 3, confidence 0.8, cap 18 (below ALERT alone).
 
-Distance from every eye candidate to the clicked block's cube > `block_reach + 0.6`. Points
-`3 + 5*min(excess, 1)`, confidence 0.8, half-life 300 s, cap 50.
-
-### inventory.move - INVENTORY
-
-Tick clients only. A screen is open in ticks with a window click (window 0, or the open container). In
-such a tick, a consecutive position move with `h > 0.1` and `h > h_prev * 0.91 + 0.02` (still
-accelerating = movement input) with no velocity in the last 1 s and no water/lava/ice/bubble/vehicle/
-gliding env is a GUI-move tick. Violation when >= 3 GUI-move ticks in 5 s. Points 4, confidence 0.75,
-half-life 300 s, cap 40.
-
-### inventory.rotate - INVENTORY
-
-Tick clients only. A rotation change > 1 degree in a tick that has a window click, where the previous
-click was <= 10 ticks earlier (not the first click of a burst), not in a vehicle, not within 2 packets
-after a teleport. Violation when >= 4 in 5 s. Points 3, confidence 0.7, half-life 300 s, cap 30.
-
-### latency.pingspoof - LATENCY_ABUSE
-
-Over the last 60 s with >= 2 keep-alive and >= 5 pong samples: median keep-alive RTT > median pong RTT
-+ 150 ms and > 1.6x median pong RTT -> violation, at most once per 60 s. Unmatched keep-alive
-responses: points 2, at most once per 60 s. Points 4, confidence 0.8, half-life 600 s, cap 40.
-
-### latency.blink - LATENCY_ABUSE
+### 2.15 latency.blink - LATENCY_ABUSE
 
 Tick clients only. A blink = a gap > 500 ms between consecutive events followed by >= 10 client ticks
-arriving within 100 ms, while the player attacked in the 3 s before the gap or during the burst.
-Violation when >= 3 blinks in 60 s. Points 3, confidence 0.6, half-life 300 s, cap 30.
+arriving within 100 ms, while the player attacked in the 3 s before the gap or during the burst, and the
+gap does not overlap a `ServerStall` from the same server (the plugin reports stalls: >= 20% of active
+players silent at once, or a late global-region heartbeat). Violation when >= 3 blinks in 60 s. Points 3,
+confidence 0.6.
 
-### ml.<model> - by model
+### 2.16 ml.<model> - by model
 
 See ARCHITECTURE 5.10. Points 0 unless `PE_ML_POINTS` is set.
 
-## Scoring summary
+## 3. Forwarded local flags
+
+The worker forwards LocalFlag events as signals with `local = true`, the check's points and confidence
+from this document (severity-scaled where the formula says so), and the flag's context moves in the clip.
+
+## 4. Scoring summary
 
 | Check | Where | Category | Points | Conf | Half-life s | Cap | Certain |
 |---|---|---|---|---|---|---|---|
-| timer.balance | local | TICK_SPEED | 4 | 0.8 | 300 | 60 | |
+| timer.balance | local | TICK_SPEED | 6 | 0.85 | 300 | 60 | |
 | movement.speed | local | MOVEMENT | 2..6 | 0.75 | 120 | 50 | |
 | movement.fly | local | MOVEMENT | 4..10 | 0.8 | 120 | 60 | |
 | movement.step | local | MOVEMENT | 4..8 | 0.8 | 120 | 50 | |
 | movement.groundspoof | local | MOVEMENT | 3..6 | 0.8 | 300 | 40 | |
 | protocol.pitch | local | INVALID_PROTOCOL | 25 | 1.0 | 3600 | 200 | yes |
 | protocol.position | local | INVALID_PROTOCOL | 25 | 1.0 | 3600 | 200 | yes |
-| protocol.slot | local | INVALID_PROTOCOL | 0.5 / 10 | 0.6 / 0.95 | 600 | 20 | |
+| protocol.slot | local | INVALID_PROTOCOL | 10 (0 redundant) | 0.95 | 600 | 20 | |
 | protocol.selfhit | local | INVALID_PROTOCOL | 25 | 1.0 | 3600 | 200 | yes |
 | protocol.cursor | local | INVALID_PROTOCOL | 3 | 0.6 | 600 | 15 | |
 | protocol.flood | local | INVALID_PROTOCOL | 3 | 0.7 | 600 | 20 | |
@@ -329,23 +397,27 @@ See ARCHITECTURE 5.10. Points 0 unless `PE_ML_POINTS` is set.
 | killaura.hitbox | cloud | HEURISTICS | 5 | 0.85 | 300 | 80 | |
 | killaura.multi | cloud | HEURISTICS | 10 | 0.95 | 900 | 120 | yes |
 | killaura.noswing | cloud | HEURISTICS | 6 | 0.9 | 600 | 80 | |
-| aim.gcd | cloud | HEURISTICS | 4 | 0.75 | 300 | 40 | |
+| aim.gcd | cloud | HEURISTICS | 4 | 0.75 | 300 | 30 | |
 | aim.snap | cloud | HEURISTICS | 5 | 0.8 | 300 | 50 | |
-| aim.precision | cloud | HEURISTICS | 4 | 0.7 | 300 | 40 | |
+| aim.precision | cloud | HEURISTICS | 4 | 0.7 | 300 | 30 | |
 | velocity.vertical | cloud | HEURISTICS | 6 | 0.85 | 300 | 60 | |
 | velocity.horizontal | cloud | HEURISTICS | 5 | 0.8 | 300 | 50 | |
-| autoclicker.cps | cloud | AUTO_CLICKER | 2..8 | 0.6 | 300 | 50 | |
-| autoclicker.consistency | cloud | AUTO_CLICKER | 4 | 0.7 | 300 | 50 | |
-| autoclicker.pattern | cloud | AUTO_CLICKER | 4 | 0.7 | 300 | 50 | |
+| autoclicker.consistency | cloud | AUTO_CLICKER | 4 | 0.7 | 300 | 30 | |
+| autoclicker.pattern | cloud | AUTO_CLICKER | 4 | 0.7 | 300 | 30 | |
+| autoclicker.cps (off) | cloud | AUTO_CLICKER | 2..8 | 0.6 | 300 | 30 | |
 | scaffold.face | cloud | WORLD_INTERACTION | 8 | 0.95 | 600 | 80 | |
 | scaffold.ray | cloud | WORLD_INTERACTION | 6 | 0.85 | 300 | 80 | |
 | scaffold.cursor | cloud | WORLD_INTERACTION | 5 | 0.8 | 300 | 60 | |
 | scaffold.reach | cloud | WORLD_INTERACTION | 3..8 | 0.8 | 300 | 50 | |
-| inventory.move | cloud | INVENTORY | 4 | 0.75 | 300 | 40 | |
+| inventory.move | cloud | INVENTORY | 4 | 0.75 | 300 | 30 | |
 | inventory.rotate | cloud | INVENTORY | 3 | 0.7 | 300 | 30 | |
-| latency.pingspoof | cloud | LATENCY_ABUSE | 4 (2 unmatched) | 0.8 | 600 | 40 | |
-| latency.blink | cloud | LATENCY_ABUSE | 3 | 0.6 | 300 | 30 | |
+| latency.pingspoof | cloud | LATENCY_ABUSE | 3 | 0.8 | 600 | 18 | |
+| latency.blink | cloud | LATENCY_ABUSE | 3 | 0.6 | 300 | 18 | |
+
+Family caps (sum of a family's check contributions is capped): timer 60, movement 80, protocol 200,
+inventory 40, reach 80, killaura 120, aim 45, velocity 60, autoclicker 40, scaffold 100, latency 25, ml 50.
 
 The same table lives in code: `cloud/internal/checks/catalog.go` (authoritative for the cloud, includes
-local checks for scoring) and `plugin/paper/.../check/CheckCatalog.java` (local checks only). A test on
-each side asserts they match this table.
+local checks for scoring) and `plugin/paper/src/main/java/dev/pandascript/pandaeye/paper/check/CheckCatalog.java`
+(local checks only). A test on each side parses this table (`docs/CHECKS.md`, section 4) and asserts the
+code matches it.

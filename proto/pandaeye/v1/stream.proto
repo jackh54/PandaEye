@@ -1,5 +1,6 @@
 // PandaEye internal stream messages (NATS JetStream payloads). Never sent to plugins.
-// See docs/ARCHITECTURE.md "Event stream" for subjects, streams and partitioning.
+// See docs/ARCHITECTURE.md section 5.4 for subjects, streams, partitioning and identity rules.
+// Every identifier on the internal bus is tenant-scoped: a server is (tenant_id, server_id).
 syntax = "proto3";
 
 package pandaeye.v1;
@@ -20,10 +21,12 @@ message Origin {
   string connection_id = 5;
   bool shadow_mode = 6;               // plugin's local lock at the time
   Platform platform = 7;
+  int64 clock_offset_us = 8;          // add to plugin event times to get cloud time (min-filtered estimate)
+  string instance_id = 9;
 }
 
-// Subject pe.events.<partition>. All events of one gateway Batch whose player hashes to <partition>,
-// in their original order.
+// Subject pe.events.<NN>. All events of one gateway Batch whose player hashes to partition NN, in their
+// original order. Msg id: <tenant_id>:<server_id>:<batch_seq>:<NN>.
 message StreamBatch {
   Origin origin = 1;
   uint64 batch_seq = 2;
@@ -32,48 +35,105 @@ message StreamBatch {
   repeated Event events = 5;
 }
 
-// Subject pe.signals.<partition>. One detection result from a worker (cloud check) or a forwarded
-// plugin LocalFlag.
+// One detection result from a worker (cloud check) or a forwarded plugin LocalFlag.
 message Signal {
   Origin origin = 1;
   bytes player = 2;
   string player_name = 3;
-  string check_id = 4;                // e.g. "killaura.hitbox"
+  string check_id = 4;                // e.g. "killaura.hitbox"; "probe" for the latency probe (0 points)
   Category category = 5;
   double points = 6;                  // score contribution before decay (already scaled by confidence)
   double confidence = 7;              // 0..1
   uint64 event_time_us = 8;           // time of the triggering event (plugin clock)
-  uint64 gateway_recv_unix_us = 9;    // when the gateway received the triggering batch
-  uint64 worker_unix_us = 10;         // when the worker emitted the signal
+  uint64 gateway_recv_unix_us = 9;    // when the gateway received the triggering batch (cloud clock)
+  uint64 worker_unix_us = 10;         // when the worker emitted the signal (cloud clock)
   string info = 11;
   map<string, double> data = 12;
-  string clip_id = 13;                // replay clip stored for this signal (may be empty)
+  string clip_id = 13;                // replay clip committed for this signal (empty if none)
   bool local = 14;                    // forwarded plugin LocalFlag
   bool replayed = 15;                 // triggering events were replayed (outage catch-up)
   bool hot_loaded = 16;               // the player's session started before the plugin was enabled
+  string session_id = 17;             // PlayerJoin.session of the session that produced it
+  uint64 probe_id = 18;               // for check_id "probe"
 }
 
-// Subject pe.probes.<partition>: worker -> verdict service, for the latency probe.
-message ProbeHop {
+// Session lifecycle forwarded by workers so the verdict service knows who is online where.
+message SessionMarker {
+  enum Kind {
+    KIND_JOIN = 0;
+    KIND_QUIT = 1;
+    KIND_UPDATE = 2;
+  }
   Origin origin = 1;
   bytes player = 2;
-  uint64 probe_id = 3;
-  uint64 event_time_us = 4;
-  uint64 gateway_recv_unix_us = 5;
-  uint64 worker_unix_us = 6;
+  string player_name = 3;
+  Kind kind = 4;
+  string session_id = 5;
+  uint64 session_start_us = 6;        // plugin clock
+  bool hot_loaded = 7;
+  bool exempt = 8;                    // bedrock or bypass: never judged
+  string network_session = 9;
+  uint64 gateway_recv_unix_us = 10;
 }
 
-// Subject pe.out.<server_id>: verdict service -> the gateway that holds the server's connection.
-// Core NATS (not JetStream); verdicts that cannot be delivered stay "pending" in the database and are
-// delivered when the server reconnects.
-message Outbound {
-  string server_id = 1;
+// Subject pe.signals.<NN>: the single ordered input of the verdict service for partition NN.
+// Msg id: <tenant_id>:<server_id>:<batch_seq>:<NN>:<event index>:<check_id>:<emit ordinal>.
+message SignalEnvelope {
   oneof kind {
-    Verdict verdict = 2;
-    ProbeResult probe_result = 3;
-    WatchRequest watch = 4;
-    PlayerRisk player_risk = 5;
-    RemoteConfig config_update = 6;
+    Signal signal = 1;
+    SessionMarker session = 2;
   }
-  uint64 source_gateway_recv_unix_us = 7; // for latency metrics
+}
+
+// Subject pe.out.<tenant_id>.<server_id> (core NATS): verdict service / api -> the gateway that holds the
+// server's connection. The payload is a serialized Outbound; mac = HMAC-SHA256(PE_OUTBOUND_KEY, payload).
+// The gateway verifies the mac and that tenant_id/server_id match the session, else drops it.
+message SignedOutbound {
+  bytes payload = 1;
+  bytes mac = 2;
+}
+
+message Outbound {
+  string tenant_id = 1;
+  string server_id = 2;
+  oneof kind {
+    Verdict verdict = 3;
+    ProbeResult probe_result = 4;
+    WatchRequest watch = 5;
+    PlayerRisk player_risk = 6;
+    RemoteConfig config_update = 7;
+    string close_connection_id = 8;   // ask the gateway to close this connection (replacement)
+  }
+  uint64 source_gateway_recv_unix_us = 9; // for latency metrics
+}
+
+// Subject pe.verdicts.<tenant_id> (stream PE_VERDICTS): durable record of every verdict, written by the
+// verdict service before delivery; an idempotent store writer persists it (upsert by verdict_id).
+message VerdictRecord {
+  string tenant_id = 1;
+  string server_id = 2;
+  string network_id = 3;
+  Verdict verdict = 4;
+  string evidence_json = 5;           // see ARCHITECTURE 5.6 "Evidence"
+  string session_id = 6;
+  uint64 created_unix_us = 7;
+  repeated string clip_ids = 8;
+  bool reputation_eligible = 9;
+}
+
+// Subject pe.acks.<tenant_id> (stream PE_VERDICTS): plugin VerdictAcks relayed by the gateway.
+message AckRecord {
+  string tenant_id = 1;
+  string server_id = 2;
+  string verdict_id = 3;
+  bool executed = 4;
+  string note = 5;
+  uint64 acked_unix_us = 6;
+}
+
+// Stored replay clip payload (zstd-compressed when persisted).
+message ClipData {
+  Origin origin = 1;
+  bytes player = 2;
+  repeated Event events = 3;          // the player's own events, plus target positions inside Attack events
 }
