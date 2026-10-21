@@ -38,7 +38,8 @@ import (
 	"github.com/nats-io/nkeys"
 )
 
-// Streams and KV buckets of ARCHITECTURE 5.4.
+// Streams and KV buckets of ARCHITECTURE 5.4, plus PE_ERASURES (erasure tombstones, 5.13), which the
+// spec does not name; the names follow cloud/internal/stream.
 const (
 	streamEvents   = "PE_EVENTS"
 	streamSignals  = "PE_SIGNALS"
@@ -48,6 +49,12 @@ const (
 	kvServers      = "PE_SERVERS"
 	kvTenants      = "PE_TENANTS"
 	kvMeta         = "PE_META"
+	kvErasures     = "PE_ERASURES"
+)
+
+var (
+	allStreams = []string{streamEvents, streamSignals, streamVerdicts}
+	allBuckets = []string{kvLeases, kvConnections, kvServers, kvTenants, kvMeta, kvErasures}
 )
 
 // role is one NATS user of the PANDAEYE account.
@@ -58,15 +65,26 @@ type role struct {
 	sub     []string
 }
 
-// stream returns the stream-level API a role needs on a stream it publishes to or consumes. CREATE and
-// UPDATE are included because the spec does not fix which process provisions streams on an external
-// cluster; no role can delete or purge a stream.
+// stream returns what a process needs to provision a stream: create and update by exact name (never
+// delete, purge, snapshot or restore). Stream info is granted for all streams in service().
 func stream(name string) []string {
 	return []string{
-		"$JS.API.STREAM.INFO." + name,
 		"$JS.API.STREAM.CREATE." + name,
 		"$JS.API.STREAM.UPDATE." + name,
 	}
+}
+
+// provisionAll covers what every PandaEye process does when it connects (cloud/internal/stream
+// provision): CreateOrUpdate of every stream and every KV bucket.
+func provisionAll() []string {
+	var out []string
+	for _, s := range allStreams {
+		out = append(out, stream(s)...)
+	}
+	for _, b := range allBuckets {
+		out = append(out, stream("KV_"+b)...)
+	}
+	return out
 }
 
 // consume returns the consumer API for durable pull consumers and ordered (ephemeral) consumers on a
@@ -83,21 +101,15 @@ func consume(name string) []string {
 	}
 }
 
-// kv returns bucket access: bind/provision, get (direct and stream get), watch and key listing (push
-// ordered consumers with flow control), and with write also put/create/update/delete of keys.
+// kv returns key access on a bucket: get (direct get; buckets are created with AllowDirect), watch and
+// key listing (push ordered consumers; their flow-control replies are covered by "$JS.FC.>" in
+// service()), and with write also put/create/update/delete/purge of keys.
 func kv(bucket string, write bool) []string {
 	s := "KV_" + bucket
 	out := []string{
-		"$JS.API.STREAM.INFO." + s,
-		"$JS.API.STREAM.CREATE." + s,
-		"$JS.API.STREAM.UPDATE." + s,
-		"$JS.API.STREAM.MSG.GET." + s,
 		"$JS.API.DIRECT.GET." + s,
 		"$JS.API.DIRECT.GET." + s + ".>",
-		"$JS.API.CONSUMER.*." + s,
 		"$JS.API.CONSUMER.*." + s + ".>",
-		"$JS.FC." + s + ".>",
-		"$JS.FC.*.*." + s + ".>",
 	}
 	if write {
 		out = append(out, "$KV."+bucket+".>")
@@ -118,29 +130,35 @@ func join(parts ...[]string) []string {
 }
 
 var inbox = []string{"_INBOX.>"}
-var accountInfo = []string{"$JS.API.INFO"}
+
+// service is what every process that connects to NATS needs: account and stream info, flow-control
+// replies of its own push consumers, provisioning of every stream and bucket, and create-or-get of the
+// partition metadata in PE_META. Lists are kept short because a user JWT travels in the CONNECT line
+// (nats-server.conf raises max_control_line for it).
+func service() []string {
+	return join([]string{"$JS.API.INFO", "$JS.API.STREAM.INFO.*", "$JS.FC.>"}, provisionAll(), kv(kvMeta, true))
+}
 
 // roles is the authoritative permission table.
 var roles = []role{
 	{
 		user:    "pe-gateway",
-		purpose: "gateway: publishes StreamBatch and AckRecord, owns the connection registry, receives SignedOutbound",
+		purpose: "gateway: publishes StreamBatch and AckRecord, owns the connection registry and server records, receives SignedOutbound",
 		pub: join(
 			[]string{"pe.events.*", "pe.acks.*"},
-			accountInfo,
-			stream(streamEvents), stream(streamVerdicts),
-			kv(kvConnections, true), kv(kvServers, true), kv(kvMeta, true), kv(kvTenants, false),
+			service(),
+			kv(kvConnections, true), kv(kvServers, true), kv(kvTenants, false),
 		),
 		sub: join(inbox, []string{"pe.out.>"}),
 	},
 	{
 		user:    "pe-worker",
-		purpose: "worker: consumes PE_EVENTS, publishes signals and session markers, holds partition leases",
+		purpose: "worker: consumes PE_EVENTS, publishes signals and session markers, holds partition leases, honours erasures",
 		pub: join(
 			[]string{"pe.signals.*"},
-			accountInfo,
-			stream(streamEvents), consume(streamEvents), stream(streamSignals),
-			kv(kvLeases, true), kv(kvMeta, true), kv(kvTenants, false),
+			service(),
+			consume(streamEvents),
+			kv(kvLeases, true), kv(kvTenants, false), kv(kvErasures, false),
 		),
 		sub: inbox,
 	},
@@ -149,47 +167,35 @@ var roles = []role{
 		purpose: "verdict service and store writer: consumes PE_SIGNALS and PE_VERDICTS, publishes VerdictRecord and SignedOutbound",
 		pub: join(
 			[]string{"pe.verdicts.*", "pe.out.*.*"},
-			accountInfo,
-			stream(streamSignals), consume(streamSignals), stream(streamVerdicts), consume(streamVerdicts),
-			kv(kvLeases, true), kv(kvMeta, true), kv(kvTenants, false), kv(kvConnections, false),
+			service(),
+			consume(streamSignals), consume(streamVerdicts),
+			kv(kvLeases, true), kv(kvTenants, false), kv(kvConnections, false), kv(kvErasures, false),
 		),
 		sub: inbox,
 	},
 	{
 		user:    "pe-api",
-		purpose: "api: writes tenant settings, publishes config updates and corrective verdicts, runs leased loops",
+		purpose: "api: writes tenant settings and erasure tombstones, publishes config updates and corrective verdicts, runs leased loops",
 		pub: join(
 			[]string{"pe.out.*.*", "pe.verdicts.*"},
-			accountInfo,
-			stream(streamVerdicts),
-			kv(kvTenants, true), kv(kvLeases, true), kv(kvConnections, false), kv(kvServers, false),
+			service(),
+			kv(kvTenants, true), kv(kvLeases, true), kv(kvErasures, true), kv(kvConnections, false), kv(kvServers, false),
 		),
 		sub: inbox,
 	},
 	{
 		user:    "pe-replay",
-		purpose: "`pandaeye replay`: reads PE_EVENTS with ephemeral consumers (consumer rights on PE_EVENTS include deleting consumers)",
+		purpose: "`pandaeye replay`: reads PE_EVENTS with ephemeral consumers; it provisions on connect like every process, and its consumer rights on PE_EVENTS include deleting consumers",
 		pub: join(
-			accountInfo,
-			[]string{
-				"$JS.API.STREAM.INFO." + streamEvents,
-				"$JS.API.STREAM.MSG.GET." + streamEvents,
-				"$JS.API.DIRECT.GET." + streamEvents,
-				"$JS.API.DIRECT.GET." + streamEvents + ".>",
-			},
+			service(),
 			consume(streamEvents),
-			[]string{
-				"$JS.API.STREAM.INFO.KV_" + kvMeta,
-				"$JS.API.STREAM.MSG.GET.KV_" + kvMeta,
-				"$JS.API.DIRECT.GET.KV_" + kvMeta,
-				"$JS.API.DIRECT.GET.KV_" + kvMeta + ".>",
-			},
+			[]string{"$JS.API.STREAM.MSG.GET." + streamEvents},
 		),
 		sub: inbox,
 	},
 	{
 		user:    "pe-admin",
-		purpose: "operators: provisioning, backups and the nats CLI; full access inside the PANDAEYE account, never given to a service",
+		purpose: "operators: backups, repairs and the nats CLI; full access inside the PANDAEYE account, never given to a service",
 		pub:     []string{">"},
 		sub:     []string{">"},
 	},

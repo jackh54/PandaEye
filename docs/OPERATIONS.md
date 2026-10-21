@@ -113,13 +113,15 @@ it does not use.
 | `PE_METRICS_LISTEN` | `127.0.0.1:9090` | all roles | `/metrics` and pprof. Keep it on loopback or a private network; empty disables it |
 | `PE_TLS_CERT`, `PE_TLS_KEY` | empty | gateway, api, all | set both to serve TLS directly; otherwise terminate TLS in front (section 7) |
 | `PE_TRUSTED_PROXIES` | empty | gateway, api | CIDRs (or IPs) of your TLS terminators. `X-Forwarded-For` / `CF-Connecting-IP` are honoured only from them; the client IP is the right-most untrusted address. Wrong values break per-IP rate limits |
+| `PE_TRUSTED_PROXIES_PRESET` | empty | gateway, api | `cloudflare` adds Cloudflare's published IPv4/IPv6 ranges (embedded list, refreshed from cloudflare.com at start, falling back to the embedded list) |
+| `PE_REQUIRE_TRUSTED_PROXY` | `false` | gateway, api | `true` refuses (close / HTTP 403) every TCP peer outside the trusted proxies, so clients cannot bypass the proxy by connecting to the origin directly. Requires trusted proxies to be set |
 | `PE_PUBLIC_URL` | empty | verdict, api | dashboard base URL for evidence links, Discord embeds and appeal links |
 | `PE_NATS_URL` | empty | all roles but migrate | external NATS, comma-separated `tls://` URLs. Empty is allowed only in `all` (embedded). Must not contain credentials |
 | `PE_NATS_CREDS` | empty | all roles but migrate | creds file of the role's NATS user (section 5). Required for non-loopback NATS unless `PE_NATS_TOKEN` is set |
 | `PE_NATS_TOKEN` | empty | all roles but migrate | alternative to creds: a single server-wide token, no per-role isolation. Not for production |
 | `PE_NATS_TLS_CA` | empty | all roles but migrate | CA bundle of the NATS server certificate; required for non-loopback NATS unless the URL is `tls://` with a publicly trusted certificate |
 | `PE_NATS_DIR` | `./data/nats` | all | embedded JetStream storage |
-| `PE_NATS_REPLICAS` | `1` | all roles | replicas of every stream and KV bucket (1..5); `3` on an R3 cluster, `1` embedded |
+| `PE_NATS_REPLICAS` | `1` | all roles but migrate | replicas of every stream and KV bucket (1..5); `3` on an R3 cluster, `1` embedded. Every process provisions the streams with its own value, so set it identically everywhere |
 | `PE_NATS_SYNC` | `default` | all | embedded file-store sync: `default` (every 2 min) or `always` (every write, more IOPS) |
 | `PE_OUTBOUND_KEY` | generated in `all` | gateway, verdict, api (configuration also requires it for worker) | HMAC key of SignedOutbound, >= 32 bytes, identical on every instance. Webhook encryption (and, in the current implementation, appeal codes) is derived from it: see 8.6 before changing it |
 | `PE_PARTITIONS` | `16` | gateway, worker, verdict | partition count (1..1024), fixed at first start (KV `PE_META`); a mismatch refuses to start. Choose it for the largest worker count you expect (section 8.2) |
@@ -132,7 +134,7 @@ it does not use.
 | `PE_STATIC_LICENSES` | empty | gateway, api | `key[:maxServers[:plan]],...` (maxServers 0 = unlimited, plan default `free`) |
 | `PE_SERVICE_TOKEN`, `PE_SERVICE_TOKEN_NEXT` | empty | api | dashboard transport token(s), >= 32 bytes; empty disables dashboard access. NEXT is accepted too, for rotation |
 | `PE_ASSERTION_KEY` | empty | api | HMAC key of dashboard user assertions, >= 32 bytes; required when `PE_SERVICE_TOKEN` is set |
-| `PE_EVENTS_MAX_AGE`, `PE_EVENTS_MAX_BYTES` | `24h`, `10GiB` | stream provisioning | `PE_EVENTS` retention; bounds residual data after erasure and how far back `replay` reaches |
+| `PE_EVENTS_MAX_AGE`, `PE_EVENTS_MAX_BYTES` | `24h`, `10GiB` | all roles but migrate (each provisions `PE_EVENTS`) | `PE_EVENTS` retention; bounds residual data after erasure and how far back `replay` reaches. Set identically everywhere, or every restart rewrites the stream's limits |
 | `PE_WORKER_MAX_MEMORY` | `2GiB` | worker, all | byte budget of worker state and clip rings (LRU, per tenant first); keep it well below the container limit |
 | `PE_REGION` | `local` | gateway, api | shown on `/status` |
 | `PE_LOG_LEVEL` | `info` | all roles | `debug`, `info`, `warn`, `error`; secrets are redacted at every level |
@@ -172,11 +174,13 @@ Secrets summary (generate with `openssl rand -hex 32`; `deploy/scripts/gen-env.s
 - Streams and buckets (ARCHITECTURE 5.4): `PE_EVENTS` (`pe.events.*`, file, limits, `PE_EVENTS_MAX_AGE` /
   `PE_EVENTS_MAX_BYTES`, discard old, duplicates 10 min), `PE_SIGNALS` (`pe.signals.*`, 7 d, duplicates
   10 min), `PE_VERDICTS` (`pe.verdicts.*`, `pe.acks.*`, 30 d, duplicates 1 h), KV `PE_LEASES` (TTL 15 s),
-  `PE_CONNECTIONS` (TTL 30 s), `PE_SERVERS`, `PE_TENANTS`, `PE_META` (no TTL). Core subject
-  `pe.out.<tenant>.<server>`. All with `PE_NATS_REPLICAS` replicas.
-- **Open:** the spec does not say which process creates the streams and buckets on an external cluster.
-  The shipped permissions let each role create/update the streams and buckets it uses (never delete or
-  purge them), so services can provision on start; operators can also provision with `pe-admin`.
+  `PE_CONNECTIONS` (TTL 30 s), `PE_SERVERS`, `PE_TENANTS`, `PE_META` (no TTL), plus `PE_ERASURES`
+  (erasure tombstones, TTL 31 d; the spec does not name this bucket, the name comes from
+  `cloud/internal/stream`). Core subject `pe.out.<tenant>.<server>`. All with `PE_NATS_REPLICAS` replicas.
+- Provisioning: the spec does not say which process creates streams and buckets on an external cluster.
+  In the implementation every process that connects (all roles except `migrate`) runs create-or-update on
+  all three streams and all six buckets and create-or-get on `PE_META`, so every service user may create
+  and update them (never delete or purge). Settings changed by hand are overwritten at the next start.
 - Disk: size JetStream storage for `PE_EVENTS_MAX_BYTES` + 7 days of signals + 30 days of verdict records,
   times the replica count across the cluster.
 
@@ -199,49 +203,61 @@ make -C deploy nats-permissions   # print every role's exact subject list
 [`deploy/nats/nats-server.conf`](../deploy/nats/nats-server.conf) (single node) and
 [`nats-cluster.conf`](../deploy/nats/nats-cluster.conf) (R3, mutual TLS between routes) include
 `auth/server/resolver.conf` and serve client TLS. Mount the `server/` directory, not the file, into
-containers so that a regenerated file is seen by `nats-server --signal reload`. If you already run
-`nsc`, the same permissions can be put into user JWTs issued by your own operator.
+containers so that a regenerated file is seen by `nats-server --signal reload`. A user JWT carries its
+permissions and travels in the client's CONNECT line, so the configs raise `max_control_line` to 8192
+(the generated JWTs are about 2-3 KB; the 4 KiB default is too tight with longer lists). If you already
+run `nsc`, the same permissions can be put into user JWTs issued by your own operator.
 
 ### 5.3 Permissions per role
 
 ARCHITECTURE 5.4 summarises the data plane as gateway pub `pe.events.>` / sub `pe.out.>`, worker pub
 `pe.signals.>`, verdict and api pub `pe.out.>` and `pe.verdicts.>`. The full set below adds what the data
-flows of 5.3-5.8 also need: the gateway publishes `AckRecord` on `pe.acks.<tenant>` (5.3), every role uses
-the JetStream API and KV buckets, and every role receives replies on `_INBOX.>`. Tokens are narrowed to
-the subject shapes actually used (`pe.events.*` rather than `pe.events.>`).
+flows of 5.3-5.13 and the implementation also need: the gateway publishes `AckRecord` on
+`pe.acks.<tenant>` (5.3); every process provisions the streams and buckets and creates or reads
+`PE_META` when it connects; the api writes erasure tombstones that workers and the verdict service watch
+(5.13); and every user receives replies on `_INBOX.>`. Data-plane tokens are narrowed to the subject
+shapes actually used (`pe.events.*` rather than `pe.events.>`). The authoritative list is the table in
+[`deploy/nats/gen-auth/main.go`](../deploy/nats/gen-auth/main.go); `make -C deploy nats-permissions`
+prints it.
 
-| User | Publish (data plane) | Subscribe | Streams (info, create, update) | Consumes | KV read + write | KV read |
-|---|---|---|---|---|---|---|
-| `pe-gateway` | `pe.events.*`, `pe.acks.*` | `_INBOX.>`, `pe.out.>` | `PE_EVENTS`, `PE_VERDICTS` | - | `PE_CONNECTIONS`, `PE_SERVERS`, `PE_META` | `PE_TENANTS` |
-| `pe-worker` | `pe.signals.*` | `_INBOX.>` | `PE_EVENTS`, `PE_SIGNALS` | `PE_EVENTS` | `PE_LEASES`, `PE_META` | `PE_TENANTS` |
-| `pe-verdict` | `pe.verdicts.*`, `pe.out.*.*` | `_INBOX.>` | `PE_SIGNALS`, `PE_VERDICTS` | `PE_SIGNALS`, `PE_VERDICTS` | `PE_LEASES`, `PE_META` | `PE_TENANTS`, `PE_CONNECTIONS` |
-| `pe-api` | `pe.out.*.*`, `pe.verdicts.*` | `_INBOX.>` | `PE_VERDICTS` | - | `PE_TENANTS`, `PE_LEASES` | `PE_CONNECTIONS`, `PE_SERVERS` |
-| `pe-replay` | - | `_INBOX.>` | `PE_EVENTS` (info only) | `PE_EVENTS` | - | `PE_META` (get only) |
-| `pe-admin` | `>` | `>` | all | all | all | all |
+| User | Publish (data plane) | Subscribe | Consumes | KV read + write | KV read |
+|---|---|---|---|---|---|
+| `pe-gateway` | `pe.events.*`, `pe.acks.*` | `_INBOX.>`, `pe.out.>` | - | `PE_CONNECTIONS`, `PE_SERVERS`, `PE_META` | `PE_TENANTS` |
+| `pe-worker` | `pe.signals.*` | `_INBOX.>` | `PE_EVENTS` | `PE_LEASES`, `PE_META` | `PE_TENANTS`, `PE_ERASURES` |
+| `pe-verdict` | `pe.verdicts.*`, `pe.out.*.*` | `_INBOX.>` | `PE_SIGNALS`, `PE_VERDICTS` | `PE_LEASES`, `PE_META` | `PE_TENANTS`, `PE_CONNECTIONS`, `PE_ERASURES` |
+| `pe-api` | `pe.out.*.*`, `pe.verdicts.*` | `_INBOX.>` | - | `PE_TENANTS`, `PE_LEASES`, `PE_ERASURES`, `PE_META` | `PE_CONNECTIONS`, `PE_SERVERS` |
+| `pe-replay` | - | `_INBOX.>` | `PE_EVENTS` (plus `STREAM.MSG.GET`) | `PE_META` | - |
+| `pe-admin` | `>` | `>` | all | all | all |
 
-Every user except `pe-admin` also gets `$JS.API.INFO`. The columns expand to these exact subjects
-(publish permissions; `S` is a stream, `B` a bucket):
+Every user except `pe-admin` also gets the service base set, and the columns expand to these exact
+subjects (publish permissions; `S` is a stream, `B` a bucket):
 
-| Column | Subjects |
+| Part | Subjects |
 |---|---|
-| Streams | `$JS.API.STREAM.INFO.S`, `$JS.API.STREAM.CREATE.S`, `$JS.API.STREAM.UPDATE.S` |
-| Consumes | `$JS.API.CONSUMER.*.S`, `$JS.API.CONSUMER.*.S.>` (create incl. ephemeral, info, delete, pause, unpin, reset, list, names), `$JS.API.CONSUMER.DURABLE.CREATE.S.>`, `$JS.API.CONSUMER.MSG.NEXT.S.>`, `$JS.ACK.S.>` and `$JS.ACK.*.*.S.>` (ack, nak, in-progress; v1 and v2 ack formats) |
-| KV read | `$JS.API.STREAM.INFO.KV_B`, `$JS.API.STREAM.CREATE.KV_B`, `$JS.API.STREAM.UPDATE.KV_B`, `$JS.API.STREAM.MSG.GET.KV_B`, `$JS.API.DIRECT.GET.KV_B`, `$JS.API.DIRECT.GET.KV_B.>`, `$JS.API.CONSUMER.*.KV_B`, `$JS.API.CONSUMER.*.KV_B.>` (watch, keys), `$JS.FC.KV_B.>`, `$JS.FC.*.*.KV_B.>` (watcher flow control) |
-| KV read + write | KV read plus `$KV.B.>` (put, create, update with revision, delete, purge) |
-| `pe-replay` exceptions | `PE_EVENTS`: info, `MSG.GET` and `DIRECT.GET` only (no create/update); `PE_META`: info, `MSG.GET`, `DIRECT.GET` only |
+| Service base (every service user) | `$JS.API.INFO`, `$JS.API.STREAM.INFO.*`, `$JS.FC.>` (flow-control replies of its own push consumers), and `$JS.API.STREAM.CREATE.<name>` + `$JS.API.STREAM.UPDATE.<name>` for `PE_EVENTS`, `PE_SIGNALS`, `PE_VERDICTS` and `KV_` + each of the six buckets |
+| Consumes `S` | `$JS.API.CONSUMER.*.S`, `$JS.API.CONSUMER.*.S.>` (create incl. ephemeral, info, delete, pause, unpin, reset, list, names), `$JS.API.CONSUMER.DURABLE.CREATE.S.>`, `$JS.API.CONSUMER.MSG.NEXT.S.>`, `$JS.ACK.S.>` and `$JS.ACK.*.*.S.>` (ack, nak, in-progress; v1 and v2 ack formats) |
+| KV read `B` | `$JS.API.DIRECT.GET.KV_B`, `$JS.API.DIRECT.GET.KV_B.>` (get; buckets allow direct get), `$JS.API.CONSUMER.*.KV_B.>` (watch, key listing) |
+| KV read + write `B` | KV read plus `$KV.B.>` (put, create, update with revision, delete, purge) |
 
-No service user can delete, purge, snapshot or restore a stream or delete individual messages. Consumer
-rights on a stream include deleting its consumers (lease handover deletes and recreates them), so
-`pe-replay` could disrupt a worker's consumer: run replays as an operator, not from automation.
+Create and update are granted per stream name, never with a wildcard: a role able to create arbitrary
+streams could capture `pe.out.>` and read every outbound message. No service user can delete, purge,
+snapshot or restore a stream or delete individual messages. Consumer rights on a stream include deleting
+its consumers (lease handover deletes and recreates them), so `pe-replay` could disrupt a worker's
+consumer: run replays as an operator, not from automation. Because `PE_META` must be create-or-get for
+every process and NATS cannot separate "create" from "put" on a key, every service user can overwrite
+`PE_META`; a changed partition count or key makes every process refuse to start, which is noisy but not
+silent.
 
-These permissions were checked against nats-server 2.15 with nats.go 1.54 by acting out each role (stream
-and bucket provisioning, publish with PubAck, pinned durable pull consumers with ack and in-progress,
-ordered consumers, KV create/update/get/list/watch, core `pe.out` delivery) and by checking that
-cross-role publishes, KV writes to foreign buckets and stream deletion/purge are denied.
+These permissions were checked against nats-server 2.15 with nats.go 1.54 by acting out each role: the
+implementation's provisioning of all streams and buckets with its settings, `PE_META` create-or-get,
+publish with PubAck, pinned durable pull consumers with ack and in-progress, ordered consumers, KV
+create/update/get/list/watch on the buckets each role uses, erasure tombstone put and watch, and core
+`pe.out` delivery from verdict and api to the gateway; and by checking that cross-role publishes, KV
+writes to buckets a role only reads, unrelated stream creation and stream deletion/purge are denied.
+Creds rotation with revocation (8.6) was checked the same way.
 
-**Open:** add `pe.out.*.*` to `pe-gateway` if the implementation sends `close_connection_id` from the
-gateway (the spec does not name its publisher), and add the erasure tombstone bucket (api: write, worker
-and verdict: read) once it has a name.
+**Open:** add `pe.out.*.*` to `pe-gateway` if the gateway sends `close_connection_id` (the spec does not
+name its publisher).
 
 ### 5.4 TLS for NATS
 
@@ -267,7 +283,9 @@ NATS, Postgres and ClickHouse from mirror.gcr.io.
 
 ## 7. TLS termination
 
-Plugins require `wss://` (they accept `ws://` only to loopback). Two options:
+Plugins require `wss://`. They accept `ws://` only to a loopback address, or to a same-host or
+private-network address when `cloud.allow-insecure: true` is set (the plugin warns at enable); use that
+only where the path between game server and gateway never leaves a network you control. The options:
 
 - **Directly on the gateway**: `PE_TLS_CERT` / `PE_TLS_KEY` (with systemd, pass them through
   `LoadCredential=` as shown in the unit files). Simplest path, lowest latency.
@@ -295,9 +313,10 @@ location /v1/connect {
   server and the Workers runtime adds its own per-message, CPU and duration limits and an extra hop.
   Cloudflare closes WebSocket connections that are idle for about 100 s; PandaEye heartbeats every 5 s, so
   this never triggers. Cloudflare also drops connections when it restarts edge servers; plugins reconnect
-  and replay, which is harmless but shows up as reconnects. Put the Cloudflare IP ranges in
-  `PE_TRUSTED_PROXIES` (the gateway honours `CF-Connecting-IP` only from trusted proxies). Every extra hop
-  adds latency to the probe RTT; measure the SLO with the topology you actually use.
+  and replay, which is harmless but shows up as reconnects. Set `PE_TRUSTED_PROXIES_PRESET=cloudflare`
+  (the gateway honours `CF-Connecting-IP` only from trusted proxies) and `PE_REQUIRE_TRUSTED_PROXY=true`
+  so nobody can reach the origin around Cloudflare. Every extra hop adds latency to the probe RTT; measure
+  the SLO with the topology you actually use.
 - **API**: the dashboard Worker calls `PE_API_LISTEN` over public HTTPS. Its source addresses are not
   fixed, so access control is the service token plus the signed user assertion (ARCHITECTURE 5.8); API
   keys use the same endpoint.
@@ -645,7 +664,9 @@ dashboard (server online, probe RTT).
 
 ## 11. Open points
 
-1. Who provisions streams and KV buckets on an external NATS cluster (5.1).
+1. Who provisions streams and KV buckets on an external NATS cluster, and the name of the erasure
+   tombstone bucket, are not in the spec; the implementation provisions from every process and uses
+   `PE_ERASURES` (5.1).
 2. Per-role NATS permissions in ARCHITECTURE 5.4 are a summary: the gateway also publishes `pe.acks.*`,
    and every role needs JetStream API and KV access (5.3).
 3. NATS authentication: per-role isolation needs creds (operator mode); `PE_NATS_TOKEN` cannot provide it.
@@ -659,8 +680,8 @@ dashboard (server online, probe RTT).
    no tooling.
 8. Whether `PE_TENANTS` is repopulated from the database after a NATS loss; whether `/healthz` fails during
    graceful shutdown; whether migrations are backward compatible.
-9. Which lease key the metering loop and the janitor use (`PE_LEASES` lists only `events.<NN>`,
-   `signals.<NN>` and `writer`).
+9. ARCHITECTURE 5.4 lists only `events.<NN>`, `signals.<NN>` and `writer` as `PE_LEASES` keys; the
+   implementation also uses `metering`, `janitor` and `members.*` (lease balancing).
 10. Whether `/pandaeye reload` applies `mode`, `checks.<id>.enabled`, `setbacks.enabled` and
     `mitigations.enabled`; the per-check threshold key names; the JSON schema of the flags and peaks logs.
 11. Whether runtime changes of `enforcement` clear active mitigations and unregister mitigation listeners.

@@ -90,8 +90,10 @@ Authoritative field list: wire.proto. Key rules:
   Binary messages only. Byte 0 = codec (`0x00` raw, `0x01` zstd frame with content size, `0x02` raw
   DEFLATE). Compressed <= 1 MiB, decompressed <= 8 MiB. Hello is codec 0x00 and <= 16 KiB. The plugin
   compresses frames whose raw size is > 1 KiB. The cloud never compresses.
-- First frame: `Hello` within 10 s. Response: `Welcome` or a fatal `Error` + close (codes: 4001 auth,
-  4002 license limit, 4003 protocol, 4004 duplicate server, 4008 rate limit, 1001 shutting down).
+- First frame: `Hello` within 10 s. Response: `Welcome` or a fatal `Error` + close (codes: 4000 bad request,
+  4001 auth, 4002 license limit, 4003 protocol, 4004 duplicate server, 4008 rate limit, 1001 shutting down,
+  1011 internal). A first frame that is not a Hello, a second Hello, a non-binary message or an undecodable
+  frame is a fatal `CODE_BAD_REQUEST` (4000). On a graceful stop the plugin sends `Goodbye` before closing.
 - Server identity is (tenant_id, server_id). `server_id` must be a canonical lowercase UUID. The first
   Welcome for a new server_id carries `server_secret`; the plugin stores it and presents it in every later
   Hello; the cloud stores only its hash. A Hello for an existing server_id with a wrong/missing secret is
@@ -237,8 +239,10 @@ Authoritative field list: wire.proto. Key rules:
   `rttHigh` = max of the last 5 samples.
 - Brand: the first `minecraft:brand` value per session only, truncated to 64 chars, control chars stripped.
 - `pandaeye:session` is read at packet level (no Bukkit channel registration) and accepted only when
-  `proxy.session-channel: true` and it carries `HMAC-SHA256(proxy.secret, uuid || session || unix_s)` no
-  older than 30 s, at most once per server connect.
+  `proxy.session-channel: true`. Payload (73 bytes): version byte `1`, player UUID (16 bytes), network
+  session UUID (16), unix seconds (8, big-endian), HMAC-SHA256(proxy.secret, the preceding 41 bytes) (32).
+  It must be no older than 30 s and is accepted at most once per server connect; it may arrive before the
+  session exists and is then buffered by UUID for 10 s.
 - Bypass permission is evaluated on the player's entity thread at seed time and every 30 s and cached. In
   shadow mode bypass exempts only from enforcement, not from detection
   (`exempt.bypass-detection-in-shadow: false`), so staff can test with cheat clients.
@@ -448,7 +452,7 @@ Environment variables (`PE_` prefix), optionally a YAML file (`--config`, keys i
 | `PE_NATS_DIR` | `./data/nats` | embedded JetStream storage |
 | `PE_NATS_REPLICAS` | `1` | replicas for all streams and KV buckets |
 | `PE_NATS_SYNC` | `default` | embedded file-store sync (`default` 2 min, or `always`) |
-| `PE_OUTBOUND_KEY` | random in `all` | HMAC key for SignedOutbound (>= 32 bytes, required otherwise) |
+| `PE_OUTBOUND_KEY`, `PE_OUTBOUND_KEY_NEXT` | generated once in `all` and persisted in `meta` | HMAC key for SignedOutbound and the root of the webhook-encryption and appeal-code keys (>= 32 bytes; required for gateway/verdict/api in split mode, unused by workers); NEXT is accepted for verification during rotation |
 | `PE_PARTITIONS` | `16` | partition count (stored in KV `PE_META` with the siphash key; mismatch = refuse to start) |
 | `PE_DB_DRIVER`, `PE_DB_DSN` | `sqlite`, `./data/pandaeye.db` | `sqlite` (WAL, busy_timeout 5000, one writer) or `postgres` |
 | `PE_CLICKHOUSE_DSN` | `` | empty = telemetry disabled |
@@ -457,7 +461,7 @@ Environment variables (`PE_` prefix), optionally a YAML file (`--config`, keys i
 | `PE_LICENSE_PEPPER` | random in `all` (persisted in the DB) | HMAC key for license key lookups |
 | `PE_STATIC_LICENSES` | `` | `key[:maxServers[:plan]],...` |
 | `PE_SERVICE_TOKEN`, `PE_SERVICE_TOKEN_NEXT` | `` | dashboard transport token (>= 32 bytes or empty = disabled) |
-| `PE_ASSERTION_KEY` | `` | HMAC key for dashboard user assertions (>= 32 bytes) |
+| `PE_ASSERTION_KEY`, `PE_ASSERTION_KEY_NEXT` | `` | HMAC key for dashboard user assertions (>= 32 bytes); NEXT accepted during rotation |
 | `PE_EVENTS_MAX_AGE`, `PE_EVENTS_MAX_BYTES` | `24h`, `10GiB` | PE_EVENTS retention |
 | `PE_WORKER_MAX_MEMORY` | `2GiB` | worker state byte budget (LRU) |
 | `PE_REGION` | `local` | shown on /status |
@@ -524,7 +528,8 @@ internal/testkit           fake plugin client, event builders, helpers
   the connection (forcing redelivery after reconnect) instead of dropping. Each SignedOutbound is verified
   (HMAC, tenant_id, server_id) before writing. While the tenant's current `enforcement` is false (KV
   `PE_TENANTS`), delivered verdicts are forced to `shadow = true`. `close_connection_id` closes that
-  connection.
+  connection; the gateway that accepted a replacing connection sends it when the old connection lives on
+  another gateway.
 - Verdict delivery sweep every 10 s per connection: re-send verdicts with status `open`, not acked,
   `delivered_at` older than 15 s, created < 24 h ago (KICK < 5 min; UNBAN/UNMITIGATE never expire),
   ordered by created_at. At delivery every pending verdict is re-validated against the tenant's current
@@ -537,7 +542,12 @@ internal/testkit           fake plugin client, event builders, helpers
   `VerdictAck` -> publish `AckRecord` to `pe.acks.<tenant>`.
 - Clock offset estimate per connection (3) goes into Origin.
 - `/status` (public JSON): region, version, uptime, connected servers (count), probe RTT p50/p95/p99 over the
-  last hour (plugin-measured, from the store), SLO target (p95 < 100 ms in-region) and whether it is met.
+  last hour (plugin-measured, from the store), SLO targets (p95 < 100 ms and p99 < 250 ms in-region) and
+  whether each is met. The plugin measures RTT from the moment it creates the Probe event to the moment it
+  receives the ProbeResult; `Ping.last_probe_rtt_us` is 0 unless a probe completed in the last 30 s (so a
+  broken pipeline shows "no data", never a stale good value). The gateway records each reported RTT in
+  `probe_stats` as a fixed log-bucket histogram per minute (64 buckets from 100 us to 60 s), so hourly
+  percentiles are computed from merged histograms; cloud-side stage timings are stored separately.
 - `/metrics` on `PE_METRICS_LISTEN` only, no tenant/server labels.
 
 ### 5.4 Event stream (NATS JetStream)
@@ -547,19 +557,25 @@ internal/testkit           fake plugin client, event builders, helpers
 | stream `PE_EVENTS` | `pe.events.*` | file, limits, `PE_EVENTS_MAX_AGE/BYTES`, discard old, duplicates 10m |
 | stream `PE_SIGNALS` | `pe.signals.*` | file, max age 7 d, duplicates 10m |
 | stream `PE_VERDICTS` | `pe.verdicts.*`, `pe.acks.*` | file, max age 30 d, duplicates 1 h |
-| KV `PE_LEASES` | `events.<NN>`, `signals.<NN>`, `writer` | TTL 15 s |
+| KV `PE_LEASES` | `events.<NN>`, `signals.<NN>`, `writer`, `metering`, `janitor`, `members.<owner>` | TTL 15 s |
 | KV `PE_CONNECTIONS` | `<tenant>.<server>` | TTL 30 s |
 | KV `PE_SERVERS` | `<tenant>.<server>` | last acked seq, secret hash, instance id |
 | KV `PE_TENANTS` | `<tenant>` | tenant settings JSON (api writes; gateway and verdict watch) |
 | KV `PE_META` | `partitions`, `partition_key` | no TTL |
+| KV `PE_ERASURES` | `<tenant>.<player>` | erasure tombstones (no TTL; deleted 8 days after the erasure) |
 | core | `pe.out.<tenant>.<server>` | SignedOutbound |
 
 - Embedded mode: `server.Options{DontListen: true, JetStream: true, StoreDir, MaxPayload: 8 MiB}` and
   `nats.InProcessServer`. External NATS must have `max_payload >= 8 MiB` (checked at start) and
-  credentials; per-role permissions are documented in OPERATIONS.md (gateway: pub `pe.events.>`, sub
-  `pe.out.>`; worker: pub `pe.signals.>`; verdict/api: pub `pe.out.>`, `pe.verdicts.>`).
+  credentials (NATS JWT/operator mode, one creds file per role; `deploy/nats/gen-auth`). Per-role subject
+  permissions are in OPERATIONS.md: gateway pub `pe.events.>`, `pe.acks.>`, `pe.out.>` (connection
+  replacement), sub `pe.out.>`; worker pub `pe.signals.>`; verdict/api pub `pe.out.>`, `pe.verdicts.>`; each
+  role gets only the JetStream/KV API subjects for the streams, consumers and buckets it uses. Every process
+  provisions streams/buckets idempotently, so `PE_NATS_REPLICAS` and `PE_EVENTS_MAX_*` must be identical on
+  all roles.
 - Partition: `siphash24(partition_key, 16 uuid bytes) % PE_PARTITIONS`, two-digit zero-padded (`07`).
-  Probes and server-level events use `siphash(server_id) % P`.
+  Probes use `probe_id % P` (round-robin, so every partition owner is measured); other server-level events
+  (stalls) use `siphash(server_id) % P`.
 - **Leases and consumer epochs.** A process takes a lease with `kv.Create(key, ownerToken)` (owner token =
   stable owner id + random epoch), renews every 5 s with `kv.Update(key, token, lastRevision)`; on an Update
   timeout it `Get`s the key and adopts the revision if the value is its token. It self-fences (stops
@@ -575,6 +591,8 @@ internal/testkit           fake plugin client, event builders, helpers
   `WithPublishAsyncTimeout(5s)` and a max-pending sized for 16 partitions x 20 batches/s per server. Each consumer skips messages whose stream sequence is <= the last
   applied one. A worker acks position N only after the PubAcks of every signal derived from messages <= N
   have returned; it never blocks the loop on the DB (slow work calls `msg.InProgress()`).
+- `PE_TENANTS` is rebuilt from the database at start when missing (it is a cache of the tenants table).
+  `/healthz` returns 503 from the moment shutdown begins.
 - Retention/erasure: JetStream expiry (24 h events, 7 d signals, 30 d verdict records) is the maximum
   residual time after an erasure; erasure tombstones make workers and the verdict service drop late data.
 
@@ -597,7 +615,8 @@ internal/testkit           fake plugin client, event builders, helpers
 - For each event: update derived state (moves, rotations, ticks, env flags, game mode, attributes, combat
   timestamps, latency, stalls), then call the checks registered for that event kind
   (`ctx.Emit(check, points, confidence, info, data)`). Signals go to `pe.signals.<NN>` with msg id
-  `<tenant>:<server>:<batch_seq>:<NN>:<event index>:<check>:<emit ordinal>`. Session changes are forwarded
+  `<tenant>:<server>:<batch_seq>:<NN>:<event index>:<check>:<emit ordinal>` (session markers:
+  `...:<event index>:session`; VerdictRecords use the verdict id, AckRecords `ack:<verdict id>`). Session changes are forwarded
   as SessionMarkers on the same subject (ordered with the signals). LocalFlag events become signals
   (`local = true`). Probe events become `Signal{check_id: "probe", points: 0}`.
 - Clips: per player a ring of the last 30 s of events stored as encoded bytes within the worker's byte
@@ -634,8 +653,9 @@ internal/testkit           fake plugin client, event builders, helpers
     WORLD_INTERACTION -> PLACE_CANCEL; others -> HIT_CANCEL. strength = clamp((S - MITIGATE)/(KICK - MITIGATE), 0.3, 1).
     A rejoin with a still-high score re-issues MITIGATE for the new session.
   - KICK when S >= KICK, tenant `autokick`, C >= 0.8, session open, >= 2 families contributing >= 5 each.
-  - BAN when S >= BAN, tenant `autoban`, C >= 0.9, at least one committed clip among the contributing
-    signals, and either >= 2 families contributing >= 5 each or one `certain` check with `acc_c >= BAN/2`.
+  - BAN when tenant `autoban`, C >= 0.9, at least one committed clip among the contributing signals, and
+    either (S >= BAN and >= 2 families contributing >= 5 each) or (one `certain` check with
+    `acc_c >= BAN/2`, which suffices on its own even when its family cap keeps S below BAN).
   - Never MITIGATE/KICK/BAN from signals whose `gateway_recv_unix_us` is more than 2 min older than the
     cloud clock (re-consumption) or whose normalised event time is older than 10 min (stale catch-up):
     those produce ALERT at most. Hot-loaded sessions count half until the session's plugin snapshot is
@@ -689,13 +709,15 @@ it. Tables:
 | `api_keys` | id pk, tenant_id, name, key_hash unique, scopes (json), created_at, last_used_at, revoked_at |
 | `reputation_contrib` | (tenant_id, player_uuid, verdict_id) pk, weight, created_at |
 | `usage_daily` | (tenant_id, day) pk, peak_players |
-| `probe_stats` | (tenant_id, server_id, minute) pk, count, p50_us, p95_us, p99_us, max_us |
+| `probe_stats` | (tenant_id, server_id, minute, source ('plugin','cloud')) pk, count, buckets (64 log buckets, json/blob), max_us |
 | `audit_log` | id pk, tenant_id, principal, action, target, detail (json), created_at |
 | `erasures` | (tenant_id, player_uuid) pk, requested_at, completed_at, counts (json) |
 
 Retention (janitor, daily): clips 90 d unless referenced by an active ban, open appeal or label; verdicts and
-evidence 180 d (bans kept while active); appeals 1 y, contact deleted 30 d after decision; labels 2 y;
-usage 2 y; probe_stats 30 d; audit_log 1 y. ClickHouse (optional): tables `signals` (TTL 30 d), `verdicts`
+evidence 180 d (bans kept while active, inactive bans 1 y after they end); appeals 1 y, contact deleted 30 d
+after decision; labels 2 y; players and player_names 2 y after last seen; reputation_contrib 2 y; erasures
+records 3 y (proof of erasure, no gameplay data); usage 2 y; probe_stats 30 d; audit_log 1 y. Dashboard
+sessions are deleted at expiry and the D1 audit log after 1 y. Backups are kept 30 d. ClickHouse (optional): tables `signals` (TTL 30 d), `verdicts`
 (90 d), `feature_windows` (180 d), `sessions` (90 d), MergeTree ordered by (tenant_id, time); batched inserts
 (1 s / 10 000 rows), drop on overflow.
 
@@ -861,8 +883,9 @@ until unbanned (documented in PRIVACY.md). JetStream expiry bounds residual data
 - Load: 200 simulated players at the production event mix across 10 servers against `pandaeye all`:
   probe RTT p95 < 100 ms and p99 < 250 ms in-region; packet handler < 2% of a core (JMH or load bench).
 - Detection matrix (docs/DETECTION_MATRIX.md): Meteor/Wurst modules and ghost configurations mapped to the
-  checks that cover them (and honestly, the ones not covered in v1: elytra/vehicle physics, criticals
-  beyond packet mode, legit-rotation scaffolds), with cheat-client harness scenarios for the covered ones.
+  checks that cover them, and honestly the ones not covered in v1 (elytra/vehicle physics, criticals,
+  legit-rotation scaffolds, local movement checks for clients older than 1.21.2), with cheat-client
+  harness scenarios for the covered ones.
 - E2E (`test/e2e`): cloud `all` + real Folia 1.21.11 and Paper 1.21.11 servers with PacketEvents 2.13.x
   (reEncodeByDefault as shipped), ViaVersion/ViaBackwards and PlugManX; legit bots: no confirmed flags, never
   kicked; wire bytes identical with and without PandaEye for a scripted session; cheat clients detected per

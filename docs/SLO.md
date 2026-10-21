@@ -11,9 +11,11 @@ as measurable tests. Behaviour the spec leaves open is marked **Open** and colle
 | Verdict pipeline latency, p99, same measurement | **< 250 ms** | rolling 1 h | as above |
 | Gateway availability | **>= 99.9%** of 1-minute intervals per calendar month (proposed; see 1.3) | calendar month | external prober (not computed by `/status` in v1) |
 
-Players are never affected by a missed objective: plugins keep their local checks running and buffer
-events while the cloud is slow or unreachable (degraded mode), and replayed events are judged on
-reconnect but can produce at most an ALERT (ARCHITECTURE 5.6).
+A missed objective does not stop protection: plugins keep their local checks running and buffer events
+while the cloud is slow or unreachable (degraded mode), and buffered events are judged on reconnect.
+Signals from events older than 10 minutes, or consumed more than 2 minutes after the gateway received
+them, produce at most an ALERT (ARCHITECTURE 5.6), so a long outage never turns into delayed
+punishments.
 
 ### 1.1 The probe RTT
 

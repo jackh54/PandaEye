@@ -42,7 +42,7 @@ every licence-to-tenant mapping; losing the outbound key makes stored Discord we
 ## TLS
 
 Plugins refuse `ws://` to anything but loopback, and a game server in another Pterodactyl container
-reaches PandaEye through the node's address, not loopback. So the gateway needs TLS either way:
+reaches PandaEye through the node's address, not loopback. Use TLS:
 
 - **On the gateway**: upload a certificate valid for the hostname the plugins use and set `PE_TLS_CERT`
   / `PE_TLS_KEY`. Renewals are manual (upload, restart).
@@ -52,6 +52,11 @@ reaches PandaEye through the node's address, not loopback. So the gateway needs 
   [OPERATIONS.md "TLS termination"](../docs/OPERATIONS.md#7-tls-termination).
 
 Plugins then use `cloud.endpoint: "wss://<hostname>:<port>/v1/connect"`.
+
+Only when every game server runs on the same node, or on a private network you control, may plugins
+use `ws://<node address>:<port>/v1/connect` with `cloud.allow-insecure: true` in their `config.yml`
+(they log a warning at enable). Never use it across the internet: licence keys and server secrets travel
+in the Hello.
 
 ## Durability and resources
 

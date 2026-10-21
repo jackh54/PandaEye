@@ -10,7 +10,8 @@ collected list is in section 15.
 ## 1. Transport and framing
 
 - One WebSocket per server process at `wss://<host>/v1/connect`. Plugins refuse `ws://` except to a
-  loopback address. Only binary messages are used.
+  loopback address, or to a same-host or private-network address when `cloud.allow-insecure: true` is set
+  (with a warning at enable). Only binary messages are used.
 - Every message starts with a one-byte codec header:
 
 | Byte 0 | Payload after the header | Used by |
@@ -167,9 +168,10 @@ closes with `CODE_INTERNAL` only after 60 s.
   send time (`sent_unix_ms * 1000 + clock_offset_us`) is more than 30 s old.
 - After a reconnect the plugin sends live batches first and paces replayed batches to <= 50% of
   `replay_max_events_per_s`.
-- Downstream, replayed data is judged but cannot punish: the verdict service never issues MITIGATE, KICK
-  or BAN from signals whose `gateway_recv_unix_us` is more than 2 min older than the cloud clock or whose
-  normalised event time is older than 10 min; those produce ALERT at most.
+- Downstream, replayed data is judged like live data, but stale data cannot punish: the verdict service
+  never issues MITIGATE, KICK or BAN from signals whose `gateway_recv_unix_us` is more than 2 min older
+  than the cloud clock (re-consumption) or whose normalised event time is older than 10 min (catch-up after
+  a long outage); those produce ALERT at most.
 
 ### 3.4 De-duplication
 
@@ -458,14 +460,16 @@ subject.
 
 | Bucket | Keys | Settings | Writers |
 |---|---|---|---|
-| `PE_LEASES` | `events.<NN>`, `signals.<NN>`, `writer` (and other leased singletons) | TTL 15 s | worker, verdict, api |
+| `PE_LEASES` | `events.<NN>`, `signals.<NN>`, `writer`; the implementation adds `metering`, `janitor` and `members.*` (lease balancing) | TTL 15 s | worker, verdict, api |
 | `PE_CONNECTIONS` | `<tenant>.<server>` = {connection_id, gateway_id, instance_id, online_players} | TTL 30 s, renewed every 10 s with revision checks | gateway |
 | `PE_SERVERS` | `<tenant>.<server>` = last acked seq, secret hash, instance id | none | gateway |
 | `PE_TENANTS` | `<tenant>` = settings JSON incl. enforcement and `tenant_checks` | none | api (gateway, worker and verdict watch it) |
-| `PE_META` | `partitions`, `partition_key` | no TTL | first process to start |
+| `PE_META` | `partitions`, `partition_key` | no TTL | first process to start (create-or-get by every process) |
+| `PE_ERASURES` | `<tenant>.<player hex>` = erasure time | TTL 31 d | api (worker and verdict watch it) |
 
-**Open:** erasure tombstones are "published to workers and the verdict service via KV" (5.13), but no
-bucket is named.
+`PE_ERASURES` is the implementation's name for the erasure tombstones that 5.13 "publishes to workers and
+the verdict service via KV" without naming a bucket; its TTL is longer than the longest stream retention
+(30 d), after which no late data can arrive.
 
 ### 14.3 Signing of outbound messages
 
@@ -504,7 +508,7 @@ Inconsistencies and gaps in the spec that affect the protocol:
    (section 10).
 5. Msg ids for SessionMarkers on `pe.signals.<NN>`, `VerdictRecord` and `AckRecord`.
 6. Who publishes `Outbound.close_connection_id`.
-7. The erasure tombstone KV bucket.
+7. The erasure tombstone KV bucket (the implementation uses `PE_ERASURES`).
 8. The semantics of `Hello.capabilities`, the use of `Goodbye`, and the byte layout of `pandaeye:session`.
 9. Probe RTT start point and how lost probes are reported (affects the SLO).
 10. `PlayerJoin.ip_hash` exists ("optional, off by default") but no plugin setting enables it, while

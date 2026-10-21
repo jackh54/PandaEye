@@ -114,6 +114,7 @@ message RemoteConfig {
                                       // this is true AND its local mode is "live"
 }
 
+// Sent by the plugin right before it closes the connection on a graceful stop (disable/shutdown).
 message Goodbye {
   string reason = 1;
 }
@@ -156,9 +157,9 @@ message Pong {
 // ---------------------------------------------------------------------------------------------
 
 message Batch {
-  uint64 seq = 1;                     // starts at 1, +1 per batch, never reused within one server_id
-                                      // (the plugin persists the next seq in its data folder on shutdown
-                                      // and adds 1_000_000 to it on an unclean start)
+  uint64 seq = 1;                     // +1 per batch, assigned when the batch is first sent, never reused within
+                                      // one server_id: the plugin reserves blocks of 100 000 seqs in its data
+                                      // folder, so a restart (clean or not) always resumes above anything used
   uint64 sent_unix_ms = 2;
   bool replayed = 3;                  // true when resent after a reconnect / outage
   repeated Event events = 4;
@@ -260,7 +261,8 @@ message PlayerJoin {
   GameMode game_mode = 7;
   bool hot_loaded = 8;                // the player was already online when the plugin was enabled
   bool exempt = 9;                    // has the bypass permission
-  bytes ip_hash = 10;                 // optional (off by default): HMAC-SHA256(ip, per-install secret), first 16 bytes
+  reserved 10;                        // was ip_hash: PandaEye does not collect IP addresses in v1
+  reserved "ip_hash";
   string network_session = 11;        // set by the proxy plugin; backends set it only from a verified proxy message
   bool update = 12;                   // metadata refresh (brand, network_session, periodic re-announce):
                                       // never resets session state
@@ -320,7 +322,7 @@ message Attack {
   bool sneaking = 8;
   float target_width = 9;             // target hitbox (scaled); 0 if unknown
   float target_height = 10;
-  repeated TimedPos target_history = 11; // target's positions received in the last 1000 ms, oldest first
+  repeated TimedPos target_history = 11; // target's positions received in the last 1500 ms, oldest first
   uint32 ping_ms = 12;                // attacker's best current RTT estimate
   float entity_reach = 13;            // attacker's entity_interaction_range attribute (3.0 default)
   GameMode game_mode = 14;

@@ -17,7 +17,8 @@ decompiled sources during the design review) unless stated.
 - **VL**: local violation level (plugin only). **Points**: what one violation adds to the cloud score.
   **Half-life**: decay of the check's accumulator. **Cap**: max contribution of the check.
   **Family**: the id prefix before the first dot; families have their own cap (section 4).
-  **Certain**: the check alone may justify a BAN (ARCHITECTURE 5.6).
+  **Certain**: the check alone may justify a BAN (ARCHITECTURE 5.6). Checks without a "Live setback" value
+  never set the player back.
 - Thresholds below are the shipped defaults. They are deliberately lenient. The shadow rollout measures
   per-player peak values on real players and thresholds are tightened from that evidence (peak-per-player
   method), never by guessing. Every check is configurable (enabled, thresholds).
@@ -107,8 +108,9 @@ on CLIENT_TICK_END at receive time t (ms, double, System.nanoTime based):
   bin = floor((t - start) / 2000); binMin[bin] = min(binMin[bin], offset)
   when a bin closes (t passes its end):
      if t - start < 60_000: continue                        # calibration
-     runMin = minimum over all closed bins before it
-     newLow[bin] = binMin[bin] < runMin - 2 - driftAllowance(bin)   # driftAllowance = 0.5 ms/s since start
+     runMin, runMinT = minimum over all closed bins before it, and the time it was reached
+     newLow[bin] = binMin[bin] < runMin - 2 - 0.0005 * (t_bin - runMinT)   # 0.5 ms/s drift allowance,
+                                                                           # measured from when runMin was set
   violation when, over the last 10 closed bins: >= 8 bins were new lows AND the running minimum fell by
   >= 150 ms over those bins AND it still fell by >= 100 ms when the single largest bin-to-bin drop is
   excluded. After a violation, the check starts counting again from the next bin.
@@ -159,13 +161,13 @@ Consecutive packets, `onGround[n-1]` true, `dy[n] > max(stepHeight, jumpStrength
 `stepHeight`, `jumpStrength` = max(applied, pending) attribute values and `jumpBoost = 0.1*(amplifier+1)`
 if jump boost is applied or pending. Candidate immediately; confirmation requires open air around
 position n. Severity `min(1, (dy - limit) / 0.5)`. VL +1, decay 1 per 60 s. Points `4 + 4*severity`,
-confidence 0.8.
+confidence 0.8. Live setback at VL >= 3.
 
 ### 1.6 movement.groundspoof - MOVEMENT
 
 Consecutive packets n-1 and n both claim `onGround = true` while `dy[n-1] < -0.1` and `dy[n] < -0.1`.
 Confirmation: no supporting block or entity. Severity `min(1, |dy[n]|)`. VL +1, decay 1 per 60 s.
-Points `3 + 3*severity`, confidence 0.8.
+Points `3 + 3*severity`, confidence 0.8. Live setback at VL >= 3.
 
 ### 1.6b movement.noslow - MOVEMENT
 
@@ -175,7 +177,7 @@ and at least 3 ticks since the use started. Vanilla scales movement input by 0.2
 `a` is multiplied by 0.2 (`a = sprint * 0.21600002 / bf^3 * 0.2` on the ground, `0.026 * 0.2` in the air;
 the 0.2 sprint-jump term stays). Candidate when `excess > 0.03` on 5 consecutive packets; confirmation as
 movement.speed. Severity `min(1, excess / 0.15)`. VL +1, decay 1 per 30 s. Points `3 + 3*severity`,
-confidence 0.75.
+confidence 0.75. Live setback at VL >= 4.
 
 ### 1.6c dig.speed - WORLD_INTERACTION
 
