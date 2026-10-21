@@ -105,7 +105,17 @@ func (s *Store) Migrate(ctx context.Context) (int, error) {
 	if s.d == dialectPostgres {
 		create = "CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY, applied_at BIGINT NOT NULL)"
 	}
-	if _, err := s.w.ExecContext(ctx, create); err != nil {
+	// Under the same advisory lock as the migrations: concurrent CREATE TABLE IF NOT EXISTS on a fresh
+	// Postgres schema can fail with a duplicate pg_type key.
+	if err := s.tx(ctx, func(tx *sql.Tx) error {
+		if s.d == dialectPostgres {
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(7065646179)"); err != nil {
+				return err
+			}
+		}
+		_, err := tx.ExecContext(ctx, create)
+		return err
+	}); err != nil {
 		return 0, fmt.Errorf("sqlstore: create schema_migrations: %w", err)
 	}
 	applied := 0

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -151,5 +152,44 @@ func testAPIStore(t *testing.T, s *Store) {
 	}
 	if lb, _, _ := s.ExportLabels(ctx, b, time.Time{}, store.Page{}); len(lb) != 1 {
 		t.Fatal("another tenant's label deleted")
+	}
+}
+
+// Several processes starting at once on a fresh Postgres schema must all migrate cleanly.
+func TestConcurrentMigratePostgres(t *testing.T) {
+	dsn := os.Getenv("PE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("PE_TEST_POSTGRES_DSN not set")
+	}
+	ctx := context.Background()
+	admin, err := Open(ctx, "postgres", dsn, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("migrate_race_%d", time.Now().UnixNano())
+	if _, err := admin.w.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { admin.w.ExecContext(ctx, "DROP SCHEMA "+schema+" CASCADE"); admin.Close() })
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	scoped := dsn + sep + "search_path=" + schema
+	errs := make(chan error, 6)
+	for i := 0; i < cap(errs); i++ {
+		go func() {
+			s, err := Open(ctx, "postgres", scoped, Options{})
+			if err == nil {
+				_, err = s.Migrate(ctx)
+				s.Close()
+			}
+			errs <- err
+		}()
+	}
+	for i := 0; i < cap(errs); i++ {
+		if err := <-errs; err != nil {
+			t.Error(err)
+		}
 	}
 }
