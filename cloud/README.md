@@ -80,10 +80,8 @@ Other roles need PostgreSQL (`PE_DB_DRIVER=postgres`, run `pandaeye migrate` fir
 `PE_OUTBOUND_KEY` (rotate with `PE_OUTBOUND_KEY_NEXT`), gateway and API `PE_LICENSE_PEPPER`. Every
 process recreates missing `PE_TENANTS` entries from the database at start.
 
-Status: the foundation (config, codec, identity, geom, metrics, store, stream, app, testkit, check
-catalog) is implemented; `gateway`, `worker`, `verdict`, `api`, `license`, `telemetry` and `ml` are
-placeholders whose `Run` returns "not implemented", so `pandaeye all` currently stops right after
-starting.
+Status: every role is implemented. `pandaeye all` runs embedded NATS, gateway, worker, verdict and API
+in one process; the ML scorer is disabled unless built with `-tags onnx` and given `PE_ML_MODEL`.
 
 ## Layout
 
@@ -100,10 +98,17 @@ starting.
 | `internal/store`, `internal/store/sqlstore` | `store.Store` and its postgres/sqlite implementation, migrations |
 | `internal/store/storetest` | the conformance suite every `store.Store` must pass |
 | `internal/stream` | NATS JetStream: provisioning, subjects, publishing, leases, consumer epochs, consume loop, replay, KV |
-| `internal/checks` | `catalog.go`: the scoring table (CHECKS.md section 4) |
+| `internal/checks` | the scoring table (`catalog.go`), the `Detector`/`View` contract and the cloud checks (combat, velocity, autoclicker, scaffold, dig, inventory, latency, forwarded local flags) |
 | `internal/testkit` | fake plugin client, event builders, `NewStore`/`NewBus`/`NewDeps` |
 | `internal/wire/pandaeyev1` | generated protobuf |
-| `internal/{gateway,worker,verdict,api,license,telemetry,ml}` | services and components (placeholders) |
+| `internal/gateway` | plugin WebSocket gateway: handshake, batches, backpressure, outbound verdicts, `/status` |
+| `internal/license` | licence verifiers (static, pandascript) and the tenant resolver |
+| `internal/worker` | partition workers: sessions, dedup, warm start, cloud checks, clips, feature windows, replay |
+| `internal/verdict` | scoring with leniency, verdict records, store writer, Discord alerts, reputation |
+| `internal/api` | REST API (docs/API.md), metering and janitor jobs |
+| `internal/discord` | SSRF-safe webhook client with per-tenant budgets |
+| `internal/telemetry` | ClickHouse sink (sessions, signals, feature windows, probes) or a no-op |
+| `internal/ml` | the 94-feature v1 vector and the optional ONNX scorer |
 
 Service packages export `New(d *app.Deps) (*Service, error)` and `(*Service) Run(ctx) error`;
 component packages (`license`, `telemetry`, `ml`) export `New(d *app.Deps)` and share one instance per

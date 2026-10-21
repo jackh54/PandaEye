@@ -839,7 +839,12 @@ until unbanned (documented in PRIVACY.md). JetStream expiry bounds residual data
   HMAC-SHA256(session-secret) to the backend; drops client-originated messages on that channel
   (PluginMessageEvent from a player source -> handled).
 - Verdicts: in live mode with enforcement the proxy can run proxy commands for KICK/BAN (config), default
-  shadow/log only. The same circuit breaker and placeholder rules as the Paper plugin apply.
+  shadow/log only (no punishment commands configured; alerts go to the console). The same circuit breaker
+  and placeholder rules as the Paper plugin apply.
+- `pandaeye:session` is registered with Velocity so forged messages (from clients or backends) can be
+  dropped; registering it also announces the channel to backends, nothing is sent to clients.
+- Command `/pandaeyeproxy` (alias `/peyeproxy`; `status`, `breaker [reset]`), so `/pandaeye` still reaches the
+  backends.
 
 ## 7. Dashboard (`dashboard/`, Cloudflare Worker)
 

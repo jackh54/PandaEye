@@ -423,8 +423,8 @@ From the smallest to the largest blast radius:
   (<= 5 s). Plugins persist the last-known value and stop all enforcement (setbacks, mitigations, kicks,
   bans). Disconnected plugins keep their last-known value until they reconnect; they receive no verdicts
   meanwhile, but their local setbacks continue, so use a local switch for them. Bans already executed are
-  undone only by overturning (8.5). **Open:** the spec does not say whether active mitigations are cleared
-  and mitigation listeners removed when enforcement flips off at runtime.
+  undone only by overturning (8.5). When enforcement flips off at runtime the plugin removes its
+  mitigation listeners and clears active mitigations; the listener also re-checks the gate on every event.
 - **One tenant, one action type**: autoban / autokick / mitigations off. Verdicts are still produced as
   shadow ("would have banned"), which keeps measuring.
 - **One server**: set `mode: shadow` in `plugins/PandaEye/config.yml` and restart or
