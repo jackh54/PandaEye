@@ -89,4 +89,16 @@ class ConfigLoaderTest {
         assertTrue(loader.warnings().stream().anyMatch(w -> w.contains("note")));
         assertTrue(loader.warnings().stream().anyMatch(w -> w.contains("reach.distance")));
     }
+
+    @Test
+    void unquotedOnAndOffAreAcceptedForInGameAlerts() throws Exception {
+        for (String[] c : new String[][] {{"off", "OFF"}, {"on", "ON"}, {"\"off\"", "OFF"}}) {
+            YamlConfiguration yaml = new YamlConfiguration();
+            yaml.loadFromString("alerts:\n  in-game-default: " + c[0] + "\n");
+            ConfigLoader loader = new ConfigLoader();
+            PluginConfig config = loader.load(yaml);
+            assertEquals(PluginConfig.InGameAlerts.valueOf(c[1]), config.alerts().inGameDefault(), c[0]);
+            assertTrue(loader.warnings().stream().noneMatch(w -> w.contains("in-game-default")), c[0]);
+        }
+    }
 }

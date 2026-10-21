@@ -78,8 +78,16 @@ public final class ConfigLoader {
     }
 
     private PluginConfig.InGameAlerts inGame(String value) {
+        // YAML 1.1 reads an unquoted on/off as a boolean, which arrives here as "true"/"false".
+        String v = value.trim().toLowerCase(Locale.ROOT);
+        if (v.equals("true")) {
+            return PluginConfig.InGameAlerts.ON;
+        }
+        if (v.equals("false")) {
+            return PluginConfig.InGameAlerts.OFF;
+        }
         try {
-            return PluginConfig.InGameAlerts.valueOf(value.trim().toUpperCase(Locale.ROOT));
+            return PluginConfig.InGameAlerts.valueOf(v.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             warnings.add("alerts.in-game-default '" + value + "' is not auto, on or off; using auto");
             return PluginConfig.InGameAlerts.AUTO;
