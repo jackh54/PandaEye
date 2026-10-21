@@ -31,6 +31,9 @@ type Options struct {
 	PlanEventsPerS   map[string]int // per tenant by plan (free: 3 000); plans without an entry are unlimited
 
 	ConnsPerIPPerMin      int           // new connections per client IP (30)
+	UpgradesPerIPPerMin   int           // WebSocket upgrades per client IP, before any Hello (120)
+	MaxConnsPerIP         int           // open connections per client IP, authenticated or not (64)
+	VerifyPerPrefix       int           // licence checks in flight per IPv4 /32 or IPv6 /64 (4)
 	HellosPerTenantPerMin int           // Hellos per tenant (60)
 	AuthFailures          int           // licence failures per IPv4 /32 or IPv6 /64 ... (5)
 	AuthFailureWindow     time.Duration // ... within this window (10 min) ...
@@ -70,6 +73,9 @@ func (o Options) withDefaults() Options {
 		o.PlanEventsPerS = map[string]int{store.PlanFree: 3_000}
 	}
 	num(&o.ConnsPerIPPerMin, 30)
+	num(&o.UpgradesPerIPPerMin, 120)
+	num(&o.MaxConnsPerIP, 64)
+	num(&o.VerifyPerPrefix, 4)
 	num(&o.HellosPerTenantPerMin, 60)
 	num(&o.AuthFailures, 5)
 	dur(&o.AuthFailureWindow, 10*time.Minute)

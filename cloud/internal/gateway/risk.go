@@ -15,7 +15,8 @@ import (
 // Reputation lookups (ARCHITECTURE 5.11): budget of 2x the tenant's peak players per hour.
 const (
 	riskBudgetFactor = 2
-	riskMinPeak      = 10 // floor for new tenants without usage yet
+	riskMinPeak      = 10   // floor for new tenants without usage yet
+	riskMaxPeak      = 5000 // the plugin reports online_players; cap what it can size the budget with
 	riskRefresh      = time.Hour
 	riskTenantCap    = 1.0 // cap on one tenant's weight
 )
@@ -100,7 +101,7 @@ func (r *riskBudgets) allow(ctx context.Context, tenantID string, online int, no
 				peak = max(peak, d.PeakPlayers)
 			}
 		}
-		per := riskBudgetFactor * peak
+		per := riskBudgetFactor * min(peak, riskMaxPeak) // usage peaks are plugin-reported too
 		r.mu.Lock()
 		if b = r.m[tenantID]; b == nil {
 			b = &riskBudget{lim: rate.NewLimiter(rate.Limit(float64(per)/riskRefresh.Seconds()), per)}

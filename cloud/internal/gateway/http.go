@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/jackh54/PandaEye/cloud/internal/codec"
@@ -56,13 +58,22 @@ func (s *Service) serveConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.wg.Done()
 	ip, _ := s.d.Config.TrustedProxies.RequestClientIP(r)
+	if wait, ok := s.adm.enter(ip, time.Now()); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
+		w.Header().Set("Connection", "close")
+		http.Error(w, "too many connections from this address", http.StatusTooManyRequests)
+		return
+	}
+	defer s.adm.leave(ip)
 	hc := &hijackCapture{ResponseWriter: w}
 	// Plugins are not browsers and authenticate in the Hello, so the Origin check does not apply.
 	conn, err := websocket.Accept(hc, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
-	conn.SetReadLimit(codec.MaxCompressed + 1)
+	// Until the Welcome only a Hello may arrive: bound what an unauthenticated peer can make us buffer
+	// (with headroom, so an oversized Hello still gets its BAD_REQUEST); raised after the Welcome.
+	conn.SetReadLimit(4*codec.MaxHello + 1)
 	newSession(s, conn, hc.conn, ip).run()
 }
 

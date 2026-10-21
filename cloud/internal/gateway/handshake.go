@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/jackh54/PandaEye/cloud/internal/codec"
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
 	"github.com/jackh54/PandaEye/cloud/internal/license"
 	"github.com/jackh54/PandaEye/cloud/internal/store"
@@ -67,9 +68,15 @@ func (s *session) admit(h *pb.Hello, at time.Time) bool {
 		s.fail(fatal(pb.Error_CODE_BAD_REQUEST, "instance_id must be a canonical lowercase UUID", 0))
 		return false
 	}
+	verified, ok := g.adm.startVerify(s.ip)
+	if !ok {
+		s.fail(fatal(pb.Error_CODE_RATE_LIMITED, "too many licence checks in progress from this address", 5_000))
+		return false
+	}
 	ctx, cancel := context.WithTimeout(s.ctx, 15*time.Second)
 	defer cancel()
 	adm, err := g.resolver.Resolve(ctx, h.LicenseKey)
+	verified()
 	switch {
 	case errors.Is(err, license.ErrInvalid):
 		g.adm.failure(s.ip, now)
@@ -161,6 +168,7 @@ func (s *session) admit(h *pb.Hello, at time.Time) bool {
 		s.fail(fatal(pb.Error_CODE_INTERNAL, "outbound subscription failed", 5_000))
 		return false
 	}
+	s.conn.SetReadLimit(codec.MaxCompressed + 1)
 	if err := s.write(&pb.ServerFrame{Kind: &pb.ServerFrame_Welcome{Welcome: s.welcome(lastAcked, secret)}}); err != nil {
 		s.terminate("write_failed", nil)
 		return false

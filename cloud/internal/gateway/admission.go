@@ -13,10 +13,13 @@ import (
 type admission struct {
 	o Options
 
-	mu       sync.Mutex
-	failures map[netip.Prefix]*failState
-	conns    map[netip.Addr]*rate.Limiter
-	hellos   map[string]*rate.Limiter
+	mu        sync.Mutex
+	failures  map[netip.Prefix]*failState
+	conns     map[netip.Addr]*rate.Limiter
+	hellos    map[string]*rate.Limiter
+	upgrades  map[netip.Addr]*rate.Limiter
+	open      map[netip.Addr]int
+	verifying map[netip.Prefix]int
 }
 
 type failState struct {
@@ -26,7 +29,8 @@ type failState struct {
 }
 
 func newAdmission(o Options) *admission {
-	return &admission{o: o, failures: map[netip.Prefix]*failState{}, conns: map[netip.Addr]*rate.Limiter{}, hellos: map[string]*rate.Limiter{}}
+	return &admission{o: o, failures: map[netip.Prefix]*failState{}, conns: map[netip.Addr]*rate.Limiter{}, hellos: map[string]*rate.Limiter{},
+		upgrades: map[netip.Addr]*rate.Limiter{}, open: map[netip.Addr]int{}, verifying: map[netip.Prefix]int{}}
 }
 
 // failurePrefix returns the /32 (IPv4) or /64 (IPv6) a client address is limited by.
@@ -84,6 +88,61 @@ func (a *admission) allowConn(ip netip.Addr, now time.Time) (time.Duration, bool
 	return take(a.conns, ip.Unmap(), a.o.ConnsPerIPPerMin, now)
 }
 
+// enter admits a WebSocket upgrade from ip before anything is allocated for it: an upgrade token
+// (unauthenticated clients are bounded before their Hello) and a slot of the per-IP open-connection
+// cap. ok == false answers 429; otherwise leave must be called when the connection ends.
+func (a *admission) enter(ip netip.Addr, now time.Time) (wait time.Duration, ok bool) {
+	if !ip.IsValid() {
+		return 0, true
+	}
+	ip = ip.Unmap()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.open[ip] >= a.o.MaxConnsPerIP {
+		return 5 * time.Second, false
+	}
+	if wait, ok := take(a.upgrades, ip, a.o.UpgradesPerIPPerMin, now); !ok {
+		return wait, false
+	}
+	a.open[ip]++
+	return 0, true
+}
+
+// leave releases the slot enter took.
+func (a *admission) leave(ip netip.Addr) {
+	if !ip.IsValid() {
+		return
+	}
+	ip = ip.Unmap()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.open[ip]--; a.open[ip] <= 0 {
+		delete(a.open, ip)
+	}
+}
+
+// startVerify takes one of the prefix's in-flight licence check slots, so concurrent Hellos cannot
+// get past the failure block before their failures are counted; done releases it.
+func (a *admission) startVerify(ip netip.Addr) (done func(), ok bool) {
+	if !ip.IsValid() {
+		return func() {}, true
+	}
+	p := failurePrefix(ip)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.verifying[p] >= a.o.VerifyPerPrefix {
+		return nil, false
+	}
+	a.verifying[p]++
+	return func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.verifying[p]--; a.verifying[p] <= 0 {
+			delete(a.verifying, p)
+		}
+	}, true
+}
+
 // allowHello takes a Hello token of the tenant.
 func (a *admission) allowHello(tenantID string, now time.Time) (time.Duration, bool) {
 	a.mu.Lock()
@@ -115,6 +174,7 @@ func (a *admission) prune(now time.Time) {
 	}
 	pruneFull(a.conns, now)
 	pruneFull(a.hellos, now)
+	pruneFull(a.upgrades, now)
 }
 
 func pruneFull[K comparable](m map[K]*rate.Limiter, now time.Time) {

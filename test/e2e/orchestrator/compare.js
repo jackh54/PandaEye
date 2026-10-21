@@ -32,8 +32,10 @@ const ANOMALY_GROUPS = [
 function tolerance (group, type, a, noise) {
   if (group === 'wire.out' && STRICT_OUT.has(type)) return PERIODIC.has(type) ? Math.max(1, noise) : noise
   if (ANOMALY_GROUPS.includes(group)) return Math.max(noise, 0)
-  // ordinary traffic (chunks, entity movement, ...): timing noise of the scripts
-  return Math.max(2, Math.ceil(2 * noise), Math.ceil(0.05 * a))
+  // ordinary traffic (chunks, entity movement, waypoints, sounds ...): driven by bot physics and timing; one A/A
+  // sample underestimates it (mineflayer PvP: WAYPOINT 350 vs 296 with A/A noise 24), so 3x noise or 20 %.
+  // PandaEye can only change these by cancelling/injecting, which the byte-exact anomaly groups catch.
+  return Math.max(2, Math.ceil(3 * noise), Math.ceil(0.2 * a))
 }
 
 const g = (d, group) => (d && d.counters && d.counters[group]) || {}

@@ -123,7 +123,9 @@ func (s *Service) Run(ctx context.Context) error {
 		return fmt.Errorf("gateway: listen: %w", err)
 	}
 	s.addr = ln.Addr()
-	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second,
+	// IdleTimeout: keep-alive connections of plain requests (403s, /healthz) must not stay open
+	// forever; hijacked WebSockets are not affected.
+	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10,
 		ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelDebug)}
 	errc := make(chan error, 1)
 	go func() {
