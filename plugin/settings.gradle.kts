@@ -9,15 +9,18 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         mavenCentral()
-        maven("https://repo.papermc.io/repository/maven-public/") {
-            content {
+        exclusiveContent {
+            forRepository { maven("https://repo.papermc.io/repository/maven-public/") }
+            filter {
                 includeGroupAndSubgroups("io.papermc")
                 includeGroupAndSubgroups("com.velocitypowered")
+                includeGroup("com.mojang")
                 includeGroup("net.md-5")
             }
         }
-        maven("https://repo.codemc.io/repository/maven-releases/") {
-            content { includeGroup("com.github.retrooper") }
+        exclusiveContent {
+            forRepository { maven("https://repo.codemc.io/repository/maven-releases/") }
+            filter { includeGroup("com.github.retrooper") }
         }
     }
 }

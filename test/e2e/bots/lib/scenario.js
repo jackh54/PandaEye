@@ -26,7 +26,7 @@ function listScenarios (filter) {
     const d = path.join(SCEN_DIR, kind)
     if (!fs.existsSync(d)) continue
     for (const f of fs.readdirSync(d).sort()) {
-      if (!f.endsWith('.js')) continue
+      if (!f.endsWith('.js') || f.startsWith('_')) continue
       const mod = require(path.join(d, f))
       const list = Array.isArray(mod) ? mod : [mod]
       for (const m of list) out.push(m)
@@ -34,7 +34,11 @@ function listScenarios (filter) {
   }
   if (!filter || filter === 'all') return out
   const parts = filter.split(',').map((s) => s.trim()).filter(Boolean)
-  return out.filter((m) => parts.some((p) => m.name === p || m.kind === p || m.name.startsWith(p) || m.name.split('/')[1] === p))
+  // exact names first; a part that matches no exact name is a prefix (e.g. "cheat/scaffold") or a kind
+  return out.filter((m) => parts.some((p) => {
+    if (out.some((o) => o.name === p || o.name.split('/')[1] === p)) return m.name === p || m.name.split('/')[1] === p
+    return m.kind === p || m.name.startsWith(p)
+  }))
 }
 
 class Context {

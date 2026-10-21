@@ -17,4 +17,13 @@ public interface ExternalSignals {
 
     /** False while the player is barred from provisional riptide/elytra exemptions (CHECKS 1.1). */
     boolean provisionalExemptionsAllowed(long nowNanos);
+
+    /** True when a server stall (ARCHITECTURE 4.5) overlapped the interval; it excuses timer bins. */
+    boolean stallOverlaps(long fromNanos, long toNanos);
+
+    /** The world the player was in at the latest environment sample, or null. */
+    default java.util.UUID worldUid() {
+        EnvSnapshot env = env();
+        return env == null ? null : env.worldUid();
+    }
 }
