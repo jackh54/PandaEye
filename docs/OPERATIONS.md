@@ -102,7 +102,9 @@ Configuration is read from `PE_*` environment variables and optionally a YAML fi
 keys are the variable names in lower case with dots, nested maps flattened (`PE_NATS_URL` = `nats.url`,
 `PE_SERVICE_TOKEN_NEXT` = `service.token.next`). Precedence: environment, then file, then defaults.
 Unknown `PE_` variables are ignored; unknown file keys are errors. Every process validates its
-configuration for its role at start and refuses to run on an error.
+configuration for its role at start and refuses to run on an error. The "Used by" column is derived
+from the data flows in ARCHITECTURE 5 and the role checks of `cloud/internal/config`; a role ignores keys
+it does not use.
 
 | Key | Default | Used by | Guidance |
 |---|---|---|---|
@@ -186,7 +188,7 @@ refuses a token together with users or accounts), so per-role permissions need d
 JWT) authentication with one creds file per role:
 
 ```sh
-make -C deploy nats-auth          # go run ./nats/gen-auth -out nats/auth
+make -C deploy nats-auth          # = cd deploy/nats/gen-auth && go run . -out ../auth
 #   nats/auth/server/resolver.conf  operator JWT, SYS + PANDAEYE account JWTs (MEMORY resolver)
 #   nats/auth/creds/pe-<role>.creds one per role: pe-gateway, pe-worker, pe-verdict, pe-api, pe-replay,
 #                                   pe-admin (operators only), sys (SYS account, monitoring)
@@ -463,11 +465,11 @@ From the smallest to the largest blast radius:
   instance, start gateways, then verdict and api.
 - **Licence pepper**: do not rotate. Licence rows are looked up by `HMAC(pepper, key)` and raw keys are
   never stored, so a new pepper orphans every tenant's licence mapping.
-- **NATS creds** (zero downtime):
-  `go run ./nats/gen-auth -out ../auth -reissue pe-worker` (or `all`) issues new creds while the old ones
-  stay valid; deploy the new file and restart that role's instances one at a time; then
-  `go run ./nats/gen-auth -out ../auth -revoke-old` and reload every nats-server
-  (`nats-server --signal reload`). The revoked creds are refused from then on.
+- **NATS creds** (zero downtime), from `deploy/nats/gen-auth`:
+  `go run . -out ../auth -reissue pe-worker` (or `all`) issues new creds while the old ones stay valid;
+  deploy the new file and restart that role's instances one at a time; then
+  `go run . -out ../auth -revoke-old` and reload every nats-server (`nats-server --signal reload`). The
+  revoked creds are refused from then on.
 - **Server secret**: a server whose `server-secret` leaked or was lost gets a new identity: delete
   `plugins/PandaEye/server-id` and `server-secret` and restart; the dashboard shows a new server.
   **Open:** there is no API to reset a server's secret or remove the old server entry.
