@@ -47,25 +47,26 @@ public final class LiveEnforcer implements Enforcer {
     @Override
     public void setback(Player player, SetbackTarget target) {
         counters.count(EnforcerCounters.Action.SETBACK);
-        player.getScheduler().run(plugin, task -> {
+        player.getScheduler().run(plugin, task -> guarded("setback", () -> {
             if (player.getWorld().getUID().equals(target.worldUid())) {
                 Location location = new Location(player.getWorld(), target.x(), target.y(), target.z(),
                         target.yaw(), target.pitch());
                 player.teleportAsync(location, PlayerTeleportEvent.TeleportCause.PLUGIN);
             }
-        }, null);
+        }), null);
     }
 
     @Override
     public void kick(Player player, Component message) {
         counters.count(EnforcerCounters.Action.KICK);
-        player.getScheduler().run(plugin, task -> player.kick(message), null);
+        player.getScheduler().run(plugin, task -> guarded("kick", () -> player.kick(message)), null);
     }
 
     @Override
     public void dispatchCommand(String command) {
         counters.count(EnforcerCounters.Action.COMMAND);
-        globalRegion.accept(() -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command));
+        globalRegion.accept(() -> guarded("command",
+                () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command)));
     }
 
     @Override
@@ -112,5 +113,14 @@ public final class LiveEnforcer implements Enforcer {
     @Override
     public EnforcerCounters counters() {
         return counters;
+    }
+
+    /** Scheduled bodies never throw into a region thread. */
+    private void guarded(String action, Runnable body) {
+        try {
+            body.run();
+        } catch (Throwable t) {
+            plugin.getLogger().warning("PandaEye " + action + " failed: " + t);
+        }
     }
 }

@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.HashMap;
@@ -74,7 +75,7 @@ public final class LogWriter {
 
     private final Path dir;
     private final Log log;
-    private final ZoneId zone;
+    private final Clock clock;
     private final ArrayBlockingQueue<Object> queue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final LongAdder dropped = new LongAdder();
     private final DaemonThreads threads = DaemonThreads.named("PandaEye-Log");
@@ -85,11 +86,17 @@ public final class LogWriter {
     private long suppressedLines;
     private long lastDiskCheck = Long.MIN_VALUE;
     private boolean diskFull;
+    private LocalDate retentionDay;
 
     public LogWriter(Path dir, Log log, ZoneId zone) {
+        this(dir, log, Clock.system(zone));
+    }
+
+    /** {@code clock} decides the file dates and the 14-day retention (tests move it). */
+    LogWriter(Path dir, Log log, Clock clock) {
         this.dir = dir;
         this.log = log;
-        this.zone = zone;
+        this.clock = clock;
     }
 
     public void start() {
@@ -148,9 +155,9 @@ public final class LogWriter {
     }
 
     private void run() {
-        deleteOldFiles();
         try {
             while (running) {
+                retention();
                 Object item = queue.poll(250, TimeUnit.MILLISECONDS);
                 long now = System.nanoTime();
                 if (item instanceof FlagRecord flag) {
@@ -219,7 +226,7 @@ public final class LogWriter {
             dropped.increment();
             return;
         }
-        Path file = dir.resolve(line.kind() + "-" + LocalDate.now(zone) + ".jsonl");
+        Path file = dir.resolve(line.kind() + "-" + LocalDate.now(clock) + ".jsonl");
         try {
             Files.createDirectories(dir);
             if (Files.exists(file) && Files.size(file) >= MAX_FILE_BYTES) {
@@ -318,11 +325,20 @@ public final class LogWriter {
         return diskFull;
     }
 
+    /** Deletes files older than 14 days at start and again at every day rollover. */
+    private void retention() {
+        LocalDate today = LocalDate.now(clock);
+        if (!today.equals(retentionDay)) {
+            retentionDay = today;
+            deleteOldFiles();
+        }
+    }
+
     private void deleteOldFiles() {
         if (!Files.isDirectory(dir)) {
             return;
         }
-        LocalDate cutoff = LocalDate.now(zone).minusDays(KEEP_DAYS);
+        LocalDate cutoff = LocalDate.now(clock).minusDays(KEEP_DAYS);
         try (DirectoryStream<Path> files = Files.newDirectoryStream(dir, "*.jsonl")) {
             for (Path file : files) {
                 String name = file.getFileName().toString();

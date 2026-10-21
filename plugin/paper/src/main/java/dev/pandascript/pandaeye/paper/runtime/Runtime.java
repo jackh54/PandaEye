@@ -112,7 +112,7 @@ public final class Runtime {
         CloudListenerRelay relay = new CloudListenerRelay();
         cloud = createCloud(clock, dataDir, relay);
 
-        schedulers = new Schedulers(plugin);
+        schedulers = new Schedulers(plugin, gate::active, errors);
         EntityIndex entities = new EntityIndex();
         Telemetry telemetry = new Telemetry(cloud == null ? null : cloud.sink(), clock, this::config, entities);
         watches = new WatchRegistry();
@@ -180,41 +180,58 @@ public final class Runtime {
         }
     }
 
-    /** Bounded teardown (ARCHITECTURE 4.1): at most 300 ms, never blocks on the network. */
+    /**
+     * Bounded teardown (ARCHITECTURE 4.1): at most 300 ms, never blocks on the network. Every step is isolated:
+     * one that throws is logged and the remaining steps still run (threads stopped, spool written).
+     */
     public void disable() {
         long deadline = System.nanoTime() + DISABLE_BUDGET_NANOS;
-        if (packetListener != null) {
-            try {
-                PacketEvents.getAPI().getEventManager().unregisterListener(packetListener);
-            } catch (Throwable t) {
-                plugin.getLogger().warning("could not unregister the PacketEvents listener: " + t);
+        Teardown teardown = new Teardown(message -> plugin.getLogger().warning(message));
+        teardown.step("unregister the PacketEvents listener", () -> {
+            if (packetListener != null) {
+                PacketListenerCommon listener = packetListener;
+                packetListener = null;
+                PacketEvents.getAPI().getEventManager().unregisterListener(listener);
             }
-            packetListener = null;
-        }
+        });
         boolean drained = gate.close(IN_FLIGHT_WAIT_NANOS);
-        if (mitigations != null) {
-            mitigations.close();
-        }
-        HandlerList.unregisterAll(plugin);
-        if (schedulers != null) {
-            schedulers.cancelAll();
-        }
-        if (stalls != null) {
-            stalls.stop(Math.min(deadline, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20)));
-        }
-        if (cloud != null) {
-            long budget = Math.max(0, deadline - System.nanoTime() - LOG_STOP_RESERVE_NANOS);
-            cloud.stop(Duration.ofNanos(budget));
-        }
-        if (logs != null) {
-            logs.stop(deadline);
-        }
-        if (sessions != null) {
-            sessions.clear();
-        }
-        if (alerts != null) {
-            alerts.recipients().clear();
-        }
+        teardown.step("close mitigations", () -> {
+            if (mitigations != null) {
+                mitigations.close();
+            }
+        });
+        teardown.step("unregister Bukkit listeners", () -> HandlerList.unregisterAll(plugin));
+        teardown.step("cancel scheduled tasks", () -> {
+            if (schedulers != null) {
+                schedulers.cancelAll();
+            }
+        });
+        teardown.step("stop the stall detector", () -> {
+            if (stalls != null) {
+                stalls.stop(Math.min(deadline, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20)));
+            }
+        });
+        teardown.step("stop the cloud client", () -> {
+            if (cloud != null) {
+                long budget = Math.max(0, deadline - System.nanoTime() - LOG_STOP_RESERVE_NANOS);
+                cloud.stop(Duration.ofNanos(budget));
+            }
+        });
+        teardown.step("stop the log writer", () -> {
+            if (logs != null) {
+                logs.stop(deadline);
+            }
+        });
+        teardown.step("clear sessions", () -> {
+            if (sessions != null) {
+                sessions.clear();
+            }
+        });
+        teardown.step("clear alert recipients", () -> {
+            if (alerts != null) {
+                alerts.recipients().clear();
+            }
+        });
         if (!drained) {
             plugin.getLogger().warning("some packet callbacks were still running after 100 ms");
         }
@@ -354,8 +371,8 @@ public final class Runtime {
         int count = 0;
         for (Player player : Bukkit.getOnlinePlayers()) {
             User user = PacketEvents.getAPI().getPlayerManager().getUser(player);
-            if (user != null && user.getUUID() != null) {
-                sessions.hotLoad(user, ClientInfos.of(user), player, nanos);
+            if (user != null && user.getUUID() != null
+                    && sessions.hotLoad(user, ClientInfos.of(user), player, nanos) != null) {
                 count++;
             }
         }
