@@ -199,6 +199,31 @@ class WrapperHygieneTest {
     }
 
     @Test
+    void aHotLoadNeverReplacesASessionCreatedByJoinGame() {
+        Player player = (Player) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{Player.class}, (proxy, method, args) -> switch (method.getName()) {
+                    case "getUniqueId" -> uuid;
+                    case "getName" -> "Tester";
+                    case "hashCode" -> 1;
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+        run(List.of(joinGame()));
+        Session joined = sessions.get(user);
+        assertEquals(null, sessions.hotLoad(user, ClientInfos.of(user), player, System.nanoTime()));
+        assertSame(joined, sessions.get(user));
+        assertSame(joined, sessions.get(uuid));
+        assertFalse(joined.closed());
+
+        setUp();
+        Session hotLoaded = sessions.hotLoad(user, ClientInfos.of(user), player, System.nanoTime());
+        assertNotNull(hotLoaded);
+        run(List.of(joinGame()));
+        assertSame(hotLoaded, sessions.get(user), "JOIN_GAME after the hot load resets the same session");
+        assertFalse(hotLoaded.closed());
+        assertEquals(1, sessions.size());
+    }
+
+    @Test
     void unhandledPacketsReturnBeforeTouchingAnyState() {
         run(List.of(joinGame()));
         Session session = sessions.get(user);

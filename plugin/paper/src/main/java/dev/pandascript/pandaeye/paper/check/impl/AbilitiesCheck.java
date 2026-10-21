@@ -30,13 +30,13 @@ public final class AbilitiesCheck extends Check {
     public void handle(CheckInput input, CheckContext context) {
         PacketState state = context.state();
         long now = context.nowNanos();
-        boolean permitted = !state.abilities().known() || !state.gameMode().known() || state.allowFlightLenient()
-                || state.creativeOrSpectatorLenient();
+        boolean known = state.abilities().known() && state.gameMode().known();
+        boolean permitted = known && (state.allowFlightLenient() || state.creativeOrSpectatorLenient());
         if (permitted) {
             permittedNanos = now;
             permittedBefore = true;
         }
-        if (!(input instanceof CheckInput.ClientAbilities(boolean flying)) || !flying) {
+        if (!(input instanceof CheckInput.ClientAbilities(boolean flying)) || !flying || !known) {
             return;
         }
         context.evaluated(permitted ? 0 : 1);

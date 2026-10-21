@@ -70,13 +70,20 @@ public final class SessionRegistry {
         Session session = byUser.get(user);
         if (session == null) {
             UUID uuid = user.getUUID();
-            session = factory.create(user, uuid, user.getName(), client, false, nanos);
-            Session replaced = byUuid.put(uuid, session);
-            if (replaced != null) {
-                remove(replaced, "replaced by a new connection");
-                byUuid.put(uuid, session);
+            Session created = factory.create(user, uuid, user.getName(), client, false, nanos);
+            Session raced = byUser.putIfAbsent(user, created);
+            if (raced != null) {
+                // a hot load created it meanwhile: keep that one (reset by the joinGame below)
+                created.close();
+                session = raced;
+            } else {
+                session = created;
+                Session replaced = byUuid.put(uuid, session);
+                if (replaced != null && replaced != session) {
+                    remove(replaced, "replaced by a new connection");
+                    byUuid.put(uuid, session);
+                }
             }
-            byUser.put(user, session);
         }
         session.processor().joinGame(entityId, mode, world, configurationBrands.remove(user), nanos);
         entities.put(entityId, session);
@@ -87,11 +94,26 @@ public final class SessionRegistry {
         return session;
     }
 
-    /** Enable: a session for a player who was online before the plugin (unseeded until its snapshot). */
+    /**
+     * Enable: a session for a player who was online before the plugin (unseeded until its snapshot). Returns
+     * null, creating nothing, when the player already has a session: a JOIN_GAME seen between the listener
+     * registration and this call wins, so there is never a second seed or environment sampler.
+     */
     public Session hotLoad(User user, ClientInfo client, Player player, long nanos) {
-        Session session = factory.create(user, player.getUniqueId(), player.getName(), client, true, nanos);
-        byUser.put(user, session);
-        byUuid.put(session.uuid(), session);
+        UUID uuid = player.getUniqueId();
+        if (byUser.containsKey(user) || byUuid.containsKey(uuid)) {
+            return null;
+        }
+        Session session = factory.create(user, uuid, player.getName(), client, true, nanos);
+        if (byUser.putIfAbsent(user, session) != null) {
+            session.close();
+            return null;
+        }
+        if (byUuid.putIfAbsent(uuid, session) != null) {
+            byUser.remove(user, session);
+            session.close();
+            return null;
+        }
         lifecycle.attached(session, player);
         return session;
     }

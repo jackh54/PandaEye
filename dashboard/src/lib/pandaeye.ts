@@ -483,7 +483,7 @@ function toPercentiles(label: string, v: unknown): Percentiles {
     const m = numOrNull(o[`${k}_ms`]);
     return m === null ? null : m * 1000;
   };
-  return { label, p50Us: us("p50"), p95Us: us("p95"), p99Us: us("p99"), count: numOrNull(o.count) };
+  return { label, p50Us: us("p50"), p95Us: us("p95"), p99Us: us("p99"), count: numOrNull(pick(o, "count", "samples")) };
 }
 
 export interface Latency {
@@ -539,7 +539,7 @@ export interface PublicStatus {
   sloMet: boolean | null;
 }
 
-/** GET /status: {region, version, uptime_s, connected_servers, probe_rtt: {p50_us, p95_us, p99_us, count}, slo: {target_p95_ms, met}} */
+/** GET /status: {region, version, uptime_s, connected_servers, probe_rtt: {p50_us, p95_us, p99_us, samples, window_s}, slo: {target_p95_ms, met, ...}} */
 export function toPublicStatus(v: unknown): PublicStatus {
   const o = obj(v);
   const slo = obj(o.slo);

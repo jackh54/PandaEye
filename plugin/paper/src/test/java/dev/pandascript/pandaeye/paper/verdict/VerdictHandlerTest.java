@@ -1,9 +1,6 @@
 package dev.pandascript.pandaeye.paper.verdict;
 
-import com.github.retrooper.packetevents.protocol.ConnectionState;
-import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.player.User;
-import com.github.retrooper.packetevents.protocol.player.UserProfile;
 import dev.pandascript.pandaeye.common.Log;
 import dev.pandascript.pandaeye.common.transport.RemoteSettings;
 import dev.pandascript.pandaeye.common.util.RateLimitedLog;
@@ -18,6 +15,7 @@ import dev.pandascript.pandaeye.paper.enforce.EnforcerCounters;
 import dev.pandascript.pandaeye.paper.enforce.LiveEnforcer;
 import dev.pandascript.pandaeye.paper.enforce.ShadowEnforcer;
 import dev.pandascript.pandaeye.paper.log.AlertService;
+import dev.pandascript.pandaeye.paper.packet.TestUsers;
 import dev.pandascript.pandaeye.paper.platform.Schedulers;
 import dev.pandascript.pandaeye.paper.session.Session;
 import dev.pandascript.pandaeye.paper.session.SessionSignals;
@@ -96,7 +94,7 @@ class VerdictHandlerTest {
             return null;
         });
         player = TestProxies.of(Player.class, Map.of("getUniqueId", STEVE, "getName", "Steve", "getScheduler", scheduler));
-        User user = new User(new Object(), ConnectionState.PLAY, ClientVersion.V_1_21_4, new UserProfile(STEVE, "Steve"));
+        User user = TestUsers.user(STEVE);
         session = new Session(user, STEVE, "Steve", false, new ClientInfo(769, "1.21.4", true, true, true),
                 new SessionSignals(false, () -> config, (from, to) -> false), System.nanoTime());
     }

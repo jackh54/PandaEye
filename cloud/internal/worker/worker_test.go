@@ -11,6 +11,7 @@ import (
 	"github.com/jackh54/PandaEye/cloud/internal/app"
 	"github.com/jackh54/PandaEye/cloud/internal/geom"
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
+	"github.com/jackh54/PandaEye/cloud/internal/store"
 	"github.com/jackh54/PandaEye/cloud/internal/stream"
 	"github.com/jackh54/PandaEye/cloud/internal/testkit"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
@@ -156,15 +157,15 @@ func TestWorkerOrderingDedupAndProbes(t *testing.T) {
 	// batch-seq check drops it.
 	c.sendRaw(part, 5, "replayed-after-the-window", numbered(p, 99))
 	c.send(p, testkit.Probe(7, p.TimeUs))
-	envs := readSignals(t, d, part, 33, 20*time.Second)
-	if len(envs) != 33 || envs[0].GetSession().GetKind() != pb.SessionMarker_KIND_JOIN {
+	envs := readSignals(t, d, part, 32, 20*time.Second)
+	if len(envs) != 32 || envs[0].GetSession().GetKind() != pb.SessionMarker_KIND_JOIN {
 		t.Fatalf("got %d envelopes", len(envs))
 	}
 	assertExactlyOnce(t, flagNumbers(envs), 30)
 	if last := envs[len(envs)-1].GetSignal(); last.GetCheckId() != "probe" || last.GetProbeId() != 7 {
 		t.Fatalf("probe signal %+v", last)
 	}
-	if extra := readSignals(t, d, part, 34, time.Second); len(extra) != 33 {
+	if extra := readSignals(t, d, part, 33, time.Second); len(extra) != 32 {
 		t.Fatalf("%d envelopes; the duplicate batch must not produce signals", len(extra))
 	}
 }
@@ -247,6 +248,9 @@ func TestWorkerLeaseHandoverWithoutLoss(t *testing.T) {
 // can be read.
 func TestWorkerClipCommittedBeforeClipID(t *testing.T) {
 	d := testkit.NewDeps(t)
+	if err := d.Store.CreateTenant(context.Background(), store.NewTenant(testTenant, "clips", "clips", time.Now())); err != nil {
+		t.Fatal(err)
+	}
 	startWorker(t, d)
 	c := &client{t: t, d: d, server: testkit.NewServerID()}
 	p := testkit.NewPlayer("clip")

@@ -172,6 +172,11 @@ public final class PacketProcessor {
         events.joined(nanos);
     }
 
+    /** S RESPAWN that keeps all data (a dimension change). */
+    public void respawn(GameMode mode, String world, long nanos) {
+        respawn(mode, world, PacketState.KEEP_ATTRIBUTES | PacketState.KEEP_ENTITY_DATA, nanos);
+    }
+
     /** S RESPAWN; {@code keptData} is the packet's data-kept bit mask ({@link PacketState#KEEP_ATTRIBUTES} etc.). */
     public void respawn(GameMode mode, String world, int keptData, long nanos) {
         boolean dimensionChanged = state.respawn(mode, world, keptData, nanos);

@@ -84,10 +84,10 @@ class InventoryClosedCheckTest {
         CheckHarness fallback = harness();
         open(fallback, 5);
         fallback.processor().serverCloseWindow(5, fallback.now());
-        fallback.advance(300_000_000L);
-        click(fallback, 5);
-        assertEquals(0, fallback.flags().size(), "within 1.5 * ping (100 ms default) + 250 ms");
         fallback.advance(200_000_000L);
+        click(fallback, 5);
+        assertEquals(0, fallback.flags().size(), "within 1.5 * ping (1 ms in the harness) + 250 ms");
+        fallback.advance(100_000_000L);
         click(fallback, 5);
         assertEquals(1, fallback.flags().size());
     }
@@ -106,6 +106,7 @@ class InventoryClosedCheckTest {
     void containersThatWereNeverOpenedFlagAtMostOncePerSecond() {
         CheckHarness harness = harness();
         open(harness, 2);
+        harness.acknowledge();
         harness.processor().clientCloseWindow(2, harness.now());
         click(harness, 9);
         click(harness, 10);
@@ -125,7 +126,7 @@ class InventoryClosedCheckTest {
         CheckHarness respawned = harness();
         open(respawned, 5);
         respawned.acknowledge();
-        respawned.processor().respawn(GameMode.GAME_MODE_SURVIVAL, "minecraft:the_nether", respawned.now());
+        respawned.processor().respawn(GameMode.GAME_MODE_SURVIVAL, "minecraft:the_nether", 0, respawned.now());
         click(respawned, 5);
         open(respawned, 6);
         click(respawned, 5);
