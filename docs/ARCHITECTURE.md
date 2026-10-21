@@ -440,6 +440,8 @@ Environment variables (`PE_` prefix), optionally a YAML file (`--config`, keys i
 | `PE_METRICS_LISTEN` | `127.0.0.1:9090` | `/metrics`, pprof |
 | `PE_TLS_CERT`, `PE_TLS_KEY` | `` | serve TLS directly (else terminate TLS in front) |
 | `PE_TRUSTED_PROXIES` | `` | CIDRs whose X-Forwarded-For / CF-Connecting-IP is honoured (client IP = right-most untrusted) |
+| `PE_REQUIRE_TRUSTED_PROXY` | `false` | when true, the gateway and API refuse (close / 403) any TCP peer outside `PE_TRUSTED_PROXIES` (e.g. only Cloudflare ranges may connect) |
+| `PE_TRUSTED_PROXIES_PRESET` | `` | `cloudflare` adds Cloudflare's published IPv4/IPv6 ranges (embedded list, refreshable from https://www.cloudflare.com/ips-v4 and ips-v6 at start, falling back to the embedded list) |
 | `PE_PUBLIC_URL` | `` | dashboard base URL for evidence and appeal links |
 | `PE_NATS_URL` | `` | external NATS; empty in `all` = embedded, in-process only (`DontListen`) |
 | `PE_NATS_CREDS` / `PE_NATS_TOKEN`, `PE_NATS_TLS_CA` | `` | required for external NATS that is not loopback |
