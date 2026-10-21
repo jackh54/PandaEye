@@ -214,8 +214,9 @@ the hot-load snapshot; unknown = skip). Points 25, confidence 1.0.
 
 ### 1.11 protocol.cursor - INVALID_PROTOCOL
 
-`PLAYER_BLOCK_PLACEMENT` cursor component NaN or outside `[-0.001, 1.001]`. Building mods encode data in
-the cursor, so this is weak. Points 3, confidence 0.6.
+`PLAYER_BLOCK_PLACEMENT` cursor component NaN or outside `[-0.501, 1.501]` (vanilla accepts a hit location
+within 1.0000001 of the block's centre, and shapes larger than a block give values above 1). Building mods
+encode data in the cursor, so this is weak. Points 3, confidence 0.6.
 
 ### 1.12 protocol.flood - INVALID_PROTOCOL
 

@@ -10,10 +10,11 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * protocol.cursor (CHECKS 1.11): the cursor of PLAYER_BLOCK_PLACEMENT is where the ray hit the block, so each
- * component lies in [0, 1]; NaN or more than 0.001 outside is forged. Building mods encode data in it, so the
- * check is weak (3 points). Statistic: the largest distance outside [0, 1] (1000 for NaN). At most one flag per
- * second.
+ * protocol.cursor (CHECKS 1.11): the cursor of PLAYER_BLOCK_PLACEMENT is the hit location relative to the block's
+ * corner. Vanilla accepts any location within 1.0000001 of the block's centre (handleUseItemOn), so each component
+ * lies in [-0.5, 1.5]: shapes taller or wider than a block (fences, walls, beds...) give values above 1. NaN or more
+ * than 0.001 outside that range is forged. Building mods encode data in it, so the check is weak (3 points).
+ * Statistic: the largest distance outside [-0.5, 1.5] (1000 for NaN). At most one flag per second.
  */
 public final class CursorCheck extends Check {
 
@@ -46,6 +47,6 @@ public final class CursorCheck extends Check {
         if (!Float.isFinite(value)) {
             return NOT_FINITE;
         }
-        return Math.max(0, Math.max(-value, value - 1));
+        return Math.max(0, Math.max(-0.5 - value, value - 1.5));
     }
 }
