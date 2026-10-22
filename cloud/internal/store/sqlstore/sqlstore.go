@@ -140,6 +140,21 @@ func (s *Store) Close() error {
 	return err
 }
 
+// ErrBackupUnsupported is returned by Backup for postgres, which has its own tooling (pg_dump).
+var ErrBackupUnsupported = errors.New("sqlstore: online backup is only implemented for sqlite")
+
+// Backup writes a consistent copy of a sqlite database to path (which must not exist) while the
+// store stays in use. It runs on the writer connection, so writes wait for it.
+func (s *Store) Backup(ctx context.Context, path string) error {
+	if s.d != dialectSQLite {
+		return ErrBackupUnsupported
+	}
+	if _, err := s.w.ExecContext(ctx, "VACUUM INTO ?", path); err != nil {
+		return fmt.Errorf("sqlstore: backup: %w", err)
+	}
+	return nil
+}
+
 // runner is what both *sql.DB and *sql.Tx offer.
 type runner interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)

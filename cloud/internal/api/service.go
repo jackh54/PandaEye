@@ -182,6 +182,7 @@ func (s *Service) Run(ctx context.Context) error {
 	})
 	g.Go(func() error { return s.runMetering(gctx) })
 	g.Go(func() error { return s.runJanitor(gctx) })
+	g.Go(func() error { return s.runBackups(gctx) })
 	return g.Wait()
 }
 

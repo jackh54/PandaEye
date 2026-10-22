@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
 )
@@ -77,6 +78,12 @@ func (c *Config) Validate() error {
 		}
 	default:
 		bad("PE_DB_DRIVER must be %s or %s", DriverSQLite, DriverPostgres)
+	}
+	if c.DB.BackupInterval < 0 || (c.DB.BackupInterval > 0 && c.DB.BackupInterval < time.Minute) {
+		bad("PE_DB_BACKUP_INTERVAL must be 0 (off) or at least 1m")
+	}
+	if c.DB.BackupKeep < 1 {
+		bad("PE_DB_BACKUP_KEEP must be at least 1")
 	}
 	if c.DB.DSN.IsZero() {
 		bad("PE_DB_DSN is required")

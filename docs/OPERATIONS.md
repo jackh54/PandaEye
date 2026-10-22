@@ -127,6 +127,7 @@ it does not use.
 | `PE_PARTITIONS` | `16` | gateway, worker, verdict | partition count (1..1024), fixed at first start (KV `PE_META`); a mismatch refuses to start. Choose it for the largest worker count you expect (section 8.2) |
 | `PE_DB_DRIVER` | `sqlite` | all roles | `postgres` outside `all` (sqlite is accepted only for `all`, `migrate` and `replay`) |
 | `PE_DB_DSN` | `./data/pandaeye.db` | all roles | sqlite path or `postgres://...`; treated as a secret (may carry a password) |
+| `PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`, `PE_DB_BACKUP_DIR` | `6h`, `8`, `backups/` next to the database | all (sqlite only) | online sqlite backups (`VACUUM INTO`, a consistent copy while running) as `pandaeye-<UTC>.db`, the newest `KEEP` kept; interval `0` disables. Ignored for postgres |
 | `PE_CLICKHOUSE_DSN` | empty | worker, verdict, api | `clickhouse://user:pass@host:9000/pandaeye`; empty disables telemetry. The user needs SELECT, INSERT and ALTER DELETE (erasure) |
 | `PE_LICENSE_MODE` | `static` | gateway, api | `static` or `pandascript` |
 | `PE_LICENSE_URL`, `PE_LICENSE_PRODUCT` | empty, `pandaeye` | gateway, api | pandascript licence worker, plain `https://` URL only |
@@ -158,7 +159,7 @@ Secrets summary (generate with `openssl rand -hex 32`; `deploy/scripts/gen-env.s
 - **Postgres**: run `pandaeye migrate` (with the same `PE_DB_*`) before starting a new release. The spec
   does not say whether migrations are backward compatible with the previous release (**Open**): until it
   does, assume a rolling deploy must not depend on it and test migrations on a staging copy first.
-- **sqlite** (`all` only): WAL, `busy_timeout` 5000, one writer. Back it up with sqlite's backup API.
+- **sqlite** (`all` only): WAL, `busy_timeout` 5000, one writer. The process backs it up online every 6 h (`PE_DB_BACKUP_*`, section 8.3).
 - **ClickHouse**: apply `deploy/clickhouse/init.sql` once (the image runs it from
   `/docker-entrypoint-initdb.d`). Tables `signals` (TTL 30 d), `verdicts` (90 d), `feature_windows`
   (180 d, schema owned by [`ml/FEATURES.md`](../ml/FEATURES.md)) and `sessions` (90 d), ordered by
@@ -385,7 +386,7 @@ What happens on a graceful stop (SIGTERM, completes within 10 s; give the runtim
 
 | Data | Where | Back up how | If lost |
 |---|---|---|---|
-| SQL store | Postgres (split) / sqlite (`all`) | Postgres PITR (WAL archiving) plus regular base backups; sqlite: `sqlite3 pandaeye.db ".backup <file>"` or a stopped-process copy | Tenants, servers (secret hashes), verdicts, bans, appeals, labels, clips, licence mappings, API keys, audit log. This is the source of truth |
+| SQL store | Postgres (split) / sqlite (`all`) | Postgres PITR (WAL archiving) plus regular base backups; sqlite: built-in online backups every 6 h to `data/backups/` (`PE_DB_BACKUP_*`); copy that directory off the host, since a copy on the same disk does not survive losing it. Never copy the live `pandaeye.db` file itself | Tenants, servers (secret hashes), verdicts, bans, appeals, labels, clips, licence mappings, API keys, audit log. This is the source of truth |
 | Secrets | env files / secret manager | escrow outside the cluster | `PE_LICENSE_PEPPER`: every licence-to-tenant mapping is orphaned (tenants must be rebuilt by hand). `PE_OUTBOUND_KEY`: stored Discord webhooks become unreadable. In `all` both live in the database |
 | `PE_META` | NATS KV | record `partitions` and `partition_key` (`nats kv get PE_META partition_key`) after the first start | a new key re-partitions every player: same effects as 8.2 |
 | `PE_VERDICTS` | NATS | R3 replication; optionally `nats stream backup` | records not yet consumed by the store writer never reach the database |

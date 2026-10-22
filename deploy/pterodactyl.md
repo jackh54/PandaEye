@@ -74,6 +74,8 @@ in the Hello.
 
 ## Backups
 
-Stop the server (clean shutdown), then copy `/home/container/data/` (Pterodactyl backups do this). A
-live copy of `pandaeye.db` must use sqlite's backup API (`sqlite3 data/pandaeye.db ".backup
-backup.db"`), not a file copy. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#83-backups-and-disaster-recovery).
+The cloud writes an online copy of the database every 6 h to `data/backups/pandaeye-<UTC>.db` and
+keeps the newest 8 (`PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`). Those copies live on the same disk:
+schedule a Pterodactyl backup (it may run while the server is up; exclude `data/pandaeye.db*` and
+`data/nats/` from it and rely on `data/backups/`) or copy `data/backups/` off the node. To restore, stop
+the server, replace `data/pandaeye.db` with a backup copy (delete `pandaeye.db-wal` and `-shm`) and start. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#83-backups-and-disaster-recovery).
