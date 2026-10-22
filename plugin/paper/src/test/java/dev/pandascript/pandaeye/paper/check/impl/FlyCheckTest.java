@@ -71,6 +71,26 @@ class FlyCheckTest {
     }
 
     @Test
+    void survivalFlightTheServerAllowsIsExempt() {
+        // Seen live: /fly in survival. The client starts flying itself (C PLAYER_ABILITIES) and the server
+        // accepts it silently; only allowFlight came from the server.
+        CheckHarness harness = harness();
+        harness.processor().serverAbilities(new Abilities(false, true, false, 0.05f), harness.now());
+        harness.acknowledge();
+        harness.processor().clientAbilities(true, harness.now());
+        jumpThenHover(harness, 0, 20);
+        assertEquals(0, harness.candidates().size());
+    }
+
+    @Test
+    void claimingFlightWithoutPermissionIsStillJudged() {
+        CheckHarness harness = harness();
+        harness.processor().clientAbilities(true, harness.now());
+        jumpThenHover(harness, 0, 3);
+        assertEquals(1, harness.candidates().size());
+    }
+
+    @Test
     void slowFallingWithoutTheEffectIsACandidate() {
         CheckHarness harness = harness();
         jumpThenHover(harness, -0.05, 6);

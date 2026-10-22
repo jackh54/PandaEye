@@ -117,6 +117,11 @@ public final class PacketState {
     private boolean serverPitchOutOfRange;
     private long lastFlyingNanos;
     private boolean everFlying;
+    /**
+     * The client started flying itself (C PLAYER_ABILITIES flying) while the server allows flight (/fly in
+     * survival): vanilla accepts it without telling the client anything back.
+     */
+    private boolean clientFlying;
     private long lastVehicleSignalNanos;
     private boolean anyVehicleSignal;
     private boolean clientSprinting;
@@ -154,6 +159,7 @@ public final class PacketState {
         seeded = true;
         gameMode.reset(mode);
         abilities.reset(null);
+        clientFlying = false;
         inVehicle.reset(Boolean.FALSE);
         vehicleId = -1;
         entityFlags.reset(0);
@@ -201,6 +207,7 @@ public final class PacketState {
         seeded = true;
         gameMode.reset(baseline.gameMode());
         abilities.reset(baseline.abilities());
+        clientFlying = false;
         inVehicle.reset(baseline.inVehicle());
         vehicleId = baseline.inVehicle() ? baseline.vehicleId() : -1;
         entityFlags.reset(baseline.gliding() ? ENTITY_FLAG_GLIDING : 0);
@@ -405,6 +412,18 @@ public final class PacketState {
 
     void serverAbilities(Abilities value, long nanos) {
         abilities.sent(value, nanos);
+        if (value != null && !value.flying()) {
+            clientFlying = false; // the server stopped the flight (or never saw it)
+        }
+    }
+
+    /** C PLAYER_ABILITIES: the client toggled flight; it only counts while the server allows flight. */
+    void clientAbilities(boolean flying, long nanos) {
+        clientFlying = flying && allowFlightLenient();
+        if (clientFlying) {
+            lastFlyingNanos = nanos;
+            everFlying = true;
+        }
     }
 
     void gameModeChanged(GameMode mode, long nanos) {
@@ -794,7 +813,7 @@ public final class PacketState {
     }
 
     public boolean flyingLenient() {
-        return abilities.anyMatch(Abilities::flying);
+        return clientFlying || abilities.anyMatch(Abilities::flying);
     }
 
     public boolean allowFlightLenient() {

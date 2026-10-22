@@ -142,6 +142,7 @@ public final class PacketProcessor {
 
     public void clientAbilities(boolean flying, long nanos) {
         checks.dispatch(new CheckInput.ClientAbilities(flying), nanos);
+        state.clientAbilities(flying, nanos);
     }
 
     public void clientCloseWindow(int windowId, long nanos) {
