@@ -1,6 +1,7 @@
 # PandaEye
 
-PandaEye is a cloud anticheat for Minecraft Java servers (Paper, Folia and Velocity). A lightweight
+PandaEye is a cloud anticheat for Minecraft Java servers (Paper, Folia and their forks, 1.21.4+, and
+Velocity). **Server owners: start with [docs/INSTALL.md](docs/INSTALL.md).** A lightweight
 plugin captures packets and runs the checks that must act within the tick (movement, timer, invalid
 protocol); the cloud runs the heavy heuristics (combat, aim, reach, clicks, scaffold, inventory, latency
 abuse), scores players and sends verdicts back: suspicion leads to mitigations, certainty to bans. Every
@@ -66,7 +67,7 @@ docs/                specification and operations documents (below)
 
 ## Quick start (local, shadow mode)
 
-Prerequisites: Go 1.26, Java 21, Gradle 8.14, a Paper or Folia 1.21.x test server with the PacketEvents
+Prerequisites: Go 1.26, Java 21, Gradle 8.14, a Paper or Folia 1.21.4+ test server with the PacketEvents
 2.13.x plugin installed.
 
 1. **Run the cloud** as a single process (embedded NATS, sqlite under `./data`):
@@ -115,6 +116,7 @@ Prerequisites: Go 1.26, Java 21, Gradle 8.14, a Paper or Folia 1.21.x test serve
 
 | Document | Contents |
 |---|---|
+| [docs/INSTALL.md](docs/INSTALL.md) | for server owners: requirements, install, dashboard, going live, updates |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | the implementation contract: components, protocol summary, data stores, API, security |
 | [docs/CHECKS.md](docs/CHECKS.md) | every detection check: algorithm, thresholds, scoring |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | wire protocol guide: framing, handshake, batches, verdicts, errors, versioning, internal bus |

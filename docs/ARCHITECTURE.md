@@ -376,7 +376,7 @@ server-name: ""
 network-id: ""
 cloud:
   enabled: true
-  endpoint: "wss://cloud.pandaeye.dev/v1/connect"
+  endpoint: "wss://eye.pandascript.dev/v1/connect"
   allow-insecure: false    # true allows ws:// to a non-loopback host (same host / private network only)
   license-key: ""
   batch-interval-ms: 50

@@ -5,7 +5,7 @@ server-name: ""
 network-id: ""
 cloud:
   enabled: true
-  endpoint: "wss://cloud.pandaeye.dev/v1/connect"
+  endpoint: "wss://eye.pandascript.dev/v1/connect"
   license-key: ""
   batch-interval-ms: 50
   max-buffer-mb: 64
@@ -49,7 +49,7 @@ punishments:
   kick-message: "Unfair advantage detected"
   ban-command: "ban %player% Unfair advantage. Appeal at %appeal_url% with code %appeal_code%"
   unban-command: "pardon %player%"
-  appeal-url: ""
+  appeal-url: "https://eye-dash.pandascript.dev/appeal"   # the hosted appeal page; set your own if you run the dashboard yourself
   max-bans-per-hour: 3
   max-kicks-per-10min: 5
 mitigations:

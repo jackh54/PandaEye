@@ -12,6 +12,12 @@ public final class PandaEyePlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        String unsupported = dev.pandascript.pandaeye.paper.platform.ServerPlatform.unsupportedReason();
+        if (unsupported != null) {
+            getLogger().severe(unsupported);
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
         Runtime candidate = new Runtime(this);
         try {
             candidate.enable();

@@ -31,7 +31,7 @@ public final class ConfigLoader {
                 root.getString("network-id", ""),
                 new PluginConfig.Cloud(
                         root.getBoolean("cloud.enabled", true),
-                        root.getString("cloud.endpoint", "wss://cloud.pandaeye.dev/v1/connect"),
+                        root.getString("cloud.endpoint", "wss://eye.pandascript.dev/v1/connect"),
                         root.getString("cloud.license-key", ""),
                         clamp(root, "cloud.batch-interval-ms", 50, 10, 1_000),
                         clamp(root, "cloud.max-buffer-mb", 64, 1, 512),
@@ -59,7 +59,7 @@ public final class ConfigLoader {
                         root.getString("punishments.ban-command",
                                 "ban %player% Unfair advantage. Appeal at %appeal_url% with code %appeal_code%"),
                         root.getString("punishments.unban-command", "pardon %player%"),
-                        root.getString("punishments.appeal-url", ""),
+                        root.getString("punishments.appeal-url", "https://eye-dash.pandascript.dev/appeal"),
                         clamp(root, "punishments.max-bans-per-hour", 3, 0, 1_000),
                         clamp(root, "punishments.max-kicks-per-10min", 5, 0, 1_000)),
                 root.getBoolean("mitigations.enabled", true),

@@ -57,7 +57,7 @@ public record VelocityConfig(
                 r.string("network-id", ""),
                 r.string("session-secret", ""),
                 r.bool("cloud.enabled", true),
-                r.string("cloud.endpoint", "wss://cloud.pandaeye.dev/v1/connect"),
+                r.string("cloud.endpoint", "wss://eye.pandascript.dev/v1/connect"),
                 r.string("cloud.license-key", ""),
                 r.bool("cloud.allow-insecure", false),
                 r.integer("cloud.batch-interval-ms", 50, 10, 1_000),

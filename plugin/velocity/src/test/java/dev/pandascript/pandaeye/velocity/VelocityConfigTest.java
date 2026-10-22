@@ -24,7 +24,7 @@ class VelocityConfigTest {
         assertEquals(List.of(), warnings);
         assertTrue(config.shadow());
         assertEquals("", config.sessionSecret());
-        assertEquals("wss://cloud.pandaeye.dev/v1/connect", config.endpoint());
+        assertEquals("wss://eye.pandascript.dev/v1/connect", config.endpoint());
         assertFalse(config.allowInsecure());
         assertEquals("", config.punishments().banCommand());
         assertEquals("", config.punishments().kickCommand());

@@ -498,7 +498,8 @@ From the smallest to the largest blast radius:
 
 ### 8.7 Plugin rollout on a production server (Paper / Folia)
 
-**Prerequisites.** Paper or Folia 1.21.x on Java 21+; the PacketEvents plugin 2.13.x installed and
+**Prerequisites.** Paper, Folia or a fork, 1.21.4+, on Java 21+ (Spigot/CraftBukkit and older versions are
+refused with a log message); the PacketEvents plugin 2.13.x installed and
 enabled (PandaEye declares `depend: [packetevents]` and never shades it). If PacketEvents is not installed
 yet, add it during a regular restart; PandaEye's hot-load safety covers PandaEye, not PacketEvents. A
 licence key and the regional endpoint.

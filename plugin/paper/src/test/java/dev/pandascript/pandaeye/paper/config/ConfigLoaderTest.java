@@ -24,7 +24,7 @@ class ConfigLoaderTest {
         PluginConfig config = loader.load(yaml);
         assertEquals(java.util.List.of(), loader.warnings());
         assertEquals(PluginConfig.Mode.SHADOW, config.mode());
-        assertEquals("wss://cloud.pandaeye.dev/v1/connect", config.cloud().endpoint());
+        assertEquals("wss://eye.pandascript.dev/v1/connect", config.cloud().endpoint());
         assertEquals(50, config.cloud().batchIntervalMs());
         assertEquals(64, config.cloud().maxBufferMb());
         assertEquals(10, config.cloud().maxBufferAgeMinutes());
