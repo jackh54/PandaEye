@@ -351,10 +351,13 @@ func (p *partition) ladder(pl *player, sess *session, sc Score, th Thresholds, t
 		if sc.S >= th.Mitigate && sess.open && !sess.taken(pb.Action_ACTION_MITIGATE) {
 			out = append(out, pb.Action_ACTION_MITIGATE)
 		}
-		if sc.S >= th.Kick && sc.C >= kickConfidence && sess.open && sc.FamiliesOver5 >= 2 && !sess.taken(pb.Action_ACTION_KICK) {
+		// KICK and the BAN ladder need two families, one of them stable (CHECKS.md 4.1): experimental
+		// checks alone stop at MITIGATE.
+		corroborated := sc.FamiliesOver5 >= 2 && sc.StableOver5 >= 1
+		if sc.S >= th.Kick && sc.C >= kickConfidence && sess.open && corroborated && !sess.taken(pb.Action_ACTION_KICK) {
 			out = append(out, pb.Action_ACTION_KICK)
 		}
-		ladder := sc.S >= th.Ban && sc.FamiliesOver5 >= 2
+		ladder := sc.S >= th.Ban && corroborated
 		certain := sc.CertainAcc >= th.Ban/2
 		if sc.C >= banConfidence && (ladder || certain) && hasClip(sc) && !sess.taken(pb.Action_ACTION_BAN) {
 			out = append(out, pb.Action_ACTION_BAN)

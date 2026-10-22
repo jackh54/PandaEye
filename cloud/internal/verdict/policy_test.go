@@ -559,3 +559,18 @@ func TestProxySessionsGetNoMitigation(t *testing.T) {
 	m.GetSession().Origin.Platform = pb.Platform_PLATFORM_VELOCITY
 	expect(t, "proxy join", h.apply(m))
 }
+
+// The live shadow BAN: block-interaction geometry alone (scaffold + dig, both experimental) reached
+// the KICK and BAN ladders. Experimental families stop at MITIGATE until a stable family joins.
+func TestExperimentalFamiliesAloneStopAtMitigate(t *testing.T) {
+	h := newHarness(t)
+	tp := h.player(h.tenant())
+	h.apply(tp.marker(pb.SessionMarker_KIND_JOIN))
+	expect(t, "scaffold", h.apply(tp.signal("scaffold.ray", 60, withClip("clip-s"))), aA, aM)
+	expect(t, "dig: two experimental families, S 120 >= KICK", h.apply(tp.signal("dig.ray", 60)))
+	expect(t, "more dig: S >= BAN, still experimental only", h.apply(tp.signal("scaffold.cursor", 60)))
+	if sc := h.score(tp); sc.FamiliesOver5 != 2 || sc.StableOver5 != 0 || sc.S < ThresholdsFor(4).Ban {
+		t.Fatalf("setup: %+v", sc)
+	}
+	expect(t, "a stable family corroborates", h.apply(tp.signal("aim.snap", 10)), aK, aB)
+}

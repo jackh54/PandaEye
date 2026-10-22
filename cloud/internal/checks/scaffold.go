@@ -188,6 +188,8 @@ type blockAction struct {
 	sneaking bool
 	pose     geom.Pose // pose the plugin used for eye
 	reach    float64
+	prevFeet geom.Vec3 // position before the last one (eyePath), when hasPrev
+	hasPrev  bool
 }
 
 func (a *blockAction) reachOr(v *View) float64 {
@@ -218,6 +220,7 @@ func (q *blockQueue) add(c *Ctx, a blockAction) {
 		return // NaN rotations are protocol.position's business (local)
 	}
 	a.atUs, a.tick = v.NowUs, v.Tick
+	a.prevFeet, a.hasPrev = v.PrevFeet()
 	if c.event != nil {
 		a.eventUs = c.event.GetTimeUs()
 	}
@@ -278,7 +281,7 @@ func (q *blockQueue) handle(c *Ctx, ev *pb.Event, judge func(*Ctx, *blockAction,
 
 // blockCandidates are the eye and rotation candidates of one action.
 type blockCandidates struct {
-	eye  [5]geom.Vec3
+	eye  [4 + 2*eyePathSamples]geom.Vec3
 	nEye int
 	rot  [5]geom.Rotation
 	nRot int
@@ -296,7 +299,8 @@ func (b *blockCandidates) addEye(e geom.Vec3) {
 }
 
 // build derives the candidates: eyes = the event eye, the standing/sneaking alternative at the same feet,
-// and the next move's standing/sneaking eyes; rotations = R0, R0->R1 at 0.25 steps and R1. R1 is the next
+// the eyes on the path from the previous position (eyePath, both heights) and the next move's
+// standing/sneaking eyes; rotations = R0, R0->R1 at 0.25 steps and R1. R1 is the next
 // move's rotation when it belongs to the same client tick (tick clients) or arrived within 100 ms (older
 // clients); otherwise R1 = R0.
 func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
@@ -308,6 +312,13 @@ func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
 	for _, h := range [2]float64{stand, sneak} {
 		if h != used {
 			b.addEye(feet.Add(geom.V(0, h, 0)))
+		}
+	}
+	if a.hasPrev {
+		for _, h := range [2]float64{used, stand + sneak - used} {
+			for _, e := range eyePath(a.prevFeet, feet, h) {
+				b.addEye(e)
+			}
 		}
 	}
 	r1 := a.rot

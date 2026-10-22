@@ -70,7 +70,9 @@ type AttackObs struct {
 	Eye             geom.Vec3
 	EyeHeight       float64
 	Sneaking        bool
-	SneakUncertain  bool // the sneaking state changed around the attack: test both eye heights
+	SneakUncertain  bool      // the sneaking state changed around the attack: test both eye heights
+	PrevFeet        geom.Vec3 // position before the last one (eyePath), when HasPrev
+	HasPrev         bool
 	R0              geom.Rotation
 	R0Server        bool // the rotation in force at the attack was set by the server
 	TargetW         float64
@@ -126,6 +128,7 @@ func NewAttackObs(v *View, ev *pb.Event) (AttackObs, bool) {
 	if o.Reach <= 0 {
 		o.Reach = v.EntityReach
 	}
+	o.PrevFeet, o.HasPrev = v.PrevFeet()
 	if o.GameMode == pb.GameMode_GAME_MODE_SURVIVAL {
 		o.GameMode = v.GameMode // the attack's default value says nothing; the view knows better
 	}
@@ -267,16 +270,24 @@ func (a *AttackObs) TargetBoxes(margin float64) []geom.AABB {
 	return out
 }
 
-// EyeCandidates returns the attacker eye positions to test: the reported eye and, when the sneaking
-// state is uncertain, the standing and sneaking eye at the same feet.
+// EyeCandidates returns the attacker eye positions to test: the reported eye, the eyes on the path
+// from the previous position (eyePath) and, when the sneaking state is uncertain, the standing and
+// sneaking eye at the same feet (and on the path).
 func (a *AttackObs) EyeCandidates() []geom.Vec3 {
 	out := []geom.Vec3{a.Eye}
+	feet := geom.V(a.Eye.X, a.Eye.Y-a.EyeHeight, a.Eye.Z)
+	heights := []float64{a.EyeHeight}
 	if a.SneakUncertain {
-		feet := geom.V(a.Eye.X, a.Eye.Y-a.EyeHeight, a.Eye.Z)
 		for _, pose := range [...]geom.Pose{geom.PoseStanding, geom.PoseSneaking} {
 			if e := geom.Eye(feet, pose, a.Protocol, a.Scale); e != a.Eye {
 				out = append(out, e)
+				heights = append(heights, e.Y-feet.Y)
 			}
+		}
+	}
+	if a.HasPrev {
+		for _, h := range heights {
+			out = append(out, eyePath(a.PrevFeet, feet, h)...)
 		}
 	}
 	return out

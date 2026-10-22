@@ -2,6 +2,7 @@ package checks
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -148,5 +149,37 @@ func TestCatalogHelpers(t *testing.T) {
 	c[0].Cap = -1
 	if s, _ := Lookup(c[0].ID); s.Cap == -1 || Catalog()[0].Cap == -1 {
 		t.Fatal("Catalog must return a copy")
+	}
+}
+
+func TestExperimentalListMatchesTheDoc(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "CHECKS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var line string
+	for _, l := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(l, "Experimental: ") {
+			line = l
+		}
+	}
+	idx := strings.Index(string(data), line)
+	rest := string(data)[idx:]
+	if end := strings.Index(rest, "\n\n"); end > 0 {
+		rest = rest[:end]
+	}
+	doc := map[string]bool{}
+	for _, f := range strings.Split(strings.TrimPrefix(rest, "Experimental: "), "`") {
+		if strings.Contains(f, ".") && !strings.ContainsAny(f, " ,\n") {
+			doc[f] = true
+		}
+	}
+	for _, s := range Catalog() {
+		if s.Experimental != doc[s.ID] {
+			t.Errorf("%s: experimental %v in code, %v in CHECKS.md 4.1", s.ID, s.Experimental, doc[s.ID])
+		}
+	}
+	if len(doc) == 0 {
+		t.Fatal("no experimental list found in CHECKS.md 4.1")
 	}
 }

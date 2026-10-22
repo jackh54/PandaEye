@@ -245,6 +245,13 @@ OPEN_WINDOW/CLOSE_WINDOW. Points 3, confidence 0.8.
   before 1.14), swimming/gliding/crawling 0.4, times scale. Target boxes always use the largest possible
   player box (superset), expanded by `m = 0.1` (plus the item's hitbox margin when `extended_reach`).
 - Eye position uncertainty: 0.03 for clients before 1.18.2, 0.0002 after.
+- **Eye of an attack/placement/dig.** Since 1.20 the client picks its target every frame from
+  `getEyePosition(partialTick)`: the eye lies between the position before the last movement packet and the
+  last one. Clicks and attacks go out in the next tick with the last frame's pick, so a moving player clicks
+  from up to one tick of movement behind the reported eye. Candidates: the reported eye, the other of the
+  standing/sneaking heights at the same feet, 8 points on the segment from the previous position (when the
+  last position arrived within 150 ms and the step is under 4 blocks; both heights) and, for placements and
+  digs, the next move's eyes.
 - **Rotation of an attack/placement.** Tick clients pick the target at the start of the tick with the
   rotation that the same tick's movement packet sends: `R1` = the rotation of the next movement packet with
   the same tick number. Candidates: R1, R0 (the previous rotation) and R0->R1 interpolations at 0.25 steps
@@ -456,6 +463,17 @@ inventory 40, reach 80, killaura 120, aim 45, velocity 60, autoclicker 40, scaff
 ml 50. `Signal.points` carries the raw points of this table (severity-scaled where the formula says so);
 confidence is applied separately by the verdict service (ARCHITECTURE 5.6). Variants: `protocol.slot`
 has `range` (10 points) and `redundant` (0 points).
+
+### 4.1 Experimental checks
+
+Experimental checks are not yet validated on live traffic: they count towards the score (ALERT, MITIGATE)
+but KICK and the BAN ladder also need a stable family (two families over 5 points, at least one of them over
+5 from non-experimental checks). The certain-check BAN path never uses them. The first live shadow run
+showed these firing on legit players (eye interpolation, plugins that rewrite velocity packets or hide
+pongs); they stay experimental until shadow data clears them:
+
+Experimental: `dig.speed`, `dig.ray`, `scaffold.face`, `scaffold.ray`, `scaffold.cursor`, `scaffold.reach`,
+`velocity.vertical`, `velocity.horizontal`, `latency.pingspoof`, `latency.blink`.
 
 The same table lives in code: `cloud/internal/checks/catalog.go` (authoritative for the cloud, includes
 local checks for scoring) and `plugin/paper/src/main/java/dev/pandascript/pandaeye/paper/check/CheckCatalog.java`

@@ -437,3 +437,31 @@ func TestScaffoldPropertyRandomLegit(t *testing.T) {
 		}
 	}
 }
+
+// Since 1.20 the client picks its target every frame from getEyePosition(partialTick): the eye lies
+// between the previous tick's position and the last one sent, not at the last one. A player flying fast
+// while building (/fly, elytra) clicks from up to a tick of movement behind the reported eye.
+func TestScaffoldLegitInterpolatedEyeWhileMovingFast(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	r.state(func(s *pb.StateChange) { s.Flying, s.AllowFlight = true, true })
+	r.tick(geom.V(0.5, 70, 0.5), geom.Rotation{})
+	for i := range 24 {
+		prev := r.p.Pos
+		cur := prev.Add(geom.V(0.9, 0, 0))
+		partial := []float64{0.05, 0.2, 0.5}[i%3]
+		eye := geom.Eye(prev.Add(cur.Sub(prev).Scale(partial)), geom.PoseStanding, r.p.Protocol, 1)
+		b := [3]int32{int32(math.Floor(prev.X)), 68, int32(-1 + i%3)}
+		target := geom.V(float64(b[0])+0.5, 69, float64(b[2])+0.5) // top face centre
+		rot := aim(eye, target)
+		face, cursor, ok := rayClick(eye, rot, b)
+		if !ok {
+			t.Fatalf("setup: ray from the interpolated eye misses %v", b)
+		}
+		r.tick(cur, r.p.Rot) // P(N) is sent; the frame before the next tick picks from between prev and cur
+		r.place(blockClick{block: b, face: face, cursor: cursor, eye: r.eyeOf(false), rot: r.p.Rot})
+		r.tick(cur, rot) // the same tick's movement packet carries the pick rotation (R1)
+	}
+	if es := r.run("scaffold"); len(es) != 0 {
+		t.Fatalf("legit fast building flagged: %d emissions, first %+v", len(es), es[0])
+	}
+}
