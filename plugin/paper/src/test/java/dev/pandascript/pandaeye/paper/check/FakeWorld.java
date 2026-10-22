@@ -13,6 +13,8 @@ public final class FakeWorld implements WorldView {
     public boolean entityNear;
     /** {@link WorldView#usingItemSpeedMultiplier()}: vanilla's 0.2 unless a test changes it (NaN = not using). */
     public double usingItemSpeedMultiplier = 0.2;
+    /** {@link WorldView#blockPresent}: true (the server refused the break) unless a test changes it. */
+    public boolean blockPresent = true;
 
     @Override
     public double maxFriction(double x, double y, double z) {
@@ -47,5 +49,10 @@ public final class FakeWorld implements WorldView {
     @Override
     public double usingItemSpeedMultiplier() {
         return usingItemSpeedMultiplier;
+    }
+
+    @Override
+    public boolean blockPresent(int x, int y, int z) {
+        return blockPresent;
     }
 }

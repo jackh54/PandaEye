@@ -6,6 +6,7 @@ import dev.pandascript.pandaeye.paper.check.CheckDescriptor;
 import dev.pandascript.pandaeye.paper.check.CheckInput;
 import dev.pandascript.pandaeye.paper.check.CheckSettings;
 import dev.pandascript.pandaeye.paper.check.ConfirmContext;
+import dev.pandascript.pandaeye.paper.check.Confirmation;
 import dev.pandascript.pandaeye.paper.check.Confirmer;
 import dev.pandascript.pandaeye.paper.check.Violation;
 import dev.pandascript.pandaeye.paper.state.AttributeTracker;
@@ -21,8 +22,11 @@ import java.util.Map;
 /**
  * dig.speed (CHECKS 1.6c): a block takes {@code expected = ceil(1 / perTick)} client ticks to break, where
  * {@code perTick} is Paper's {@code Block#getBreakSpeed(Player)}. {@code ticks} = client ticks between START
- * and FINISH; vanilla needs {@code expected - 1} (click) or {@code expected} (held). FINISH after fewer than
- * {@code expected * 0.7 - 1} ticks is a candidate.
+ * and FINISH; vanilla needs {@code expected - 1} (click) or {@code expected} (held). A FINISH is a candidate
+ * when {@code (ticks + margin) * perTick < 0.7}: with the margin of 1 tick this is exactly the break that the
+ * vanilla server refuses (progress {@code perTick * (ticks + 1)} below 0.7). The confirmation then asks the
+ * server's own ruling: when the block is gone, the server accepted the break (custom tools, plugins that
+ * change mining speed, anything the probe cannot see) and the candidate is discarded.
  *
  * <p>The server breaks the block while it handles FINISH, before a confirmer could look at it, so
  * {@code perTick} is taken on the region thread while the server handles the START (a {@link DigProbe}, from
@@ -127,14 +131,17 @@ public final class DigSpeedCheck extends Check {
         int ticks = waitingTicks;
         context.evaluated(1 - (ticks + 1) / expected);
         CheckSettings settings = context.settings();
-        if (ticks >= expected * settings.threshold("factor", 0.7) - settings.threshold("margin-ticks", 1)) {
+        if ((ticks + settings.threshold("margin-ticks", 1)) * perTick >= settings.threshold("factor", 0.7)) {
             return;
         }
         context.candidate(Violation.of(Math.min(1, 1 - ticks / expected), 1,
                         String.format(Locale.ROOT, "broke a block in %d ticks, expected %.0f", ticks, expected),
                         Map.of("ticks", (double) ticks, "expected", expected, "per_tick", perTick,
                                 "break_speed", (double) probe.breakSpeed())),
-                List.of(new ConfirmContext.Position(dig.x() + 0.5, dig.y(), dig.z() + 0.5)), false, Confirmer.NONE);
+                List.of(new ConfirmContext.Position(dig.x() + 0.5, dig.y(), dig.z() + 0.5)), false,
+                confirm -> confirm.world().blockPresent(dig.x(), dig.y(), dig.z())
+                        ? Confirmation.CONFIRMED
+                        : Confirmation.discarded("the server accepted the break"));
     }
 
     /** The probe's speed as if on the ground, with the faster of in and out of water. NaN when not computable. */

@@ -185,8 +185,11 @@ Tick clients only, survival/adventure. On C `PLAYER_DIGGING FINISH` for the bloc
 `ticks` = client ticks between START and FINISH. On the player's region thread compute
 `perTick = block.getBreakSpeed(player)` (Paper: tool, enchantments, haste/mining fatigue, water, on-ground
 and attributes) and `expected = ceil(1 / perTick)` (blocks with `perTick >= 1` break instantly and are
-skipped). Candidate when `ticks < expected * 0.7 - 1` (the player state used is the current one, so effects
-that changed during the dig and attribute changes pending at the client make the check skip). Severity
+skipped). Candidate when `(ticks + 1) * perTick < 0.7`, exactly the break the vanilla server refuses (the
+player state used is the current one, so effects that changed during the dig and attribute changes pending
+at the client make the check skip). Confirmation asks the server's ruling one tick later: when the block is
+gone the server accepted the break (custom tools, plugins changing mining speed) and the candidate is
+discarded; an unreadable chunk discards too. Severity
 `min(1, 1 - ticks/expected)`. VL +1, decay 1 per 60 s. Points `3 + 4*severity`, confidence 0.8.
 
 ### 1.7 protocol.pitch - INVALID_PROTOCOL (certain)

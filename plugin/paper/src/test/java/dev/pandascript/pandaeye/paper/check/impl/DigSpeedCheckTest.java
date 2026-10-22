@@ -146,6 +146,28 @@ class DigSpeedCheckTest {
     }
 
     @Test
+    void aBreakTheServerAcceptedIsDiscarded() {
+        // Seen live: custom tools and plugins that change mining speed make the client faster than the probe,
+        // and the server accepts the break. Its own ruling wins.
+        CheckHarness harness = harness();
+        harness.world().blockPresent = false;
+        dig(harness, probe(harness, STONE_DIAMOND, true, false, -1, 0), 0);
+        assertEquals(1, harness.candidates().size());
+        harness.confirmAll();
+        assertTrue(harness.flags().isEmpty());
+    }
+
+    @Test
+    void theCutIsVanillasAcceptanceNotTheRoundedTickCount() {
+        // perTick 0.36: expected = ceil(2.78) = 3, but vanilla accepts a FINISH after 1 tick (0.36 * 2 >= 0.7).
+        CheckHarness harness = harness();
+        dig(harness, probe(harness, 0.36f, true, false, -1, 0), 1);
+        assertEquals(0, harness.candidates().size());
+        dig(harness, probe(harness, 0.36f, true, false, -1, 0), 0);
+        assertEquals(1, harness.candidates().size());
+    }
+
+    @Test
     void aNukerWhoseFinishArrivesBeforeTheProbeIsStillJudged() {
         CheckHarness harness = harness();
         harness.processor().dig(CheckInput.DigAction.START, X, Y, Z, 1, harness.now());

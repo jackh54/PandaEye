@@ -85,6 +85,14 @@ public final class BukkitWorldView implements WorldView {
     }
 
     @Override
+    public boolean blockPresent(int x, int y, int z) {
+        if (!readableBlocks(x, z, x, z)) {
+            return false;
+        }
+        return !world.getBlockAt(x, y, z).getType().isAir();
+    }
+
+    @Override
     public boolean hasCollisions(Box box) {
         if (!readable(box)) {
             return true;

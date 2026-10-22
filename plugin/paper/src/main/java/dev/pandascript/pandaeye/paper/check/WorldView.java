@@ -38,4 +38,13 @@ public interface WorldView {
     default double usingItemSpeedMultiplier() {
         return Double.NaN;
     }
+
+    /**
+     * Whether the block at (x, y, z) is not air right now: after the server handled a FINISH, the block is
+     * still there when the server (or a protection plugin) refused the break. False when the chunk is not
+     * readable, so callers discard.
+     */
+    default boolean blockPresent(int x, int y, int z) {
+        return false;
+    }
 }
