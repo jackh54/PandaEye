@@ -131,7 +131,7 @@ it does not use.
 | `PE_LICENSE_MODE` | `static` | gateway, api | `static` or `pandascript` |
 | `PE_LICENSE_URL`, `PE_LICENSE_PRODUCT` | empty, `pandaeye` | gateway, api | pandascript licence worker, plain `https://` URL only |
 | `PE_LICENSE_PEPPER` | generated in `all` | gateway, api | HMAC key of licence lookups, >= 32 bytes, required for gateway and api outside `all`, identical everywhere. Never rotate it (8.6) |
-| `PE_STATIC_LICENSES` | empty | gateway, api | `key[:maxServers[:plan]],...` (maxServers 0 = unlimited, plan default `free`) |
+| `PE_STATIC_LICENSES` | empty | gateway, api | `key[:maxServers[:plan]],...` (maxServers 0 = unlimited, plan default `free`); also honoured in `pandascript` mode, checked before the licence worker (own servers, partners) |
 | `PE_SERVICE_TOKEN`, `PE_SERVICE_TOKEN_NEXT` | empty | api | dashboard transport token(s), >= 32 bytes; empty disables dashboard access. NEXT is accepted too, for rotation |
 | `PE_ASSERTION_KEY` | empty | api | HMAC key of dashboard user assertions, >= 32 bytes; required when `PE_SERVICE_TOKEN` is set |
 | `PE_EVENTS_MAX_AGE`, `PE_EVENTS_MAX_BYTES` | `24h`, `10GiB` | all roles but migrate (each provisions `PE_EVENTS`) | `PE_EVENTS` retention; bounds residual data after erasure and how far back `replay` reaches. Set identically everywhere, or every restart rewrites the stream's limits |

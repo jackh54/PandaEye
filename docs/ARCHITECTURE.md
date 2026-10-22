@@ -783,7 +783,8 @@ writes `usage_daily = max(existing, value)`.
   429, 5xx and timeouts are retryable (`CODE_INTERNAL` with `retry_after_ms`), never UNAUTHENTICATED. Cache
   valid results 10 min and invalid 1 min (keyed by the key's HMAC); on errors allow a key cached valid within
   24 h. Singleflight per key; global outbound limit 20/s.
-- `static`: `PE_STATIC_LICENSES`.
+- `static`: `PE_STATIC_LICENSES`. In `pandascript` mode these keys stay valid and are checked first; every other
+  key goes to the licence worker.
 - Tenant mapping: `licenses.key_hmac = HMAC-SHA256(PE_LICENSE_PEPPER, key)` -> tenant_id (random). Raw keys
   are never stored or logged. Key rotation = `auth/rebind` (history stays with the tenant).
 

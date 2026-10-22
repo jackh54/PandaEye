@@ -292,3 +292,35 @@ func TestFromConfigModes(t *testing.T) {
 		t.Fatal(v, err)
 	}
 }
+
+// PE_STATIC_LICENSES keep working next to the licence worker: a static key never reaches the worker,
+// any other key does.
+func TestPandascriptModeKeepsStaticKeys(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get("Authorization") == "Bearer store-key-0001" {
+			fmt.Fprint(w, `{"valid":true,"productId":"pandaeye"}`)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"valid":false}`)
+	}))
+	defer srv.Close()
+	v, err := FromConfig(config.License{Mode: config.LicensePandascript, URL: srv.URL, Product: "pandaeye",
+		Static: []config.StaticLicense{{Key: identity.Secret("own-server-key-01"), MaxServers: 5, Plan: "pro"}}},
+		[]byte("0123456789abcdef0123456789abcdef"), nil, metrics.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if l, err := v.Verify(ctx, "own-server-key-01"); err != nil || !l.Valid || l.MaxServers != 5 || calls.Load() != 0 {
+		t.Fatalf("static key: %+v %v (worker calls %d)", l, err, calls.Load())
+	}
+	if l, err := v.Verify(ctx, "store-key-0001"); err != nil || !l.Valid || calls.Load() != 1 {
+		t.Fatalf("store key: %+v %v (worker calls %d)", l, err, calls.Load())
+	}
+	if l, err := v.Verify(ctx, "unknown-key-0001"); err != nil || l.Valid {
+		t.Fatalf("unknown key: %+v %v", l, err)
+	}
+}

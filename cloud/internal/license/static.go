@@ -61,6 +61,12 @@ func FromConfig(c config.License, pepper []byte, log *slog.Logger, m *metrics.Me
 		}
 		p := NewPandascript(PandascriptOptions{URL: c.URL, Product: c.Product, Pepper: pepper, Log: log})
 		p.m = vm
+		if len(c.Static) > 0 {
+			// PE_STATIC_LICENSES stay valid next to the licence worker (own servers, partners).
+			s := NewStatic(c.Static, pepper)
+			s.m = vm
+			return &Chain{First: s, Then: p}, nil
+		}
 		return p, nil
 	default:
 		return nil, fmt.Errorf("license: unknown mode %q", c.Mode)
@@ -74,4 +80,17 @@ func cacheKeyMAC(pepper []byte) []byte {
 		return pepper
 	}
 	return identity.RandomKey(32)
+}
+
+// Chain answers from First when it knows the key (a valid licence) and asks Then otherwise.
+type Chain struct {
+	First, Then Verifier
+}
+
+// Verify implements Verifier.
+func (c *Chain) Verify(ctx context.Context, key string) (License, error) {
+	if l, err := c.First.Verify(ctx, key); err == nil && l.Valid {
+		return l, nil
+	}
+	return c.Then.Verify(ctx, key)
 }
