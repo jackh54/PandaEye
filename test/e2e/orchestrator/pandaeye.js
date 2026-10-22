@@ -45,7 +45,8 @@ function flagsFor (serverDir, players, fromMs = 0, toMs_ = Infinity) {
     if (!ids.has(who)) return false
     const t = toMs(pick(o, FIELD_TIME))
     return t === undefined || (t >= fromMs && t <= toMs_)
-  }).map((o) => ({ check: pick(o, FIELD_CHECK), confirmed: o.confirmed !== false, count: o.count ?? 1, raw: o }))
+    // A flag that adds no VL (protocol.slot "redundant") is informational: logged for shadow data, scored 0.
+  }).map((o) => ({ check: pick(o, FIELD_CHECK), confirmed: o.confirmed !== false && Number(o.vl ?? 1) > 0, count: o.count ?? 1, raw: o }))
 }
 
 function peaks (serverDir) { return readJsonl(path.join(serverDir, 'plugins', 'PandaEye', 'logs'), 'peaks-') }

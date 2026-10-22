@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -147,6 +148,8 @@ final class Spool {
         List<Path> files = new ArrayList<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, PREFIX + "*" + SUFFIX)) {
             stream.forEach(files::add);
+        } catch (NoSuchFileException e) {
+            // Nothing was ever spooled: the directory is created on the first spill.
         } catch (IOException e) {
             log.warn("could not list the spool directory: " + e);
         }
