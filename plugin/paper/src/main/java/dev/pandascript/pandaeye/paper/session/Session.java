@@ -245,8 +245,16 @@ public final class Session {
         watchUntilNanos = nanos;
     }
 
-    public long lastBukkitVelocityNanos() {
-        return lastBukkitVelocityNanos;
+    /** Whether a cloud watch request covers {@code nowNanos} (never before the first request). */
+    public boolean watched(long nowNanos) {
+        long until = watchUntilNanos;
+        return until != Long.MIN_VALUE && until - nowNanos > 0;
+    }
+
+    /** Whether the server applied a velocity less than {@code windowNanos} ago (never before the first one). */
+    public boolean bukkitVelocityWithin(long nowNanos, long windowNanos) {
+        long at = lastBukkitVelocityNanos;
+        return at != Long.MIN_VALUE && nowNanos - at < windowNanos;
     }
 
     public SetbackTarget setbackTarget() {

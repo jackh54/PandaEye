@@ -217,7 +217,7 @@ public final class PandaEyeCommand implements TabExecutor {
                 session.client().version(), session.client().protocol(), yesNo(session.client().tickClient()),
                 session.networkSession().isEmpty() ? "none" : session.networkSession()));
         MitigationState mitigation = session.mitigation();
-        String watched = session.watchUntilNanos() - now > 0
+        String watched = session.watched(now)
                 ? ", watched for " + TimeUnit.NANOSECONDS.toSeconds(session.watchUntilNanos() - now) + " more s" : "";
         lines.add(mitigation.active()
                 ? String.format(Locale.ROOT, "mitigations %s at strength %.2f (verdict %s)%s", mitigations(mitigation),

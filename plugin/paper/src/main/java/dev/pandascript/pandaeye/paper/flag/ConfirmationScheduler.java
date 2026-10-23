@@ -119,7 +119,7 @@ public final class ConfirmationScheduler {
                     || mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR) {
                 return Confirmation.discarded("authoritative exemption");
             }
-            if (System.nanoTime() - session.lastBukkitVelocityNanos() < RECENT_VELOCITY_NANOS) {
+            if (session.bukkitVelocityWithin(System.nanoTime(), RECENT_VELOCITY_NANOS)) {
                 return Confirmation.discarded("velocity in the last 2 s");
             }
         }

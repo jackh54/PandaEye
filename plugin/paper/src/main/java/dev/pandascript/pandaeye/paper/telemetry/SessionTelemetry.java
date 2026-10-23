@@ -276,7 +276,7 @@ public final class SessionTelemetry implements SessionEvents {
 
     private boolean inFocus(long now) {
         PluginConfig config = telemetry.config();
-        if (config.telemetry().full() || session.watchUntilNanos() - now > 0) {
+        if (config.telemetry().full() || session.watched(now)) {
             return true;
         }
         long combat = config.telemetry().focusSeconds() * SECOND;
