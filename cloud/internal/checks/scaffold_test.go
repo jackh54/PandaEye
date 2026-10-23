@@ -465,3 +465,73 @@ func TestScaffoldLegitInterpolatedEyeWhileMovingFast(t *testing.T) {
 		t.Fatalf("legit fast building flagged: %d emissions, first %+v", len(es), es[0])
 	}
 }
+
+// The same fast building with a stale swimming flag: the plugin reports the 0.4 eye, the player stands.
+// The standing eyes on the path from the previous position must be candidates.
+func TestScaffoldLegitStaleSwimFlagWhileMovingFast(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	r.state(func(s *pb.StateChange) { s.Flying, s.AllowFlight = true, true })
+	r.flags = uint32(pb.MoveFlag_MOVE_FLAG_SWIMMING)
+	r.tick(geom.V(0.5, 70, 0.5), geom.Rotation{})
+	for i := range 24 {
+		prev := r.p.Pos
+		cur := prev.Add(geom.V(0.9, 0, 0))
+		partial := []float64{0.05, 0.2, 0.5}[i%3]
+		eye := geom.Eye(prev.Add(cur.Sub(prev).Scale(partial)), geom.PoseStanding, r.p.Protocol, 1)
+		b := [3]int32{int32(math.Floor(prev.X)), 68, int32(-1 + i%3)}
+		target := geom.V(float64(b[0])+0.5, 69, float64(b[2])+0.5)
+		rot := aim(eye, target)
+		face, cursor, ok := rayClick(eye, rot, b)
+		if !ok {
+			t.Fatalf("setup: ray from the interpolated eye misses %v", b)
+		}
+		r.tick(cur, r.p.Rot)
+		r.place(blockClick{block: b, face: face, cursor: cursor, eye: geom.Eye(cur, geom.PoseSwimming, r.p.Protocol, 1), rot: r.p.Rot})
+		r.tick(cur, rot)
+	}
+	if es := r.run("scaffold"); len(es) != 0 {
+		t.Fatalf("stale swimming flag: %d emissions, first %+v", len(es), es[0])
+	}
+}
+
+// crawlTunnel crawls north through a one-block-high tunnel (floor top at y 64, ceiling at 65) with the
+// swimming flag the plugin reports for a crawl the server knows about. act is called each tick with the
+// eye the client picks from (0.4, between the previous and the last position) and the eye the plugin
+// reports (0.4 at the last position).
+func crawlTunnel(r *rig, n int, act func(i int, eye, reported geom.Vec3)) {
+	r.flags = uint32(pb.MoveFlag_MOVE_FLAG_SWIMMING)
+	r.tick(geom.V(0.5, 64, 0.5), geom.Rotation{})
+	for i := range n {
+		prev := r.p.Pos
+		cur := prev.Add(geom.V(0, 0, -0.08))
+		eye := geom.Eye(prev.Add(cur.Sub(prev).Scale(0.5)), geom.PoseSwimming, r.p.Protocol, 1)
+		r.tick(cur, r.p.Rot)
+		act(i, eye, geom.Eye(cur, geom.PoseSwimming, r.p.Protocol, 1))
+	}
+	r.step(geom.V(0, 0, 0))
+}
+
+// A real crawl (or swim) is judged from 0.4: under the tunnel's ceiling the standing and sneaking
+// eyes' rays cannot reach the floor ahead.
+func TestScaffoldLegitCrawling(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	crawlTunnel(r, 20, func(i int, eye, reported geom.Vec3) {
+		b := [3]int32{int32(i%3 - 1), 63, int32(math.Floor(eye.Z)) - 2}
+		target := geom.V(float64(b[0])+0.5, 64, float64(b[2])+0.5)
+		rot := aim(eye, target)
+		face, cursor, ok := rayClick(eye, rot, b)
+		if !ok {
+			t.Fatalf("setup: ray from the crawling eye misses %v", b)
+		}
+		for _, h := range []float64{1.27, 1.62} {
+			if _, hit := geom.BlockBox(b[0], b[1], b[2]).Expand(0.05).IntersectRay(eye.Add(geom.V(0, h-0.4, 0)), rot.Look(), 6); hit {
+				t.Fatalf("fixture: the %.2f eye sees %v", h, b)
+			}
+		}
+		r.place(blockClick{block: b, face: face, cursor: cursor, eye: reported, rot: r.p.Rot})
+		r.tick(r.p.Pos, rot)
+	})
+	if es := r.run("scaffold"); len(es) != 0 {
+		t.Fatalf("legit crawling placements: %d emissions, first %+v", len(es), es[0])
+	}
+}

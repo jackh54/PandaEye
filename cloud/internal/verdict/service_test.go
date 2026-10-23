@@ -3,6 +3,7 @@ package verdict
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"sync"
 	"testing"
@@ -445,6 +446,104 @@ func TestBanRouting(t *testing.T) {
 	pending, err := l.d.Store.PendingVerdicts(ctx, tenant, store.PendingQuery{ServerID: tp2.server, Now: time.Now(), DeliveredBefore: time.Now()})
 	if err != nil || !slices.ContainsFunc(pending, func(v store.Verdict) bool { return v.Action == aB }) {
 		t.Fatalf("ban not pending for the offline server: %v %v", len(pending), err)
+	}
+}
+
+// The player left the backend and is online only through the proxy (the hubs have no plugin): the
+// BAN goes to the connected backend, not to the proxy, which has no ban command by default.
+func TestBanRoutingPrefersBackendsOverProxy(t *testing.T) {
+	l := newLive(t)
+	ctx := context.Background()
+	tenant := l.tenant()
+	tp := l.player(tenant)
+	px := tp.onProxy()
+	for i, c := range []*tplayer{tp, px} {
+		info := stream.ConnectionInfo{ConnectionID: "c" + string(rune('0'+i)), NetworkID: "net-1", Platform: c.origin().Platform}
+		if _, err := l.d.Bus.CreateConnection(ctx, tenant, c.server, info); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backendBox, proxyBox := l.outbox(tenant, tp.server), l.outbox(tenant, px.server)
+	l.publish(tp.id.Bytes(), px.marker(pb.SessionMarker_KIND_JOIN))
+	l.publish(tp.id.Bytes(), tp.marker(pb.SessionMarker_KIND_JOIN))
+	l.publish(tp.id.Bytes(), tp.marker(pb.SessionMarker_KIND_QUIT))
+	for range 4 {
+		l.publish(tp.id.Bytes(), tp.signal("protocol.pitch", 25, local(), withClip("c")))
+	}
+	if vs := backendBox.verdicts(1); vs[0].Action != aB {
+		t.Fatalf("backend got %v", vs[0].Action)
+	}
+	// The ALERT still goes to where the player is; the BAN does not.
+	for {
+		ob, err := proxyBox.next(time.Second)
+		if errors.Is(err, nats.ErrTimeout) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v := ob.GetVerdict(); v != nil && v.Action != aA {
+			t.Fatalf("proxy got %v", v.Action)
+		}
+	}
+}
+
+// resolveNetwork's choice for a BAN without an open backend session.
+func TestResolveBanTarget(t *testing.T) {
+	d := newDeps(t)
+	s := &Service{bus: d.Bus, log: slog.New(slog.DiscardHandler)}
+	ctx := context.Background()
+	backend, proxy := pb.Platform_PLATFORM_PAPER, pb.Platform_PLATFORM_VELOCITY
+	type conn struct {
+		server, network string
+		platform        pb.Platform
+	}
+	ids := map[string]string{}
+	id := func(name string) string {
+		if ids[name] == "" {
+			ids[name] = testkit.NewServerID()
+		}
+		return ids[name]
+	}
+	cases := []struct {
+		name                        string
+		network, fallback, viaProxy string
+		conns                       []conn
+		want, wantName              string
+	}{
+		{name: "the player's backend is connected", network: "net-1", fallback: "smp", viaProxy: "proxy",
+			conns: []conn{{"proxy", "net-1", proxy}, {"smp", "net-1", backend}}, want: "smp", wantName: "SMP"},
+		{name: "on the proxy, another backend connected", network: "net-1", fallback: "smp", viaProxy: "proxy",
+			conns: []conn{{"proxy", "net-1", proxy}, {"lobby", "net-1", backend}}, want: "lobby"},
+		{name: "offline, only the proxy was ever seen", network: "net-1", fallback: "proxy",
+			conns: []conn{{"proxy", "net-1", proxy}, {"lobby", "net-1", backend}}, want: "lobby"},
+		{name: "no backend connected", network: "net-1", fallback: "smp", viaProxy: "proxy-2",
+			conns: []conn{{"proxy-1", "net-1", proxy}, {"proxy-2", "net-1", proxy}}, want: "proxy-2", wantName: "Proxy"},
+		{name: "the newest backend is in another network", network: "net-1", fallback: "smp", viaProxy: "proxy",
+			conns: []conn{{"proxy", "net-1", proxy}, {"smp", "", backend}}, want: "smp", wantName: "SMP"},
+		{name: "no network: no other server of the tenant", fallback: "smp",
+			conns: []conn{{"other", "", backend}}, want: "smp", wantName: "SMP"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tenant := identity.NewTenantID()
+			for i, cn := range c.conns {
+				info := stream.ConnectionInfo{ConnectionID: "c" + string(rune('0'+i)), NetworkID: cn.network, Platform: cn.platform}
+				if _, err := d.Bus.CreateConnection(ctx, tenant, id(cn.server), info); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r := route{network: c.network, lookupNetwork: true, fallback: id(c.fallback), fallbackName: "SMP"}
+			if c.viaProxy != "" {
+				r.proxy, r.proxyName = id(c.viaProxy), "Proxy"
+			}
+			r.server, r.serverName = r.fallback, r.fallbackName
+			pv := &pendingVerdict{rec: &pb.VerdictRecord{TenantId: tenant, ServerId: r.server, Verdict: &pb.Verdict{}}, route: r}
+			s.resolveNetwork(ctx, pv)
+			if pv.rec.ServerId != id(c.want) || pv.route.server != id(c.want) || pv.route.serverName != c.wantName {
+				t.Fatalf("routed to %s (%q), want %s", pv.rec.ServerId, pv.route.serverName, c.want)
+			}
+		})
 	}
 }
 

@@ -105,6 +105,45 @@ func TestReachCheat(t *testing.T) {
 	}
 }
 
+// ledgeAttacks attacks a target on a ledge two blocks up, reporting the 0.4 eye of a stale swimming
+// flag while the attacker stands.
+func ledgeAttacks(t *testing.T, targetZ float64) *cfWorld {
+	w := cfNewWorld(t, 769)
+	w.tgt.Pos = geom.V(0, 66, targetZ)
+	w.hist = nil
+	w.idle(30)
+	for i := 0; i < 5; i++ {
+		w.advance()
+		w.attack(w.lowEye)
+		w.swing()
+		w.move(geom.Vec3{}, w.att.Rot, pb.MoveFlag_MOVE_FLAG_SWIMMING)
+		for range 10 {
+			w.advance()
+			w.move(geom.Vec3{}, w.att.Rot, pb.MoveFlag_MOVE_FLAG_SWIMMING)
+		}
+	}
+	return w
+}
+
+// From the standing eye the ledge target's box is 2.96 away; from the stale 0.4 eye it would be 3.31.
+func TestReachLegitStaleSwimFlag(t *testing.T) {
+	w := ledgeAttacks(t, 3.35)
+	if es := cfRun(t, "reach", w); checktest.Count(es, checks.ReachCheck) != 0 {
+		t.Fatalf("standing player with a stale swimming flag flagged: %+v", es)
+	}
+	low := geom.Eye(w.att.Pos, geom.PoseSwimming, 769, 1)
+	if d := geom.PlayerBox(w.tgt.Pos, 1).Expand(checks.TargetMargin).DistanceTo(low); d < 3.05 {
+		t.Fatalf("fixture: the 0.4 eye is only %.3f from the box", d)
+	}
+}
+
+func TestReachCheatWithStaleSwimFlag(t *testing.T) {
+	// 3.5 blocks from the standing eye, farther from the others: every attack from the second.
+	if n := checktest.Count(cfRun(t, "reach", ledgeAttacks(t, 3.9)), checks.ReachCheck); n != 4 {
+		t.Fatalf("reach emissions = %d, want 4", n)
+	}
+}
+
 func TestReachThresholdOverride(t *testing.T) {
 	w := cfNewWorld(t, 769)
 	w.tgt.Pos = geom.V(0, 64, 3.9)

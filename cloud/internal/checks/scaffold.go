@@ -12,8 +12,8 @@ import (
 //
 // A placement waits for the next movement packet (at most 100 ms) to get its R1 rotation and the next
 // eye position; then every check runs over the candidate eyes (event eye, the standing/sneaking
-// alternative, the next move's eyes) and rotations (R0, R1 and the 0.25-step interpolations). The
-// machinery (blockAction, blockQueue) is shared with dig.ray.
+// alternative and 0.4 for a swimming/gliding pose, the next move's eyes) and rotations (R0, R1 and the
+// 0.25-step interpolations). The machinery (blockAction, blockQueue) is shared with dig.ray.
 
 const (
 	idScaffoldFace   = "scaffold.face"
@@ -281,7 +281,7 @@ func (q *blockQueue) handle(c *Ctx, ev *pb.Event, judge func(*Ctx, *blockAction,
 
 // blockCandidates are the eye and rotation candidates of one action.
 type blockCandidates struct {
-	eye  [4 + 2*eyePathSamples]geom.Vec3
+	eye  [6 + 3*eyePathSamples]geom.Vec3
 	nEye int
 	rot  [5]geom.Rotation
 	nRot int
@@ -298,24 +298,30 @@ func (b *blockCandidates) addEye(e geom.Vec3) {
 	}
 }
 
-// build derives the candidates: eyes = the event eye, the standing/sneaking alternative at the same feet,
-// the eyes on the path from the previous position (eyePath, both heights) and the next move's
-// standing/sneaking eyes; rotations = R0, R0->R1 at 0.25 steps and R1. R1 is the next
+// build derives the candidates: eyes = the event eye, the other heights at the same feet, the eyes on
+// the path from the previous position (eyePath) and the next move's eyes, each at the standing and
+// sneaking heights plus 0.4 when the action's pose is swimming/gliding (a real crawl or swim, or a stale
+// flag of a standing player); rotations = R0, R0->R1 at 0.25 steps and R1. R1 is the next
 // move's rotation when it belongs to the same client tick (tick clients) or arrived within 100 ms (older
 // clients); otherwise R1 = R0.
 func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
 	stand := geom.EyeHeight(geom.PoseStanding, v.Protocol, v.Scale)
 	sneak := geom.EyeHeight(geom.PoseSneaking, v.Protocol, v.Scale)
 	used := geom.EyeHeight(a.pose, v.Protocol, v.Scale)
+	all := [3]float64{stand, sneak, used}
+	heights := all[:2]
+	if used != stand && used != sneak {
+		heights = all[:]
+	}
 	feet := a.eye.Sub(geom.V(0, used, 0))
 	b.addEye(a.eye)
-	for _, h := range [2]float64{stand, sneak} {
+	for _, h := range heights {
 		if h != used {
 			b.addEye(feet.Add(geom.V(0, h, 0)))
 		}
 	}
 	if a.hasPrev {
-		for _, h := range [2]float64{used, stand + sneak - used} {
+		for _, h := range heights {
 			for _, e := range eyePath(a.prevFeet, feet, h) {
 				b.addEye(e)
 			}
@@ -324,8 +330,9 @@ func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
 	r1 := a.rot
 	if next != nil && next.TimeUs-a.atUs <= blockActionWaitUs {
 		if next.HasPos {
-			b.addEye(next.Pos.Add(geom.V(0, stand, 0)))
-			b.addEye(next.Pos.Add(geom.V(0, sneak, 0)))
+			for _, h := range heights {
+				b.addEye(next.Pos.Add(geom.V(0, h, 0)))
+			}
 		}
 		if next.HasRot && (!v.TickClient || next.Tick == a.tick) {
 			r1 = next.Rot

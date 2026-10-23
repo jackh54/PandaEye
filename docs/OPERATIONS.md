@@ -616,6 +616,8 @@ Keep the circuit-breaker defaults.
    backend reads it at packet level without registering a channel.
 4. Verdicts on the proxy: in live mode with enforcement the proxy can run its configured commands for
    KICK/BAN; the default is shadow / log only. The same circuit breaker and placeholder rules apply.
+   BANs go to a connected backend of the network first; the proxy gets one only when no backend is
+   connected, so configure its `ban-command` only if that case must ban.
 5. Metering: per network the proxy's player count is used while a proxy is connected, else the sum of the
    backends. **Open:** whether the proxy's connection counts towards the licence's `maxServers`.
 
@@ -706,7 +708,9 @@ dashboard (server online, probe RTT).
 14. KnockbackSync shades its own PacketEvents and its decoder runs first: it drops the PONGs answering its
     own PINGs, so PandaEye (on the PacketEvents plugin) never sees them. Passive acknowledgement then
     depends on other PING senders; without any, pending values are promoted only at JOIN/RESPAWN, so
-    movement checks stay exempt after a player's first change (fewer detections, never more flags).
+    movement checks stay exempt after a player's first change (fewer detections, never more flags). A
+    swimming/gliding flag left pending reports the 0.4 eye; the cloud's geometry checks then also test the
+    standing and sneaking eyes (CHECKS 2.1).
 15. `plugman unload` of an instance that was loaded at server start leaves its class loader reachable
     through `CraftServer`'s help map (the plugin.yml command's help topic) until the next restart, a few MB.
     Instances loaded with `plugman load` are collected. Registering `/pandaeye` at runtime would avoid it.

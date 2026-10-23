@@ -51,6 +51,9 @@ type session struct {
 
 func (s *session) taken(a pb.Action) bool { return s.actions&actionBit(a) != 0 }
 
+// proxy reports whether the session is on a Velocity proxy.
+func (s *session) proxy() bool { return s.platform == pb.Platform_PLATFORM_VELOCITY }
+
 // sigRecord is a remembered signal for the evidence.
 type sigRecord struct {
 	check    string
@@ -77,9 +80,11 @@ type player struct {
 	lastAlertT int64
 	lastWatch  time.Time // wall clock of the last WatchRequest
 
-	newestServer     string // origin of the newest signal or marker (BAN fallback route)
-	newestServerName string
-	newestNetwork    string
+	newestServer      string // origin of the newest signal or marker (fallback route)
+	newestServerName  string
+	newestNetwork     string
+	newestBackend     string // the newest origin that is not a proxy (BAN fallback route)
+	newestBackendName string
 }
 
 func newPlayer(k playerKey, now time.Time) *player {
@@ -94,6 +99,9 @@ func (p *player) touch(name string, o *pb.Origin) {
 		p.newestServer, p.newestServerName = o.ServerId, o.ServerName
 		if o.NetworkId != "" {
 			p.newestNetwork = o.NetworkId
+		}
+		if o.Platform != pb.Platform_PLATFORM_VELOCITY {
+			p.newestBackend, p.newestBackendName = o.ServerId, o.ServerName
 		}
 	}
 }

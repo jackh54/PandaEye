@@ -384,7 +384,7 @@ func TestRouting(t *testing.T) {
 			t.Fatalf("closed session got %v", a)
 		}
 	}
-	// Without a network id the newest signal's server is used directly.
+	// Without a network id no other server of the tenant is a candidate: the newest backend.
 	h2 := newHarness(t)
 	tp2 := h2.player(h2.tenant())
 	tp2.network = ""
@@ -397,8 +397,60 @@ func TestRouting(t *testing.T) {
 	h2.apply(other.marker(pb.SessionMarker_KIND_JOIN))
 	h2.apply(other.marker(pb.SessionMarker_KIND_QUIT))
 	r := h2.p.route(h2.p.players[playerKey{tp2.tenant, tp2.id}], &session{id: "x"}, aB, trigger{origin: tp2.origin()})
-	if r.lookupNetwork || r.server != other.server {
+	if r.network != "" || r.server != other.server || r.fallback != other.server {
 		t.Fatalf("no-network route %+v", r)
+	}
+}
+
+// A proxy has no ban command by default: BANs never take a proxy session's server, while KICK and
+// MITIGATE still go to where the player is.
+func TestBanRoutingSkipsProxySessions(t *testing.T) {
+	h := newHarness(t)
+	tp := h.player(h.tenant())
+	px := tp.onProxy()
+	h.apply(px.marker(pb.SessionMarker_KIND_JOIN))
+	h.apply(tp.marker(pb.SessionMarker_KIND_JOIN))
+	h.apply(px.marker(pb.SessionMarker_KIND_UPDATE)) // the proxy's re-announce is the newest marker
+	pl := h.p.players[playerKey{tp.tenant, tp.id}]
+	backend, proxy := pl.sessions[tp.session], pl.sessions[px.session]
+	tr := trigger{origin: tp.origin()}
+
+	// On the backend: the BAN goes there, from the backend's or the proxy's session.
+	for _, s := range []*session{backend, proxy} {
+		if r := h.p.route(pl, s, aB, tr); r.server != tp.server || r.lookupNetwork {
+			t.Fatalf("player on the backend: %+v", r)
+		}
+	}
+
+	// Left the backend, online through the proxy: KICK and MITIGATE follow the player, the BAN is
+	// resolved by the emitter (backends first, the proxy only when none is connected).
+	h.apply(tp.marker(pb.SessionMarker_KIND_QUIT))
+	for _, a := range []pb.Action{aK, aM} {
+		if r := h.p.route(pl, backend, a, tr); r.server != px.server {
+			t.Fatalf("%v of a player on the proxy: %+v", a, r)
+		}
+	}
+	r := h.p.route(pl, backend, aB, tr)
+	if !r.lookupNetwork || r.network != "net-1" || r.fallback != tp.server || r.server != tp.server || r.proxy != px.server {
+		t.Fatalf("BAN of a player on the proxy: %+v", r)
+	}
+
+	// Offline, the proxy's quit processed last: the fallback is still the newest backend.
+	h.apply(px.marker(pb.SessionMarker_KIND_QUIT))
+	if pl.newestServer != px.server {
+		t.Fatalf("setup: newest server %s", pl.newestServer)
+	}
+	r = h.p.route(pl, backend, aB, tr)
+	if !r.lookupNetwork || r.fallback != tp.server || r.server != tp.server || r.proxy != "" {
+		t.Fatalf("BAN of an offline player: %+v", r)
+	}
+
+	// A player only ever seen on the proxy: the proxy is the fallback.
+	only := h.player(tp.tenant).onProxy()
+	h.apply(only.marker(pb.SessionMarker_KIND_JOIN))
+	opl := h.p.players[playerKey{only.tenant, only.id}]
+	if r := h.p.route(opl, opl.sessions[only.session], aB, trigger{origin: only.origin()}); r.fallback != only.server || r.proxy != only.server {
+		t.Fatalf("BAN of a proxy-only player: %+v", r)
 	}
 }
 

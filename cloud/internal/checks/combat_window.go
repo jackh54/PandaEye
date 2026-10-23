@@ -71,6 +71,7 @@ type AttackObs struct {
 	EyeHeight       float64
 	Sneaking        bool
 	SneakUncertain  bool      // the sneaking state changed around the attack: test both eye heights
+	ReducedEye      bool      // the reported eye is the swimming/gliding/crawling one (0.4)
 	PrevFeet        geom.Vec3 // position before the last one (eyePath), when HasPrev
 	HasPrev         bool
 	R0              geom.Rotation
@@ -133,6 +134,7 @@ func NewAttackObs(v *View, ev *pb.Event) (AttackObs, bool) {
 		o.GameMode = v.GameMode // the attack's default value says nothing; the view knows better
 	}
 	o.SneakUncertain = cwSneakUncertain(v, o.Sneaking)
+	o.ReducedEye = math.Abs(o.EyeHeight-geom.EyeHeight(geom.PoseSwimming, v.Protocol, v.Scale)) < 1e-3
 	o.R0Server = LastRotationFromServer(v)
 	if h := a.GetTargetHistory(); len(h) > 0 {
 		o.History = make([]TimedPoint, 0, len(h))
@@ -271,13 +273,15 @@ func (a *AttackObs) TargetBoxes(margin float64) []geom.AABB {
 }
 
 // EyeCandidates returns the attacker eye positions to test: the reported eye, the eyes on the path
-// from the previous position (eyePath) and, when the sneaking state is uncertain, the standing and
-// sneaking eye at the same feet (and on the path).
+// from the previous position (eyePath) and, when the sneaking state is uncertain or the reported eye
+// is the reduced one, the standing and sneaking eye at the same feet (and on the path). The plugin
+// reports swimming and gliding while a change is still unacknowledged, so without PONGs the flag can
+// outlast the server's clear.
 func (a *AttackObs) EyeCandidates() []geom.Vec3 {
 	out := []geom.Vec3{a.Eye}
 	feet := geom.V(a.Eye.X, a.Eye.Y-a.EyeHeight, a.Eye.Z)
 	heights := []float64{a.EyeHeight}
-	if a.SneakUncertain {
+	if a.SneakUncertain || a.ReducedEye {
 		for _, pose := range [...]geom.Pose{geom.PoseStanding, geom.PoseSneaking} {
 			if e := geom.Eye(feet, pose, a.Protocol, a.Scale); e != a.Eye {
 				out = append(out, e)

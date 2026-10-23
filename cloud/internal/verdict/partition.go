@@ -84,9 +84,11 @@ type route struct {
 	server        string // target server ("" until a network lookup resolves it)
 	serverName    string
 	network       string
-	lookupNetwork bool   // BAN without an open session: any connected server of the network
-	fallback      string // the newest signal's server (pending until it reconnects)
+	lookupNetwork bool   // BAN without an open backend session: resolve a connected server (emitter)
+	fallback      string // the newest signal's server, for a BAN its newest backend (pending until it reconnects)
 	fallbackName  string
+	proxy         string // BAN: the proxy the player is online through (preferred among proxies)
+	proxyName     string
 }
 
 // pendingVerdict is a verdict decided by a partition, published by its emitter.
@@ -474,26 +476,39 @@ func (p *partition) buildVerdict(pl *player, sess *session, a pb.Action, sc Scor
 	return &pendingVerdict{rec: rec, route: r, settings: ts, cloudCheck: cloud, sourceRecvUs: tr.recvUs}
 }
 
-// route picks the target server (ARCHITECTURE 5.6): the open session's server; for BAN without an
-// open session any connected server of the network (resolved by the emitter), else the server of
-// the newest signal.
+// route picks the target server (ARCHITECTURE 5.6): the open session's server, else the server of
+// the newest signal. A BAN never takes a proxy session's server (a proxy has no ban command by
+// default): without an open backend session the emitter resolves a connected backend of the network
+// or the player's newest backend, a proxy only when no backend is connected, else the newest backend
+// (pending until it reconnects).
 func (p *partition) route(pl *player, sess *session, a pb.Action, tr trigger) route {
+	ban := a == pb.Action_ACTION_BAN
 	r := route{network: firstNonEmpty(sess.network, pl.newestNetwork, tr.origin.GetNetworkId())}
-	if sess.open && sess.server != "" {
+	if sess.open && sess.server != "" && !(ban && sess.proxy()) {
 		r.server, r.serverName = sess.server, sess.serverName
 		return r
 	}
 	for _, s := range pl.openSessions() {
-		if s.server != "" {
-			r.server, r.serverName = s.server, s.serverName
-			return r
+		if s.server == "" {
+			continue
 		}
+		if ban && s.proxy() {
+			if r.proxy == "" {
+				r.proxy, r.proxyName = s.server, s.serverName
+			}
+			continue
+		}
+		r.server, r.serverName = s.server, s.serverName
+		return r
 	}
 	r.fallback, r.fallbackName = firstNonEmpty(pl.newestServer, tr.origin.GetServerId()), pl.newestServerName
 	if r.fallbackName == "" {
 		r.fallbackName = tr.origin.GetServerName()
 	}
-	if a == pb.Action_ACTION_BAN && r.network != "" {
+	if ban {
+		if pl.newestBackend != "" {
+			r.fallback, r.fallbackName = pl.newestBackend, pl.newestBackendName
+		}
 		r.lookupNetwork = true
 	}
 	r.server, r.serverName = r.fallback, r.fallbackName
