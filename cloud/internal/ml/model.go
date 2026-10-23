@@ -135,6 +135,8 @@ func CheckGate(path string) error {
 		return fmt.Errorf("%w: gate report does not say synthetic false", ErrModelRejected)
 	case g.FeatureVersion != FeatureVersion:
 		return fmt.Errorf("%w: gate report feature version %d, this build computes %d", ErrModelRejected, g.FeatureVersion, FeatureVersion)
+	case strings.TrimSpace(g.ModelSHA256) == "":
+		return fmt.Errorf("%w: gate report has no model_sha256 (written with --sklearn or by an older pipeline; evaluate the ONNX model again)", ErrModelRejected)
 	}
 	sum, err := fileSHA256(path)
 	if err != nil {

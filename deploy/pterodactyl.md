@@ -8,7 +8,7 @@ servers. For larger installations use the split deployment in [../docs/OPERATION
 
 | Item | Value |
 |---|---|
-| Image | any glibc or musl Linux image; the binary is static (`CGO_ENABLED=0`; an ML build is not, see "ML scoring"). Pick the build matching the node: `linux/amd64` or `linux/arm64` |
+| Image | any glibc or musl Linux image; the binary is static (`CGO_ENABLED=0`; an ML build is not and needs glibc, see "ML scoring"). Pick the build matching the node: `linux/amd64` or `linux/arm64` |
 | Files | upload `pandaeye` to `/home/container/` (SFTP) and make it executable (`chmod 755 pandaeye` over SFTP, or in the egg's install script) |
 | Startup command | `./pandaeye all` |
 | Stop command | `^C` (SIGINT). PandaEye shuts down gracefully within 10 s: connections receive `CODE_SHUTTING_DOWN`, leases are released, stores are flushed. Do not use a kill-style stop |
@@ -78,7 +78,8 @@ The default build cannot load models. A worker that scores (`PE_ML_MODEL`) needs
 `CGO_ENABLED=1 go build -tags onnx`, which needs a C compiler and the libc headers (`gcc`, `libc6-dev`)
 where it is built. That binary is not static: it links the build host's libc, so build it on the node
 (or the same image) and set `GOTMPDIR` as above. It also needs the ONNX Runtime shared library under
-`/home/container`, named by an absolute `PE_ML_ONNXRUNTIME_LIB`. Copy only `model.onnx` and
+`/home/container`, named by an absolute `PE_ML_ONNXRUNTIME_LIB`; its release builds need a glibc image
+(1.31: glibc 2.28 or newer) with `libstdc++`, not musl. Copy only `model.onnx` and
 `model.gate.json` to the server ([ml/README.md](../ml/README.md) step 4) and keep `PE_ML_POINTS=0`:
 a model that does not load then logs an error and the node keeps running without ML.
 

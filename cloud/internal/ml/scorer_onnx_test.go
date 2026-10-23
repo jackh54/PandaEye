@@ -4,9 +4,12 @@ package ml
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"testing"
 
+	"github.com/jackh54/PandaEye/cloud/internal/app"
+	"github.com/jackh54/PandaEye/cloud/internal/config"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
@@ -94,6 +97,23 @@ func TestONNXScorer(t *testing.T) {
 	}
 	if _, err := openModel(writeGated(t, tinyModel(goodMeta()), func(g map[string]any) { g["deployable"] = false }), 0); !errors.Is(err, ErrModelRejected) {
 		t.Errorf("model without a deployable gate: %v", err)
+	}
+
+	// Through New: a gated model loads in shadow; a model the contract refuses after ONNX Runtime opened
+	// it (threshold 0) leaves ML off in shadow and fails with points.
+	if s, err := New(&app.Deps{Config: &config.Config{ML: config.ML{Model: path}}}); err != nil || !s.Enabled() {
+		t.Errorf("gated model in shadow: %v %v", s, err)
+	} else {
+		_ = s.Close()
+	}
+	zero := goodMeta()
+	zero[MetaThreshold] = "0"
+	path0 := writeGated(t, tinyModel(zero), nil)
+	if s, err := New(&app.Deps{Config: &config.Config{ML: config.ML{Model: path0}}, Log: slog.New(slog.DiscardHandler)}); err != nil || s.Enabled() {
+		t.Errorf("threshold 0 in shadow: %v %v", s, err)
+	}
+	if _, err := New(&app.Deps{Config: &config.Config{ML: config.ML{Model: path0, Points: 5}}}); !errors.Is(err, ErrModelRejected) {
+		t.Errorf("threshold 0 with points: %v", err)
 	}
 
 	o, err := sessionOptions()

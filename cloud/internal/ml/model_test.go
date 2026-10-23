@@ -43,6 +43,8 @@ func TestValidateModelMeta(t *testing.T) {
 		"synthetic":           func(m map[string]string) { m[MetaTrainedOnSynthetic] = "true" },
 		"synthetic unknown":   func(m map[string]string) { delete(m, MetaTrainedOnSynthetic) },
 		"bad threshold":       func(m map[string]string) { m[MetaThreshold] = "1.5" },
+		"zero threshold":      func(m map[string]string) { m[MetaThreshold] = "0" },
+		"negative threshold":  func(m map[string]string) { m[MetaThreshold] = "-0.1" },
 		"non-tick model":      func(m map[string]string) { m[MetaMinClientProtocol] = "47" },
 		"bad name":            func(m map[string]string) { m[MetaModelName] = "Bad Name!" },
 		"wrong feature count": func(m map[string]string) { m[MetaNFeatures] = "93" },
@@ -111,6 +113,11 @@ func TestCheckGate(t *testing.T) {
 		if err := CheckGate(writeGated(t, model, mod)); !errors.Is(err, ErrModelRejected) {
 			t.Errorf("%s: accepted (%v)", name, err)
 		}
+	}
+	// A report without a hash (--sklearn, or from before the hash) says so instead of "another file".
+	if err := CheckGate(writeGated(t, model, func(g map[string]any) { g["model_sha256"] = nil })); err == nil ||
+		!strings.Contains(err.Error(), "no model_sha256") {
+		t.Errorf("null hash: %v", err)
 	}
 	path := writeGated(t, model, nil)
 	if err := os.WriteFile(path, append(model, '!'), 0o600); err != nil {

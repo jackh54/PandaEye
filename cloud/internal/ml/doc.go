@@ -56,7 +56,7 @@ type Scorer interface {
 }
 
 // ErrModelRejected is returned for models that must not be loaded (feature contract mismatch,
-// trained on synthetic data, missing metadata).
+// trained on synthetic data, missing metadata, no deployable gate report for the file).
 var ErrModelRejected = errors.New("ml: model rejected")
 
 // New returns the scorer configured by PE_ML_MODEL: disabled when unset; in builds without the onnx
