@@ -1,19 +1,22 @@
 """Dataset assembly: feature windows + labels -> labelled, filtered, group-split training data.
 
 Sources
-- Feature windows: ClickHouse ``feature_windows`` (clickhouse-connect) or a parquet/CSV export
-  (wide: one column per feature; or a ``features`` array column as stored in ClickHouse).
+- Feature windows: ClickHouse ``feature_windows`` (clickhouse-connect), a parquet/CSV export (wide: one
+  column per feature; or a ``features`` array column as stored in ClickHouse), or a ``PE_FEATURES_DIR``
+  directory of hourly CSV files written by the cloud (``windows-YYYYMMDDTHHZ.csv[.gz]`` plus an
+  ``erasures.jsonl`` journal, FEATURES.md section 6).
 - Labels: the API NDJSON export ``GET /api/v1/export/labels`` (bearer API key) or an NDJSON file.
 
-Rules (FEATURES.md section 7): erased subjects and untrusted tenants are excluded, non-tick clients and
-other feature versions are dropped, windows are labelled by overlap with a label interval of the same
-(tenant, player), ambiguous windows are dropped, unlabelled windows are excluded, and splits are by
-player UUID so no player is on both sides.
+Rules (FEATURES.md section 7): erased subjects and untrusted tenants are excluded, windows of filtered
+servers (e.g. lobbies), non-tick clients and other feature versions are dropped, windows are labelled by
+overlap with a label interval of the same (tenant, player), ambiguous windows are dropped, unlabelled
+windows are excluded, and splits are by player UUID so no player is on both sides.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import ipaddress
 import json
 import logging
@@ -22,7 +25,8 @@ import os
 import urllib.parse
 import urllib.request
 import uuid as uuidlib
-from collections.abc import Iterable, Iterator
+import zlib
+from collections.abc import Collection, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +51,9 @@ CATEGORY_NAMES = {
 }
 UNKNOWN_CATEGORY = "UNSPECIFIED"
 SYNTHETIC_TENANT_PREFIX = "synthetic-"
+# PE_FEATURES_DIR layout (FEATURES.md section 6): hourly window files and the erasure journal.
+WINDOW_FILE_GLOBS = ("windows-*.csv", "windows-*.csv.gz")
+ERASURE_JOURNAL = "erasures.jsonl"
 
 KEY_COLUMNS = ("tenant_id", "player", "session_id", "window_start_us")
 LABEL_COLUMNS = (
@@ -207,16 +214,143 @@ def dedupe_windows(df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["tenant_id", "player", "window_start_us"], kind="stable").reset_index(drop=True)
 
 
-def load_windows_file(path: str | Path) -> pd.DataFrame:
+def _synthetic_rows(df: pd.DataFrame) -> pd.Series:
+    """Windows marked synthetic: a ``synthetic-`` tenant or a truthy ``synthetic`` column."""
+    mask = df["tenant_id"].astype(str).str.startswith(SYNTHETIC_TENANT_PREFIX)
+    if "synthetic" in df.columns:
+        mask = mask | pd.to_numeric(df["synthetic"], errors="coerce").fillna(0).astype(bool)
+    return mask
+
+
+def _filter_windows(
+    df: pd.DataFrame,
+    pairs: Collection[tuple[str, str]] | None,
+    since_us: int | None,
+    until_us: int | None,
+) -> pd.DataFrame:
+    keep = pd.Series(True, index=df.index)
+    if since_us is not None:
+        keep &= df["window_start_us"] >= since_us
+    if until_us is not None:
+        keep &= df["window_start_us"] < until_us
+    if pairs is not None:
+        # Synthetic rows survive the pair filter so build_dataset still sees them and taints the dataset.
+        keys = pd.Series(list(zip(df["tenant_id"], df["player"])), index=df.index, dtype=object)
+        keep &= keys.isin(pairs) | _synthetic_rows(df)
+    return df[keep]
+
+
+def _read_window_csv(path: Path) -> pd.DataFrame | None:
+    """One file of a features directory, or None when not even its header is complete.
+
+    A plain ``.csv`` is the hour being written: an unterminated last line is a row the writer has not
+    finished, and is ignored. A ``.csv.gz`` is a finished hour and must be complete.
+    """
+    try:
+        if path.name.endswith(".gz"):
+            return pd.read_csv(path)
+        data = path.read_bytes()
+        end = data.rfind(b"\n") + 1
+        if end == 0:
+            return None
+        if end < len(data):
+            log.info("%s: ignoring an incomplete last line (%d bytes)", path, len(data) - end)
+        return pd.read_csv(io.BytesIO(data[:end]))
+    except FileNotFoundError:
+        raise
+    except (OSError, EOFError, zlib.error, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        raise ValueError(f"cannot read window file {path}: {exc}") from exc
+
+
+def load_windows_dir(
+    directory: str | Path,
+    *,
+    pairs: Collection[tuple[str, str]] | None = None,
+    since_us: int | None = None,
+    until_us: int | None = None,
+) -> pd.DataFrame:
+    """Load a ``PE_FEATURES_DIR``: every ``windows-*.csv`` and ``windows-*.csv.gz`` in it.
+
+    Each file is filtered (as in load_windows_file, plus the directory's ``erasures.jsonl``) before the
+    files are concatenated, so memory follows the rows kept rather than the size of the directory. The
+    result is de-duplicated like a single file.
+
+    The cloud keeps working meanwhile: a file it removes after the listing is skipped, files it creates
+    (the ``.csv.gz`` of an hour it compressed) are read in another pass, and an erasure it journals before
+    the last file is read applies too.
+    """
+    d = Path(directory)
+    files = _window_files(d)
+    if not files:
+        raise ValueError(f"no windows-*.csv or windows-*.csv.gz files in {d}")
+    journal = _dir_journal(d)
+    frames = []
+    rows = erased = 0
+    seen: set[Path] = set()
+    while files:
+        for path in files:
+            seen.add(path)
+            try:
+                raw = _read_window_csv(path)
+            except FileNotFoundError:  # compressed (its .csv.gz is listed next) or deleted (retention)
+                log.info("%s: removed while loading", path)
+                continue
+            if raw is None:
+                continue
+            df = normalize_windows(raw)
+            rows += len(df)
+            df = _filter_windows(df, pairs, since_us, until_us)
+            gone = journal.erased(df)
+            n_gone = int(gone.sum())
+            erased += n_gone
+            if len(df) > n_gone:
+                frames.append(df[~gone])
+        files = [p for p in _window_files(d) if p not in seen]
+    out = pd.concat(frames, ignore_index=True) if frames else None
+    latest = _dir_journal(d)
+    if out is not None and latest != journal:
+        gone = latest.erased(out)
+        erased += int(gone.sum())
+        out = out[~gone]
+    log.info("%s: %d files, %d rows, %d kept, %d erased (%s)", d, len(seen), rows,
+             0 if out is None else len(out), erased, ERASURE_JOURNAL)
+    if out is None or out.empty:
+        return normalize_windows(pd.DataFrame(columns=[*F.META_COLUMNS, *F.FEATURE_NAMES]))
+    return dedupe_windows(out)
+
+
+def _window_files(d: Path) -> list[Path]:
+    return sorted({p for g in WINDOW_FILE_GLOBS for p in d.glob(g) if p.is_file()})
+
+
+def _dir_journal(d: Path) -> ErasureJournal:
+    path = d / ERASURE_JOURNAL
+    return load_erasure_journal(path) if path.exists() else ErasureJournal()  # no erasure yet
+
+
+def load_windows_file(
+    path: str | Path,
+    *,
+    pairs: Collection[tuple[str, str]] | None = None,
+    since_us: int | None = None,
+    until_us: int | None = None,
+) -> pd.DataFrame:
+    """Load windows from a .parquet/.csv/.csv.gz file or a features directory (load_windows_dir).
+
+    Keeps rows with ``since_us <= window_start_us < until_us`` and, when ``pairs`` is given, only those
+    of the labelled (tenant_id, player) pairs: the others could never be labelled.
+    """
     path = Path(path)
+    if path.is_dir():
+        return load_windows_dir(path, pairs=pairs, since_us=since_us, until_us=until_us)
     name = path.name.lower()
     if name.endswith(".parquet"):
         df = pd.read_parquet(path)
     elif name.endswith((".csv", ".csv.gz")):
         df = pd.read_csv(path)
     else:
-        raise ValueError(f"unsupported window file type: {path} (use .parquet or .csv)")
-    return dedupe_windows(normalize_windows(df))
+        raise ValueError(f"unsupported window file type: {path} (use .parquet, .csv or a features directory)")
+    return dedupe_windows(_filter_windows(normalize_windows(df), pairs, since_us, until_us))
 
 
 def save_windows(df: pd.DataFrame, path: str | Path) -> Path:
@@ -475,6 +609,101 @@ def load_erasures(path: str | Path | None) -> ErasureList:
     return ErasureList(frozenset(pairs), frozenset(players))
 
 
+@dataclass(frozen=True)
+class ErasureJournal:
+    """A features directory's ``erasures.jsonl``: (tenant_id, player) -> latest ``erased_at_us``.
+
+    Unlike ErasureList it is time-bounded: rows recorded before the erasure are erased, rows recorded
+    after it are new data.
+    """
+
+    erased_at: dict[tuple[str, str], int] = field(default_factory=dict)
+
+    def __len__(self) -> int:
+        return len(self.erased_at)
+
+    def erased(self, df: pd.DataFrame) -> pd.Series:
+        """Rows of an erased (tenant, player) whose window started before the erasure or that were written
+        at or before it, as the cloud's sink and the worker decide."""
+        if not self.erased_at or df.empty:
+            return pd.Series(False, index=df.index)
+        keys = pd.Series(list(zip(df["tenant_id"], df["player"])), index=df.index, dtype=object)
+        cutoff = keys.map(self.erased_at)  # NaN where the pair was never erased: every comparison is False
+        gone = df["window_start_us"] < cutoff
+        if "worker_unix_us" in df.columns:
+            gone |= pd.to_numeric(df["worker_unix_us"], errors="coerce") <= cutoff
+        return gone
+
+
+def load_erasure_journal(path: str | Path) -> ErasureJournal:
+    """One JSON object per line: ``{"tenant_id", "player_uuid", "erased_at_us"}`` (Unix microseconds).
+
+    Fails on any malformed line, including an incomplete last one: skipping an erasure is not safe.
+    """
+    erased_at: dict[tuple[str, str], int] = {}
+    with open(path, encoding="utf-8") as fh:
+        try:
+            for rec in iter_ndjson(fh):
+                tenant, at = rec["tenant_id"], rec["erased_at_us"]
+                if not isinstance(tenant, str) or not tenant:
+                    raise ValueError("tenant_id must be a non-empty string")
+                if isinstance(at, bool) or not isinstance(at, int):
+                    raise ValueError("erased_at_us must be an integer (Unix microseconds)")
+                key = (tenant, normalize_uuid(rec["player_uuid"]))
+                erased_at[key] = max(at, erased_at.get(key, at))
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ValueError(f"{path}: bad erasure record ({exc}); if it is the last line, the cloud may "
+                             "still be writing it: retry") from exc
+    return ErasureJournal(erased_at)
+
+
+def write_erased_list(journal: ErasureJournal, path: str | Path) -> Path:
+    """Write a journal in the ``--erased`` format (load_erasures), for copies taken off the node.
+
+    The time bound is dropped, so every row of these subjects is excluded.
+    """
+    lines = []
+    for tenant, player in sorted(journal.erased_at):
+        if not tenant or tenant != tenant.strip() or any(c in tenant for c in ",\t#"):
+            raise ValueError(f"tenant id {tenant!r} cannot be written to an erasure list")
+        lines.append(f"{tenant},{player}\n")
+    path = Path(path)
+    header = f"# erased subjects from {ERASURE_JOURNAL}: tenant_id,player_uuid (all of their rows)\n"
+    _write_private(path, lambda p: p.write_text(header + "".join(lines), encoding="utf-8"))
+    return path
+
+
+@dataclass(frozen=True)
+class ServerFilter:
+    """Windows by ``server_id``: only those of ``include`` (when non-empty), never those of ``exclude``."""
+
+    include: frozenset[str] = frozenset()
+    exclude: frozenset[str] = frozenset()
+
+    def __bool__(self) -> bool:
+        return bool(self.include or self.exclude)
+
+    def keep(self, df: pd.DataFrame) -> pd.Series:
+        keep = ~df["server_id"].isin(self.exclude)
+        if self.include:
+            keep &= df["server_id"].isin(self.include)
+        return keep
+
+
+def parse_server_ids(values: Iterable[str] | None) -> frozenset[str]:
+    """Server ids (canonical UUIDs) from flag values, each a comma-separated list."""
+    ids = set()
+    for value in values or ():
+        for part in value.split(","):
+            if not part.strip():
+                continue
+            try:
+                ids.add(normalize_uuid(part))
+            except ValueError as exc:
+                raise ValueError(f"bad server id {part.strip()!r}: server ids are UUIDs") from exc
+    return frozenset(ids)
+
+
 def _excluded_mask(df: pd.DataFrame, trusted: set[str], erased: ErasureList) -> pd.Series:
     untrusted = ~df["tenant_id"].isin(trusted)
     er = df["player"].isin(erased.players)
@@ -614,16 +843,19 @@ def build_dataset(
     trusted_tenants: set[str],
     erased: ErasureList | None = None,
     *,
+    servers: ServerFilter | None = None,
     tick_clients_only: bool = True,
     feature_version: int = F.FEATURE_VERSION,
 ) -> Dataset:
     erased = erased or ErasureList()
     stats: dict[str, Any] = {"windows_in": int(len(windows)), "labels_in": int(len(labels))}
     synthetic = bool(labels["synthetic"].any()) if "synthetic" in labels.columns and len(labels) else False
-    synthetic = synthetic or bool(windows["tenant_id"].astype(str).str.startswith(SYNTHETIC_TENANT_PREFIX).any())
-    if "synthetic" in windows.columns:
-        synthetic = synthetic or bool(pd.to_numeric(windows["synthetic"], errors="coerce").fillna(0).astype(bool).any())
+    synthetic = synthetic or bool(_synthetic_rows(windows).any())
 
+    if servers:
+        keep = servers.keep(windows)
+        stats["windows_server_filtered"] = int((~keep).sum())
+        windows = windows[keep]
     wrong_version = windows["feature_version"] != feature_version
     stats["windows_wrong_version"] = int(wrong_version.sum())
     windows = windows[~wrong_version]

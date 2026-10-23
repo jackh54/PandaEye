@@ -27,37 +27,64 @@ def _env(name: str, required: bool = True) -> str | None:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    from .dataset import fetch_labels_api, load_windows_clickhouse, save_windows, to_unix_us, write_ndjson
+    from .dataset import fetch_labels_api, to_unix_us, write_ndjson
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    since_us = to_unix_us(args.since) if args.since else None
-    until_us = to_unix_us(args.until) if args.until else None
-    tenants = None
-    if args.trusted_tenants:
-        from .dataset import load_tenant_allowlist
+    result: dict[str, object] = {}
+    if not args.labels_only:
+        from .dataset import load_windows_clickhouse, save_windows
 
-        tenants = load_tenant_allowlist(args.trusted_tenants)
-    windows = load_windows_clickhouse(
-        _env(args.clickhouse_dsn_env), since_us=since_us, until_us=until_us, tenants=tenants
-    )
-    wpath = save_windows(windows, out / "feature_windows.parquet")
+        since_us = to_unix_us(args.since) if args.since else None
+        until_us = to_unix_us(args.until) if args.until else None
+        tenants = None
+        if args.trusted_tenants:
+            from .dataset import load_tenant_allowlist
+
+            tenants = load_tenant_allowlist(args.trusted_tenants)
+        windows = load_windows_clickhouse(
+            _env(args.clickhouse_dsn_env), since_us=since_us, until_us=until_us, tenants=tenants
+        )
+        wpath = save_windows(windows, out / "feature_windows.parquet")
+        result.update(windows=str(wpath), window_rows=len(windows))
     records = fetch_labels_api(args.api_url, _env(args.api_key_env), since=args.since)
     lpath = write_ndjson(records, out / "labels.ndjson")
-    print(json.dumps({"windows": str(wpath), "window_rows": len(windows), "labels": str(lpath), "label_rows": len(records)}))
+    result.update(labels=str(lpath), label_rows=len(records))
+    if args.erasures_from:
+        from .dataset import ERASURE_JOURNAL, ErasureJournal, load_erasure_journal, write_erased_list
+
+        src = Path(args.erasures_from)
+        if src.is_dir():
+            src = src / ERASURE_JOURNAL
+            journal = load_erasure_journal(src) if src.exists() else ErasureJournal()  # no erasure yet
+        else:
+            journal = load_erasure_journal(src)
+        epath = write_erased_list(journal, out / "erased.txt")
+        result.update(erased=str(epath), erased_rows=len(journal))
+    print(json.dumps(result))
     return 0
 
 
 def _load_inputs(args: argparse.Namespace):
-    from .dataset import build_dataset, load_erasures, load_tenant_allowlist, load_windows_file, parse_label_records, read_ndjson
+    from .dataset import (ServerFilter, build_dataset, load_erasures, load_tenant_allowlist, load_windows_file,
+                          parse_label_records, parse_server_ids, read_ndjson, to_unix_us)
 
     if not args.trusted_tenants:
         raise SystemExit("--trusted-tenants is required (labels only from trusted tenants, ARCHITECTURE 5.10)")
-    windows = load_windows_file(args.windows)
+    try:
+        servers = ServerFilter(parse_server_ids(args.include_servers), parse_server_ids(args.exclude_servers))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     labels = parse_label_records(read_ndjson(args.labels))
+    windows = load_windows_file(
+        args.windows,
+        pairs=set(zip(labels["tenant_id"], labels["player"])),
+        since_us=to_unix_us(args.since) if args.since else None,
+        until_us=to_unix_us(args.until) if args.until else None,
+    )
     trusted = load_tenant_allowlist(args.trusted_tenants)
     erased = load_erasures(args.erased)
-    return build_dataset(windows, labels, trusted, erased, tick_clients_only=not args.all_clients)
+    return build_dataset(windows, labels, trusted, erased, servers=servers, tick_clients_only=not args.all_clients)
 
 
 def cmd_train(args: argparse.Namespace) -> int:
@@ -169,14 +196,25 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--since", help="RFC 3339 or Unix time; windows and labels from this time")
     e.add_argument("--until", help="RFC 3339 or Unix time; windows before this time")
     e.add_argument("--trusted-tenants", help="optional allow-list file: only export these tenants' windows")
+    e.add_argument("--labels-only", action="store_true",
+                   help="export labels only, no ClickHouse (windows recorded to files in PE_FEATURES_DIR)")
+    e.add_argument("--erasures-from", metavar="DIR",
+                   help="also write <out>/erased.txt (--erased format) from DIR/erasures.jsonl, DIR = PE_FEATURES_DIR")
     e.set_defaults(func=cmd_export)
 
     def data_args(sp: argparse.ArgumentParser) -> None:
-        sp.add_argument("--windows", required=True, help="feature windows (.parquet or .csv)")
+        sp.add_argument("--windows", required=True,
+                        help="feature windows: .parquet, .csv[.gz] or a PE_FEATURES_DIR directory (windows-*.csv[.gz])")
         sp.add_argument("--labels", required=True, help="labels NDJSON (API export format)")
         sp.add_argument("--trusted-tenants", required=True, help="tenant allow-list, one id per line")
         sp.add_argument("--erased", help="erasure list: 'tenant_id,player_uuid' or 'player_uuid' per line")
         sp.add_argument("--all-clients", action="store_true", help="keep non-tick clients (v1 models must not)")
+        sp.add_argument("--since", help="RFC 3339 or Unix time; only windows starting at or after it")
+        sp.add_argument("--until", help="RFC 3339 or Unix time; only windows starting before it")
+        sp.add_argument("--exclude-servers", action="append", metavar="IDS",
+                        help="drop windows of these server ids (comma-separated, repeatable), e.g. lobbies")
+        sp.add_argument("--include-servers", action="append", metavar="IDS",
+                        help="keep only windows of these server ids (comma-separated, repeatable)")
 
     t = sub.add_parser("train", help="train, calibrate, pick the threshold, export ONNX (+ parity check)")
     data_args(t)
