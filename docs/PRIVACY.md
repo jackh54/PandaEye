@@ -168,6 +168,7 @@ existing checks on players it was not trained on, and it starts with no effect o
 | Appeals | 1 year; the contact detail is deleted 30 days after the decision |
 | Labels | 2 years |
 | Analytics copies (if enabled): signals / verdicts / sessions / feature windows | 30 days / 90 days / 90 days / 180 days |
+| Feature-window files (if enabled instead of the analytics copies; feature windows only) | 90 days [default; state the operated value, at most 180 days] |
 | Player records (UUID, latest name, first and last seen, last server) and name history | [period] |
 | Reputation contributions | until the ban is overturned or the data erased [maximum period] |
 | Records of completed erasures (UUID, dates, counts) | [period], to discard data still in transit and document the erasure |
@@ -194,8 +195,8 @@ and kept there under the server owner's control.
   role, or an API key with the `erase` permission). You can also ask us and we will forward or assist.
 - **What is deleted**, for that server owner's account: the player record and name history, verdicts,
   bans, appeals, labels, replay clips (including clips in which the player appears as another player's
-  target), reputation contributions and the analytics copies. An erasure marker makes the service discard
-  any of the player's data still in transit.
+  target), reputation contributions and the analytics copies (database tables or feature-window files). An
+  erasure marker makes the service discard any of the player's data still in transit.
 - **Exception**: while a ban is active, a minimal record (verdict identifier, UUID, check identifiers, score,
   time) is kept so the ban can be enforced and later lifted. It is deleted when the ban is lifted.
 - **Residual copies** expire automatically: raw telemetry within 24 hours, signals within 7 days, verdict
@@ -342,3 +343,7 @@ Points where the spec does not support a statement the notice needs. Resolve the
 9. **Evidence through Cloudflare**: dashboard pages, including evidence and replay data, pass through
    Cloudflare's network; the transfer assessment must cover it.
 10. **Exempt (bypass) status and Bedrock flag** are processed for all players; both are covered in A2.
+11. **Feature-window files** (`PE_FEATURES_DIR`): their erasure journal (`erasures.jsonl`: tenant, UUID,
+    erasure time) is kept as long as the directory, like the `erasures` table (item 1). Copies of the files
+    taken off the node for training, and Pterodactyl or host backups of the directory, are not reached by
+    an erasure: they need their own retention, and training filters them with the journal (`--erased`).

@@ -129,6 +129,8 @@ it does not use.
 | `PE_DB_DSN` | `./data/pandaeye.db` | all roles | sqlite path or `postgres://...`; treated as a secret (may carry a password) |
 | `PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`, `PE_DB_BACKUP_DIR` | `6h`, `8`, `backups/` next to the database | all (sqlite only) | online sqlite backups (`VACUUM INTO`, a consistent copy while running) as `pandaeye-<UTC>.db`, the newest `KEEP` kept; interval `0` disables. Ignored for postgres |
 | `PE_CLICKHOUSE_DSN` | empty | worker, verdict, api | `clickhouse://user:pass@host:9000/pandaeye`; empty disables telemetry. The user needs SELECT, INSERT and ALTER DELETE (erasure) |
+| `PE_FEATURES_DIR` | empty | all | records ML feature windows as hourly CSV files in this directory, for training without ClickHouse ([ml/README.md](../ml/README.md#feature-window-files-no-clickhouse)); empty disables it. Only in `all` (erasure reaches the files only when the api shares the worker's process) and not together with `PE_CLICKHOUSE_DSN`. Use a directory of its own outside the repository clone, e.g. `data/ml`. Not in ARCHITECTURE 5.1 (implementation) |
+| `PE_FEATURES_RETENTION`, `PE_FEATURES_MAX_BYTES` | `90d`, `20GiB` | all | files whose hour ended longer ago are deleted (at most `180d`), then the oldest files beyond the byte cap (checked hourly and after each hour's compression). Disk: about 170 B per window compressed (measured on synthetic data), at most 2 880 windows a day per concurrently tracked player, so at most about 0.5 MB per tracked player and day (73 MB a day for 150 concurrent players), plus the current hour uncompressed (about 700 B per window). Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_LICENSE_MODE` | `static` | gateway, api | `static` or `pandascript` |
 | `PE_LICENSE_URL`, `PE_LICENSE_PRODUCT` | empty, `pandaeye` | gateway, api | pandascript licence worker, plain `https://` URL only |
 | `PE_LICENSE_PEPPER` | generated in `all` | gateway, api | HMAC key of licence lookups, >= 32 bytes, required for gateway and api outside `all`, identical everywhere. Never rotate it (8.6) |
@@ -165,6 +167,12 @@ Secrets summary (generate with `openssl rand -hex 32`; `deploy/scripts/gen-env.s
   (180 d, schema owned by [`ml/FEATURES.md`](../ml/FEATURES.md)) and `sessions` (90 d), ordered by
   `(tenant_id, time)`. Inserts are batched (1 s / 10 000 rows) and dropped on overflow, so ClickHouse
   downtime loses telemetry but never affects detection.
+- **Feature-window files** (`PE_FEATURES_DIR`, `all` only): the ML feature windows without ClickHouse, one
+  CSV file per UTC hour of writing, gzip-compressed when the hour is over, deleted after
+  `PE_FEATURES_RETENTION` or beyond `PE_FEATURES_MAX_BYTES`. Signals, verdicts and sessions are not stored.
+  Files are mode 0600 in a 0700 directory; an erasure is journalled in `erasures.jsonl` and the files are
+  rewritten without the player in the background. Writes are queued and dropped on overflow
+  (`pandaeye_dropped_total{reason="telemetry_overflow"}`), like ClickHouse inserts.
 
 ## 5. NATS
 
@@ -393,6 +401,7 @@ What happens on a graceful stop (SIGTERM, completes within 10 s; give the runtim
 | `PE_EVENTS`, `PE_SIGNALS` | NATS | R3 replication only | transient (24 h / 7 d): scores and windows rebuild from new data |
 | `PE_SERVERS`, `PE_TENANTS` | NATS KV | rebuilt from the database (see restore) | see restore step 4 |
 | ClickHouse | optional | `BACKUP DATABASE pandaeye TO ...` | analytics and ML feature windows only |
+| Feature-window files | `PE_FEATURES_DIR` (optional) | any file copy (the `.csv.gz` files never change except for erasures) | ML training data only |
 | Dashboard D1 | Cloudflare | D1 Time Travel / `wrangler d1 export` | dashboard users, invites, sessions |
 | NATS auth | `deploy/nats/auth/keys` | offline copy | re-issue every creds file (8.6) |
 
