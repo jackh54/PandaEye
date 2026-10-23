@@ -242,6 +242,14 @@ ORDER BY (tenant_id, time, player, session_id)
 TTL time + INTERVAL 180 DAY DELETE;
 ```
 
+**Files** (`PE_FEATURES_DIR`, instead of ClickHouse). The directory holds `windows-YYYYMMDDTHHZ.csv`
+(the hour being written; its last line may be unfinished) and `windows-YYYYMMDDTHHZ.csv.gz` (finished
+hours). Every file has a header row and the wide CSV layout of an export: the section 5 columns,
+`worker_unix_us` and one column per feature. Readers combine the files and de-duplicate as above.
+`erasures.jsonl` holds one `{"tenant_id", "player_uuid", "erased_at_us"}` object per line: rows of that
+(tenant, player) recorded before `erased_at_us` (Unix microseconds) are erased, later rows are new data.
+The pipeline applies it on load (`--windows <dir>`) and can export it as an `--erased` list (section 7).
+
 ## 7. Labels and the training set
 
 **Label source.** `GET /api/v1/export/labels?since=<RFC 3339>` with `Authorization: Bearer pe_<id>_<secret>`
@@ -277,6 +285,8 @@ evaluation. A cheat window's category is that of the most recently created overl
   than 30 days with >= 50 distinct players) contribute windows or labels. Training refuses to run without
   an allow-list.
 - non-tick clients (`client_protocol < 768`) and rows with `feature_version != 1`.
+- optionally, servers by `server_id` (`--exclude-servers`, `--include-servers`): lobby windows are short,
+  often exempt from movement checks, and would inherit labels from verdicts on other servers.
 
 **Split.** Train/test (and train/validation) splits are by player UUID (one group per UUID across all
 tenants, since online-mode UUIDs identify the same person everywhere), stratified by whether the player

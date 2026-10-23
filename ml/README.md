@@ -19,7 +19,7 @@ The feature vector is the contract with the Go worker: [`FEATURES.md`](FEATURES.
 |---|---|
 | `FEATURES.md` | feature vector v1: ordered names, definitions, units, events, defaults, clipping; DDL; label join; model contract |
 | `pandaeye_ml/features.py` | machine-readable mirror of the feature table (a test keeps it identical to FEATURES.md) |
-| `pandaeye_ml/dataset.py` | load windows (ClickHouse via clickhouse-connect, parquet/CSV) and labels (API NDJSON export or file); exclusions; overlap join; player-grouped split |
+| `pandaeye_ml/dataset.py` | load windows (ClickHouse via clickhouse-connect, parquet/CSV, or a `PE_FEATURES_DIR` directory) and labels (API NDJSON export or file); exclusions; overlap join; player-grouped split |
 | `pandaeye_ml/baseline.py` | heuristic baseline: per-window score mirroring the verdict scoring (raw points, check and family caps) |
 | `pandaeye_ml/train.py` | HistGradientBoosting + class weights + sigmoid calibration, out-of-fold threshold selection, ONNX export |
 | `pandaeye_ml/export_onnx.py` | skl2onnx export, `pandaeye.*` metadata, onnxruntime parity check |
@@ -57,6 +57,20 @@ booleans into tree attributes that protobuf 7 rejects.
    contain player UUIDs (personal data): they are written with mode 0600 and must not be committed or
    shared, and an erasure request means deleting them or re-exporting.
 
+   **Windows recorded to files** (`PE_FEATURES_DIR`, no ClickHouse; FEATURES.md section 6): train on
+   the directory itself and export only the labels:
+
+   ```sh
+   python -m pandaeye_ml export --out data/ --api-url https://<api-host> --labels-only \
+       --erasures-from /path/to/PE_FEATURES_DIR
+   ```
+
+   `--labels-only` needs no ClickHouse DSN. `--erasures-from` also writes `data/erased.txt`, the
+   directory's erasure journal in the `--erased` format, for copies of the windows taken off the node
+   before an erasure (pass it to `train --erased`). It drops the journal's time bound, so all rows of
+   those players are excluded. The directory and every copy of it hold player UUIDs, like the files
+   above.
+
 2. **Train**:
 
    ```sh
@@ -68,6 +82,20 @@ booleans into tree attributes that protobuf 7 rejects.
      or older than 30 days with >= 50 distinct players; ARCHITECTURE 5.10/5.11).
    - `--erased` (optional) drops `tenant_id,player_uuid` (or bare `player_uuid`) subjects, for exports
      made before an erasure.
+   - `--windows` also takes a `PE_FEATURES_DIR` directory (`--windows data/ml`). Every `windows-*.csv`
+     (the current hour; an unfinished last line is ignored) and `windows-*.csv.gz` in it is read.
+   - Windows are cut to the labelled (tenant, player) pairs and to `--since`/`--until` (window start) as
+     they load, file by file for a directory, so memory follows what is kept. `windows_in` in the report
+     therefore counts only windows of labelled players. Rows are then de-duplicated as for a single file.
+   - A directory's `erasures.jsonl` is applied automatically: rows of an erased player recorded before
+     the erasure are dropped. A malformed journal line stops the run.
+   - `--exclude-servers` / `--include-servers` (comma-separated server ids, from
+     `plugins/PandaEye/server-id` or `GET /api/v1/servers`) filter windows before the label join. Keep
+     lobby and hub servers out: visits there are short, and local movement checks are often exempt, so
+     their flag features read 0 whatever the player does. Labels are per player and time, so a cheat
+     verdict from a game server would also label the player's lobby windows in that interval, and the
+     model would learn lobby behaviour as cheating. `train_report.json` counts the dropped windows
+     (`windows_server_filtered`).
    - Windows of non-tick clients (`client_protocol < 768`) are excluded (`--all-clients` keeps them).
      The v1 model applies to tick clients only.
    - Windows are labelled by overlap with label intervals, ambiguous windows are dropped, and unlabelled

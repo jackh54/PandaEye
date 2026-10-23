@@ -173,6 +173,26 @@ def test_build_dataset_exclusions(tmp_path):
         D.load_tenant_allowlist(empty)
 
 
+LOBBY = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+
+def test_server_filter_runs_before_the_join():
+    windows = make_windows([("t1", P1, k) for k in range(4)] + [("t1", P2, 0)])
+    windows.loc[windows["window_start_us"] < T0 + 2 * W, "server_id"] = LOBBY  # P1's windows 0-1, P2's 0
+    labels = D.parse_label_records([label("t1", P1, "cheat", T0, T0 + 4 * W), label("t1", P2, "legit", T0, T0 + W)])
+    ds = D.build_dataset(windows, labels, {"t1"}, servers=D.ServerFilter(exclude=D.parse_server_ids([LOBBY.upper()])))
+    # The cheat label covers the lobby visit too, but those windows never reach the join.
+    assert sorted((ds.frame["window_start_us"] - T0) // W) == [2, 3]
+    assert set(ds.frame["player"]) == {P1}
+    assert ds.stats["windows_server_filtered"] == 3
+    only = D.build_dataset(windows, labels, {"t1"}, servers=D.ServerFilter(include=frozenset({LOBBY})))
+    assert set(only.frame["server_id"]) == {LOBBY} and len(only) == 3
+    assert "windows_server_filtered" not in D.build_dataset(windows, labels, {"t1"}, servers=D.ServerFilter()).stats
+    assert D.parse_server_ids([f"{LOBBY}, {P1.upper()}", "", P1]) == {LOBBY, P1}
+    with pytest.raises(ValueError, match="server ids are UUIDs"):
+        D.parse_server_ids(["lobby"])
+
+
 # --- split ----------------------------------------------------------------------------------
 
 
@@ -235,6 +255,16 @@ def test_window_files_roundtrip_and_dedupe(tmp_path):
     arr.to_parquet(tmp_path / "bad.parquet", index=False)
     with pytest.raises(ValueError):
         D.load_windows_file(tmp_path / "bad.parquet")
+
+
+def test_window_file_filters_pairs_and_time(tmp_path):
+    w = make_windows([("t1", P1, k) for k in range(4)] + [("t1", P2, 0), ("t2", P1, 1), ("synthetic-x", P3, 1)])
+    w.to_csv(tmp_path / "w.csv", index=False)
+    out = D.load_windows_file(tmp_path / "w.csv", pairs={("t1", P1), ("t2", P1)}, since_us=T0 + W, until_us=T0 + 3 * W)
+    assert sorted(zip(out["tenant_id"], (out["window_start_us"] - T0) // W)) == [
+        ("synthetic-x", 1), ("t1", 1), ("t1", 2), ("t2", 1)
+    ]
+    assert len(D.load_windows_file(tmp_path / "w.csv")) == len(w)
 
 
 def test_clickhouse_query_and_loader():
