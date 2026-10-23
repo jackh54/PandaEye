@@ -67,6 +67,7 @@ type Config struct {
 
 	DB            DB
 	ClickHouseDSN identity.Secret // PE_CLICKHOUSE_DSN; empty disables telemetry
+	Features      Features
 	License       License
 
 	ServiceToken     identity.Secret // PE_SERVICE_TOKEN; empty disables dashboard access
@@ -124,6 +125,14 @@ const (
 	DriverSQLite   = "sqlite"
 	DriverPostgres = "postgres"
 )
+
+// Features configures the local feature-window files (ml/README.md): ML training data without a
+// ClickHouse server, `all` only.
+type Features struct {
+	Dir       string        // PE_FEATURES_DIR; empty disables the files
+	Retention time.Duration // PE_FEATURES_RETENTION (at most MaxFeaturesRetention)
+	MaxBytes  int64         // PE_FEATURES_MAX_BYTES: the oldest files are deleted beyond it
+}
 
 // License configures licence verification.
 type License struct {

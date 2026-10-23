@@ -216,7 +216,9 @@ ARCHITECTURE 5.7). `features` holds the vector in table order; its length must e
 `feature_version`. The engine is a ReplacingMergeTree (a MergeTree ordered by tenant and time, as 5.7
 requires) so a window re-emitted after a worker handover replaces the earlier row; readers use `FINAL`
 or de-duplicate on the sorting key keeping the largest `worker_unix_us`. Erasure (ARCHITECTURE 5.13) runs
-`ALTER TABLE feature_windows DELETE WHERE tenant_id = ? AND player = ?`.
+`ALTER TABLE feature_windows DELETE WHERE tenant_id = ? AND player = ?`. Without ClickHouse, a `pandaeye all`
+node with `PE_FEATURES_DIR` writes the same columns to hourly CSV files instead (README.md "Feature-window
+files").
 
 ```sql
 CREATE TABLE IF NOT EXISTS feature_windows

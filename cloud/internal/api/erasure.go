@@ -9,8 +9,9 @@ import (
 )
 
 // ErasureSink deletes a player's analytics rows (ClickHouse: ALTER TABLE ... DELETE WHERE
-// tenant_id = ? AND player = ? on every table, ARCHITECTURE 5.13); player is a canonical UUID. The
-// telemetry sink (telemetry.ErasureSink, a no-op when telemetry is disabled) implements it.
+// tenant_id = ? AND player = ? on every table, ARCHITECTURE 5.13; feature-window files: a journal entry,
+// the rows are removed in the background); player is a canonical UUID. The telemetry sink
+// (telemetry.ErasureSink, a no-op when telemetry is disabled) implements it.
 type ErasureSink interface {
 	ErasePlayer(ctx context.Context, tenantID, player string) error
 }

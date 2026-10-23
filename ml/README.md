@@ -114,6 +114,62 @@ booleans into tree attributes that protobuf 7 rejects.
    are visible in evidence and telemetry but cannot move a player's score. Compare its signals with
    verdict outcomes in shadow before giving it points (the `ml` family cap is 50, CHECKS.md section 4).
 
+## Feature-window files (no ClickHouse)
+
+A `pandaeye all` node without ClickHouse records the windows to local files when `PE_FEATURES_DIR` is set
+(for example `data/ml`, a directory of its own outside the repository clone; OPERATIONS section 3 has the
+retention and disk sizing). Signals, verdicts and sessions are not recorded there.
+
+| File | Content |
+|---|---|
+| `windows-YYYYMMDDTHHZ.csv` | the UTC hour being written: the header row, then one row per window, appended |
+| `windows-YYYYMMDDTHHZ.csv.gz` | a past hour: gzip of its complete csv, header included (the `.csv` is removed) |
+| `erasures.jsonl` | one `{"tenant_id","player_uuid","erased_at_us"}` line per erasure |
+| `erasures.done` | how far the `.csv.gz` files have been cleaned (internal) |
+
+The columns are the metadata of FEATURES.md section 5, then `worker_unix_us`, then the 94 features in
+table order. Values are written as ClickHouse stores them: canonical lowercase UUIDs (the nil UUID for an
+invalid server or session id), `0`/`1` flags, and floats in the shortest form that parses back to the same
+float32. Files written before a feature-version change keep that version's columns. Each file loads
+unchanged with `load_windows_file` (`.csv` or `.csv.gz`); the Go golden file
+`cloud/internal/telemetry/testdata/windows-20260105T10Z.csv` and `tests/test_go_windows.py` keep it that way.
+A window re-emitted after a restart can appear twice; `dedupe_windows` keeps the newest `worker_unix_us`.
+
+On an erasure the node stops writing the player's rows from before the erasure and rewrites the `.csv.gz`
+files without them in the background (the current hour's file when it is compressed, at most about an hour
+later). Rows from after the erasure are new data and stay, as in the worker. Copies already taken off the
+node are not reached.
+
+To train from the files:
+
+1. Copy the `.csv.gz` files and `erasures.jsonl` off the node (SFTP). Leave the current hour's `.csv`: it is
+   still being written and may end in a partial line.
+2. Combine them into one file (the CLI reads one file per run). This holds everything in memory, about
+   1 KB per window, so select hours by file name for large sets:
+
+   ```sh
+   python - <<'EOF'
+   import glob
+   import pandas as pd
+   from pandaeye_ml import dataset as D
+   files = sorted(glob.glob("data/ml/windows-*.csv.gz"))
+   df = pd.concat([D.load_windows_file(p) for p in files], ignore_index=True)
+   D.save_windows(D.dedupe_windows(df), "data/feature_windows.parquet")
+   EOF
+   ```
+
+3. Fetch the labels from the API (`export` also needs ClickHouse) and turn the journal into an erasure list:
+
+   ```sh
+   export PE_API_KEY='pe_<id>_<secret>'          # API key with scope "read"
+   python -c 'import os; from pandaeye_ml import dataset as D; D.write_ndjson(D.fetch_labels_api("https://<api-host>", os.environ["PE_API_KEY"]), "data/labels.ndjson")'
+   (umask 077; python -c 'import json; [print(e["tenant_id"] + "," + e["player_uuid"]) for e in map(json.loads, open("data/ml/erasures.jsonl"))]' > data/erased.txt)
+   ```
+
+4. Train with `--windows data/feature_windows.parquet --labels data/labels.ndjson --erased data/erased.txt`
+   as in workflow step 2, then evaluate. The copies contain player UUIDs like every export: mode 0600, never
+   committed, deleted when no longer needed.
+
 ## The gate, precisely
 
 Blueprint ML phase gate: *"beats the heuristics on a held-out set without raising false positives"*.

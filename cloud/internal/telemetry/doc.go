@@ -1,12 +1,13 @@
 // Package telemetry writes signals, verdicts, sessions and ML feature windows to ClickHouse
-// (PE_CLICKHOUSE_DSN, schema deploy/clickhouse/init.sql) in batches, or nowhere when telemetry is
-// disabled (ARCHITECTURE 5.7). It also runs the ClickHouse part of a GDPR erasure (5.13).
+// (PE_CLICKHOUSE_DSN, schema deploy/clickhouse/init.sql) in batches, only the feature windows to hourly
+// CSV files (PE_FEATURES_DIR, `all` only: Files, layout in ml/README.md), or nowhere when telemetry is
+// disabled (ARCHITECTURE 5.7). It also runs the analytics part of a GDPR erasure (5.13).
 //
 // # Getting the sink
 //
 // Every service of a process shares one sink:
 //
-//	sink, err := telemetry.New(d) // d *app.Deps; a no-op Sink when PE_CLICKHOUSE_DSN is empty
+//	sink, err := telemetry.New(d) // d *app.Deps; a no-op Sink when PE_CLICKHOUSE_DSN and PE_FEATURES_DIR are empty
 //
 // The sink is closed (pending rows flushed, at most FlushTimeout) when d.Close runs. Depend on the
 // narrow interface you need (SignalSink, VerdictSink, SessionSink, FeatureSink, ErasureSink) so tests
@@ -40,4 +41,12 @@
 // ErasePlayer first inserts everything already queued, then runs
 // ALTER TABLE <t> DELETE WHERE tenant_id = ? AND player = ? on signals, verdicts, sessions and
 // feature_windows. It returns the first error; the caller retries the erasure job on error.
+//
+// The file sink follows the same rules (queue of DefaultFileQueueSize rows, a failed write drops its
+// rows as "telemetry_insert") and ignores signals, verdicts and sessions. Its ErasePlayer writes the
+// queued rows, appends the erasure to <dir>/erasures.jsonl (fsynced) and returns: later rows of the
+// player from before the erasure are not written, and a background loop rewrites the .csv.gz files
+// without them (the current hour's file when it is compressed). Rows from after the erasure are kept,
+// as the worker keeps new data. The journal is re-read at start, so an interrupted rewrite resumes. A
+// damaged file keeps the rows before the damage and never holds up the other files.
 package telemetry

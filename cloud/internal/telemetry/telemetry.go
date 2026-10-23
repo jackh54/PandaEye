@@ -71,9 +71,19 @@ type FeatureWindow struct {
 }
 
 // New returns the process's sink, shared by every service of the process (app.Deps.Shared): the
-// ClickHouse sink when PE_CLICKHOUSE_DSN is set, else Nop. The ClickHouse sink is closed by d.Close.
+// feature-window files when PE_FEATURES_DIR is set (`all` only), the ClickHouse sink when
+// PE_CLICKHOUSE_DSN is set, else Nop. The sink is closed by d.Close.
 func New(d *app.Deps) (Sink, error) {
 	s, err := d.Shared("telemetry", func() (any, error) {
+		if d.Config != nil && d.Config.Features.Dir != "" {
+			f, err := NewFiles(d.Config.Features.Dir, FileOptions{Log: d.Log, Metrics: d.Metrics,
+				Retention: d.Config.Features.Retention, MaxBytes: d.Config.Features.MaxBytes})
+			if err != nil {
+				return nil, err
+			}
+			d.OnClose(f.Close)
+			return Sink(f), nil
+		}
 		if d.Config == nil || d.Config.ClickHouseDSN.IsZero() {
 			return Nop{}, nil
 		}

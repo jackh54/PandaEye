@@ -59,6 +59,9 @@ func TestDefaultsAllMode(t *testing.T) {
 	if c.EventsMaxAge != 24*time.Hour || c.EventsMaxBytes != 10<<30 || c.WorkerMaxMemory != 2<<30 {
 		t.Errorf("events/worker defaults: %v %v %v", c.EventsMaxAge, c.EventsMaxBytes, c.WorkerMaxMemory)
 	}
+	if c.Features.Dir != "" || c.Features.Retention != 90*24*time.Hour || c.Features.MaxBytes != 20<<30 {
+		t.Errorf("features defaults: %+v", c.Features)
+	}
 	if c.Leases.Mode != LeaseAll || !strings.HasPrefix(c.OwnerID, "all-") || !c.OutboundKey.IsZero() {
 		t.Errorf("all-mode defaults: %+v %q", c.Leases, c.OwnerID)
 	}
@@ -205,6 +208,16 @@ func TestValidation(t *testing.T) {
 	wantErr(t, RoleAll, []string{"PE_EVENTS_MAX_AGE=0s"}, "must be positive")
 	wantErr(t, RoleAll, []string{"PE_LOG_LEVEL=loud"}, "PE_LOG_LEVEL")
 	wantErr(t, RoleAll, []string{"PE_ML_POINTS=-1"}, "PE_ML_POINTS")
+	mustLoad(t, RoleAll, "", []string{"PE_FEATURES_DIR=data/ml", "PE_FEATURES_RETENTION=180d", "PE_FEATURES_MAX_BYTES=1GiB"})
+	mustLoad(t, RoleMigrate, "", []string{"PE_FEATURES_DIR=data/ml"}) // ignored: migrate records nothing
+	for _, role := range []Role{RoleGateway, RoleWorker, RoleVerdict, RoleAPI} {
+		wantErr(t, role, prodEnv("PE_FEATURES_DIR=/var/lib/pe/ml"), "PE_FEATURES_DIR is only allowed in `all`")
+	}
+	wantErr(t, RoleAll, []string{"PE_FEATURES_DIR=data/ml", "PE_CLICKHOUSE_DSN=clickhouse://ch:9000/pandaeye"}, "only one of PE_FEATURES_DIR and PE_CLICKHOUSE_DSN")
+	wantErr(t, RoleAll, []string{"PE_FEATURES_RETENTION=181d"}, "PE_FEATURES_RETENTION must be positive and at most 180d")
+	wantErr(t, RoleAll, []string{"PE_FEATURES_RETENTION=0s"}, "PE_FEATURES_RETENTION")
+	wantErr(t, RoleAll, []string{"PE_FEATURES_RETENTION=soon"}, "not a duration")
+	wantErr(t, RoleAll, []string{"PE_FEATURES_MAX_BYTES=0"}, "PE_FEATURES_MAX_BYTES must be positive")
 	wantErr(t, RoleAll, []string{"PE_STATIC_LICENSES=a:b"}, "maxServers")
 	wantErr(t, RoleAll, []string{"PE_OWNER_ID=has space"}, "PE_OWNER_ID")
 	wantErr(t, RoleAll, []string{"PE_LEASES=0-3,20"}, "does not exist")

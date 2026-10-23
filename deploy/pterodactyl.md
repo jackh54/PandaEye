@@ -34,6 +34,7 @@ Set these as egg variables (environment). Everything not listed keeps the defaul
 | `PE_NATS_SYNC` | `default` (fsync every 2 min) or `always` (see below) |
 | `PE_WORKER_MAX_MEMORY` | below the container memory limit, e.g. 50% of it |
 | `GOMEMLIMIT` | Go runtime soft memory limit, e.g. 80% of the container limit (`1600MiB` for 2 GiB) |
+| `PE_FEATURES_DIR` | `data/ml` to record ML feature windows for training without ClickHouse ([ml/README.md](../ml/README.md#feature-window-files-no-clickhouse)); empty (default) records nothing |
 
 In `all` mode `PE_OUTBOUND_KEY` and `PE_LICENSE_PEPPER` may stay empty: the binary generates them and
 persists them in the database. They are part of the data you must back up (losing the pepper orphans
@@ -66,6 +67,9 @@ in the Hello.
 - Disk: embedded JetStream holds up to `PE_EVENTS_MAX_BYTES` (10 GiB default) of events plus 7 days of
   signals and 30 days of verdict records; size the server's disk limit accordingly or lower
   `PE_EVENTS_MAX_BYTES`.
+- With `PE_FEATURES_DIR=data/ml`: at most about 0.5 MB per concurrently tracked player and day (73 MB a
+  day for 150 players), kept 90 days and capped at `PE_FEATURES_MAX_BYTES` (20 GiB); lower the cap to fit
+  the disk limit.
 - Building on the server (an egg that runs `go build` at start): Pterodactyl's `/tmp` is a small tmpfs and
   the build fails with "no space left on device". Set `GOTMPDIR` (and `TMPDIR`) to a folder under
   `/home/container`. Set `GOMEMLIMIT` a little below the container's memory limit.
@@ -79,6 +83,10 @@ keeps the newest 8 (`PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`). Those copies 
 schedule a Pterodactyl backup (it may run while the server is up; exclude `data/pandaeye.db*` and
 `data/nats/` from it and rely on `data/backups/`) or copy `data/backups/` off the node. To restore, stop
 the server, replace `data/pandaeye.db` with a backup copy (delete `pandaeye.db-wal` and `-shm`) and start. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#83-backups-and-disaster-recovery).
+
+`data/ml/` (when `PE_FEATURES_DIR` is set) holds player UUIDs. A Pterodactyl backup copies it unless it is
+excluded, and erasures do not reach backups: exclude `data/ml/` (it is training data, not needed to
+restore the service), or give the backups a retention you state in the privacy notice.
 
 ## Production checklist (single node behind Cloudflare)
 
@@ -94,6 +102,6 @@ for the dashboard). Each item says how to check it.
 | Licensing | `PE_LICENSE_MODE=pandascript`, `PE_LICENSE_URL=<licence worker>`, `PE_LICENSE_PRODUCT=pandaeye` (the product must exist in the licence system). Keys in `PE_STATIC_LICENSES` stay valid and are checked first | a new key connects; a revoked one is refused within 10 minutes (valid answers are cached that long) |
 | Backups | built in: `data/backups/` every 6 h, 8 kept (see Backups above); a Pterodactyl backup schedule copies them off the node | `online backup written` in the console every 6 h |
 | Monitoring | an external uptime check on `https://<api host>/status` every 1-5 min: alert on non-200, `connected_servers` dropping to 0, or `slo.met` false | the check is green |
-| Memory and disk | `GOMEMLIMIT` and `PE_WORKER_MAX_MEMORY` below the container limit; disk for `PE_EVENTS_MAX_BYTES` plus backups | container stays below its limits for a week |
+| Memory and disk | `GOMEMLIMIT` and `PE_WORKER_MAX_MEMORY` below the container limit; disk for `PE_EVENTS_MAX_BYTES` plus backups (plus `PE_FEATURES_MAX_BYTES` when `PE_FEATURES_DIR` is set) | container stays below its limits for a week |
 | Capacity | measured: one Folia server with 100-250 players used about 25% of 2 CPUs. Extrapolated, not measured: about 3 servers of that size per 2-CPU node with headroom; beyond that add CPU or move to the split deployment | `/status` `probe_rtt.p95_us` far below the SLO |
 | Updates | push to the deploy branch, restart the server (it rebuilds and restarts in about 10 s; plugins reconnect and replay their spool) | `/status` `version` shows the new revision |

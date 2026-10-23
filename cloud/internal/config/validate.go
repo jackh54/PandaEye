@@ -19,6 +19,9 @@ const MinKeyBytes = 32
 // MaxPartitions bounds PE_PARTITIONS.
 const MaxPartitions = 1024
 
+// MaxFeaturesRetention bounds PE_FEATURES_RETENTION: the feature_windows TTL (ml/FEATURES.md 6).
+const MaxFeaturesRetention = 180 * 24 * time.Hour
+
 // Validate checks the configuration for the process role.
 func (c *Config) Validate() error {
 	var errs []error
@@ -87,6 +90,22 @@ func (c *Config) Validate() error {
 	}
 	if c.DB.DSN.IsZero() {
 		bad("PE_DB_DSN is required")
+	}
+	if c.Features.Retention <= 0 || c.Features.Retention > MaxFeaturesRetention {
+		bad("PE_FEATURES_RETENTION must be positive and at most 180d")
+	}
+	if c.Features.MaxBytes <= 0 {
+		bad("PE_FEATURES_MAX_BYTES must be positive")
+	}
+	if c.Features.Dir != "" {
+		switch c.Role {
+		case RoleGateway, RoleWorker, RoleVerdict, RoleAPI:
+			// An erasure reaches the files only when the api runs in the worker's process.
+			bad("PE_FEATURES_DIR is only allowed in `all` (use ClickHouse for %s)", c.Role)
+		}
+		if !c.ClickHouseDSN.IsZero() {
+			bad("set only one of PE_FEATURES_DIR and PE_CLICKHOUSE_DSN")
+		}
 	}
 
 	errs = append(errs, c.validateLicense()...)
