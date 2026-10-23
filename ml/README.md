@@ -184,35 +184,20 @@ files without them in the background (the current hour's file when it is compres
 later). Rows from after the erasure are new data and stay, as in the worker. Copies already taken off the
 node are not reached.
 
-To train from the files:
+To train from the files, copy the directory off the node (SFTP; the current hour's `.csv` may end in a
+partial line, which the loader ignores) or train on it in place, then:
 
-1. Copy the `.csv.gz` files and `erasures.jsonl` off the node (SFTP). Leave the current hour's `.csv`: it is
-   still being written and may end in a partial line.
-2. Combine them into one file (the CLI reads one file per run). This holds everything in memory, about
-   1 KB per window, so select hours by file name for large sets:
+```sh
+export PE_API_KEY='pe_<id>_<secret>'          # API key with scope "read"
+python -m pandaeye_ml export --out data/ --api-url https://<api-host> --labels-only --erasures-from data/ml
+python -m pandaeye_ml train --windows data/ml --labels data/labels.ndjson --trusted-tenants trusted.txt \
+    --exclude-servers <hub server ids> --out models/gbm1
+python -m pandaeye_ml evaluate --model-dir models/gbm1
+```
 
-   ```sh
-   python - <<'EOF'
-   import glob
-   import pandas as pd
-   from pandaeye_ml import dataset as D
-   files = sorted(glob.glob("data/ml/windows-*.csv.gz"))
-   df = pd.concat([D.load_windows_file(p) for p in files], ignore_index=True)
-   D.save_windows(D.dedupe_windows(df), "data/feature_windows.parquet")
-   EOF
-   ```
-
-3. Fetch the labels from the API (`export` also needs ClickHouse) and turn the journal into an erasure list:
-
-   ```sh
-   export PE_API_KEY='pe_<id>_<secret>'          # API key with scope "read"
-   python -c 'import os; from pandaeye_ml import dataset as D; D.write_ndjson(D.fetch_labels_api("https://<api-host>", os.environ["PE_API_KEY"]), "data/labels.ndjson")'
-   (umask 077; python -c 'import json; [print(e["tenant_id"] + "," + e["player_uuid"]) for e in map(json.loads, open("data/ml/erasures.jsonl"))]' > data/erased.txt)
-   ```
-
-4. Train with `--windows data/feature_windows.parquet --labels data/labels.ndjson --erased data/erased.txt`
-   as in workflow step 2, then evaluate. The copies contain player UUIDs like every export: mode 0600, never
-   committed, deleted when no longer needed.
+The directory's `erasures.jsonl` is applied while loading (workflow step 2); `data/erased.txt` from
+`--erasures-from` is for other copies of the windows. Every copy contains player UUIDs like any export:
+mode 0600, never committed, deleted when no longer needed.
 
 ## The gate, precisely
 
