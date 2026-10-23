@@ -10,6 +10,7 @@ import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * The {@code pandaeye:session} plugin message a PandaEye proxy sends to a backend after each server connect
@@ -32,6 +33,20 @@ public final class ProxySessionToken {
     public record Verified(UUID player, UUID networkSession, long unixSeconds) {
     }
 
+    /** Why a message was not verified (so a misconfiguration does not fail silently). */
+    public enum Rejection {
+        /** This server has no secret configured. */
+        NO_SECRET,
+        /** Wrong length or version. */
+        MALFORMED,
+        /** The MAC does not match: the proxy uses a different secret (or the message was altered). */
+        WRONG_SECRET,
+        /** Signed for another player. */
+        WRONG_PLAYER,
+        /** The timestamp is more than 30 s away: clock skew between the proxy and this server (or a replay). */
+        CLOCK_SKEW
+    }
+
     public static byte[] encode(UUID player, UUID networkSession, long unixSeconds, String secret) {
         if (secret == null || secret.isEmpty()) {
             throw new IllegalArgumentException("a proxy session secret is required");
@@ -47,20 +62,36 @@ public final class ProxySessionToken {
      * MAC is wrong, the player differs, or the timestamp is more than 30 s away from {@code nowUnixSeconds}.
      */
     public static Optional<Verified> verify(byte[] message, String secret, UUID expectedPlayer, long nowUnixSeconds) {
-        if (secret == null || secret.isEmpty() || message == null || message.length != LENGTH
-                || message[0] != VERSION) {
+        return verify(message, secret, expectedPlayer, nowUnixSeconds, rejection -> { });
+    }
+
+    /** As {@link #verify(byte[], String, UUID, long)}; an empty result is reported to {@code rejected} first. */
+    public static Optional<Verified> verify(byte[] message, String secret, UUID expectedPlayer, long nowUnixSeconds,
+                                            Consumer<Rejection> rejected) {
+        if (secret == null || secret.isEmpty()) {
+            rejected.accept(Rejection.NO_SECRET);
+            return Optional.empty();
+        }
+        if (message == null || message.length != LENGTH || message[0] != VERSION) {
+            rejected.accept(Rejection.MALFORMED);
             return Optional.empty();
         }
         byte[] expected = mac(secret, message);
         byte[] actual = new byte[32];
         System.arraycopy(message, SIGNED_LENGTH, actual, 0, 32);
         if (!MessageDigest.isEqual(expected, actual)) {
+            rejected.accept(Rejection.WRONG_SECRET);
             return Optional.empty();
         }
         UUID player = Uuids.fromBytes(message, 1);
         UUID session = Uuids.fromBytes(message, 17);
         long unixSeconds = ByteBuffer.wrap(message, 33, 8).getLong();
-        if (!player.equals(expectedPlayer) || Math.abs(nowUnixSeconds - unixSeconds) > MAX_AGE_SECONDS) {
+        if (!player.equals(expectedPlayer)) {
+            rejected.accept(Rejection.WRONG_PLAYER);
+            return Optional.empty();
+        }
+        if (Math.abs(nowUnixSeconds - unixSeconds) > MAX_AGE_SECONDS) {
+            rejected.accept(Rejection.CLOCK_SKEW);
             return Optional.empty();
         }
         return Optional.of(new Verified(player, session, unixSeconds));

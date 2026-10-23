@@ -13,7 +13,8 @@ import java.util.function.Supplier;
 /**
  * The {@code pandaeye:session} message from a PandaEye proxy (ARCHITECTURE 4.3), read at packet level and only
  * when {@code proxy.session-channel} is on. A message that arrives before the session exists (configuration
- * phase) is buffered by player UUID for 10 s. Accepted at most once per server connect.
+ * phase) is buffered by player UUID for 10 s. Accepted at most once per server connect. Accepted and rejected
+ * messages (by reason) are counted for /pandaeye status.
  */
 final class ProxySessionChannel {
 
@@ -25,11 +26,13 @@ final class ProxySessionChannel {
 
     private final Supplier<PluginConfig> config;
     private final ProxySessionListener listener;
+    private final ProxySessionCounters counters;
     private final ConcurrentHashMap<UUID, Buffered> early = new ConcurrentHashMap<>();
 
-    ProxySessionChannel(Supplier<PluginConfig> config, ProxySessionListener listener) {
+    ProxySessionChannel(Supplier<PluginConfig> config, ProxySessionListener listener, ProxySessionCounters counters) {
         this.config = config;
         this.listener = listener;
+        this.counters = counters;
     }
 
     /** A message on the channel; {@code session} is null when it does not exist yet. */
@@ -58,9 +61,13 @@ final class ProxySessionChannel {
     }
 
     private void accept(Session session, byte[] data, long nanos) {
-        ProxySessionToken.verify(data, config.get().proxy().secret(), session.uuid(), System.currentTimeMillis() / 1_000)
+        ProxySessionToken.verify(data, config.get().proxy().secret(), session.uuid(), System.currentTimeMillis() / 1_000,
+                        counters::count)
                 .filter(verified -> session.acceptProxySession(verified.networkSession().toString()))
-                .ifPresent(verified -> listener.accepted(session, nanos));
+                .ifPresent(verified -> {
+                    counters.countAccepted();
+                    listener.accepted(session, nanos);
+                });
     }
 
     private void expire(long nanos) {

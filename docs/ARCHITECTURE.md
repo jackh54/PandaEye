@@ -242,7 +242,8 @@ Authoritative field list: wire.proto. Key rules:
   `proxy.session-channel: true`. Payload (73 bytes): version byte `1`, player UUID (16 bytes), network
   session UUID (16), unix seconds (8, big-endian), HMAC-SHA256(proxy.secret, the preceding 41 bytes) (32).
   It must be no older than 30 s and is accepted at most once per server connect; it may arrive before the
-  session exists and is then buffered by UUID for 10 s.
+  session exists and is then buffered by UUID for 10 s. Accepted and rejected messages (by reason: no
+  secret, malformed, wrong secret, wrong player, clock skew) are counted in `/pandaeye status`.
 - Bypass permission is evaluated on the player's entity thread at seed time and every 30 s and cached. In
   shadow mode bypass exempts only from enforcement, not from detection
   (`exempt.bypass-detection-in-shadow: false`), so staff can test with cheat clients.
@@ -362,9 +363,10 @@ player name cannot be resolved locally, or the circuit breaker is open. Otherwis
 
 `/pandaeye status | alerts [on|off] | player <name> | debug <name> | breaker [reset] | forget <uuid> | reload`
 (alias `/peye`). `status` shows mode, enforcement, cloud state, connection RTT, probe RTT p50/p95, pending
-batches, dropped events/logs, tracked players, unseeded sessions, packet-handler cost (avg and p99 us/packet),
-confirmations dropped. `reload` reloads thresholds and alert settings only. Permissions: `pandaeye.command`,
-`pandaeye.alerts`, `pandaeye.admin` (op), `pandaeye.bypass` (default false).
+batches, dropped events/logs, tracked players, unseeded sessions, `pandaeye:session` messages accepted and
+rejected by reason, packet-handler cost (avg and p99 us/packet), confirmations dropped. `reload` reloads
+thresholds and alert settings only. Permissions: `pandaeye.command`, `pandaeye.alerts`, `pandaeye.admin`
+(op), `pandaeye.bypass` (default false).
 
 ### 4.11 `config.yml` (defaults)
 
@@ -845,7 +847,9 @@ until unbanned (documented in PRIVACY.md). JetStream expiry bounds residual data
   `session-secret`).
 - Events: PlayerJoin (PostLoginEvent: name, protocol, network_session = random UUID, bedrock via Floodgate
   reflection or UUID msb == 0), brand (PlayerClientBrandEvent -> PlayerJoin{update=true}), ServerSwitch
-  (ServerConnectedEvent), PlayerQuit (DisconnectEvent).
+  (ServerConnectedEvent), PlayerQuit (DisconnectEvent). A session belongs to the connection that logged in:
+  the DisconnectEvent of a rejected duplicate login or of the connection replaced under
+  `kick-existing-players` (same UUID) leaves the online player's session alone.
 - After each backend connect, sends `pandaeye:session` = uuid, network_session, unix seconds,
   HMAC-SHA256(session-secret) to the backend; drops client-originated messages on that channel
   (PluginMessageEvent from a player source -> handled).

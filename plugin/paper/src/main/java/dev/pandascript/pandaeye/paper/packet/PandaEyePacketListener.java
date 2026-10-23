@@ -36,11 +36,11 @@ public final class PandaEyePacketListener implements PacketListener {
     private final RateLimitedLog errors;
 
     public PandaEyePacketListener(ActiveGate gate, SessionRegistry sessions, Supplier<PluginConfig> config,
-                                  ProxySessionListener proxySessions, PacketCost cost,
-                                  RateLimitedLog errors) {
+                                  ProxySessionListener proxySessions, ProxySessionCounters proxyCounters,
+                                  PacketCost cost, RateLimitedLog errors) {
         this.gate = gate;
         this.sessions = sessions;
-        this.proxySessions = new ProxySessionChannel(config, proxySessions);
+        this.proxySessions = new ProxySessionChannel(config, proxySessions, proxyCounters);
         this.client = new ClientPacketReader(this.proxySessions);
         this.cost = cost;
         this.errors = errors;

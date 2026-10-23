@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -99,6 +100,8 @@ public final class CloudClient {
     private volatile String stateDetail = "";
     private volatile CompletableFuture<WebSocket> connecting;
     private volatile WebSocket socket;
+    /** The socket's latest send; the WebSocket refuses a second one until it completes (the Goodbye waits). */
+    private volatile CompletableFuture<WebSocket> lastSend;
     private volatile long connectionRttMicros;
     private volatile long lastAckedSeq;
     private volatile long sentBatches;
@@ -199,16 +202,17 @@ public final class CloudClient {
     }
 
     /**
-     * Bounded shutdown (ARCHITECTURE 4.6): stop the loop, cancel a pending connect, best-effort Goodbye and
-     * close frame (100 ms together), always abort, then {@code HttpClient.shutdownNow()} (non-blocking; its
-     * SelectorManager thread would otherwise outlive the plugin and pin the class loader) and stop the
-     * HttpClient executor; never {@code HttpClient.close()}. The remaining budget spools unacknowledged batches
-     * and undrained events.
+     * Bounded shutdown (ARCHITECTURE 4.6): stop the loop, cancel a pending connect, best-effort Goodbye (after
+     * the send still in flight) and close frame (100 ms together, including the wait for the loop to stop),
+     * always abort, then {@code HttpClient.shutdownNow()} (non-blocking; its SelectorManager thread would
+     * otherwise outlive the plugin and pin the class loader) and stop the HttpClient executor; never
+     * {@code HttpClient.close()}. The remaining budget spools unacknowledged batches and undrained events.
      */
     public void stop(Duration budget) {
         long start = System.nanoTime();
         long deadline = start + budget.toNanos();
         long networkDeadline = start + Math.min(budget.toNanos(), timings.networkStop().toNanos());
+        long closeDeadline = Math.min(start + CLOSE_WAIT_NANOS, networkDeadline);
         ScheduledExecutorService loopRef;
         ExecutorService httpRef;
         synchronized (lifecycle) {
@@ -225,9 +229,11 @@ public final class CloudClient {
             pending.cancel(true);
             pending.whenComplete(CloudClient::abortQuietly);
         }
+        // Once the loop has stopped no send can start, so the Goodbye cannot race a batch or ping.
+        boolean loopStopped = awaitQuietly(loopRef, closeDeadline);
         WebSocket ws = socket;
         if (ws != null) {
-            closeGracefully(ws, codec.encodeRaw(GOODBYE), Math.min(start + CLOSE_WAIT_NANOS, networkDeadline));
+            closeGracefully(ws, lastSend, codec.encodeRaw(GOODBYE), closeDeadline);
             ws.abort();
         }
         HttpClient client = http;
@@ -235,7 +241,7 @@ public final class CloudClient {
             client.shutdownNow();
         }
         httpRef.shutdownNow();
-        boolean loopStopped = awaitQuietly(loopRef, networkDeadline);
+        loopStopped = loopStopped || awaitQuietly(loopRef, networkDeadline);
         HttpClient late = http; // created by a connect that was still running on the loop
         if (late != null && late != client) {
             late.shutdownNow();
@@ -563,9 +569,12 @@ public final class CloudClient {
             }
             case CODE_DUPLICATE_SERVER -> {
                 delayOverrideMillis = Math.max(timings.duplicateWaitMillis(), retryAfter);
+                // The data folder is plugins/PandaEye on Paper and plugins/pandaeye on Velocity: name the real one.
+                Path dir = config.dataDir();
                 log.warn("!!! Another server is connected with this server id (" + identity.serverId() + "). If this"
-                        + " server's plugins/PandaEye folder was copied from another server, stop this server, delete"
-                        + " plugins/PandaEye/server-id and plugins/PandaEye/server-secret, and start it again. !!!");
+                        + " server's " + dir + " folder was copied from another server, stop this server, delete "
+                        + dir.resolve(ServerIdentity.SERVER_ID_FILE) + " and "
+                        + dir.resolve(ServerIdentity.SERVER_SECRET_FILE) + ", and start it again. !!!");
             }
             case CODE_RATE_LIMITED, CODE_INTERNAL, CODE_SHUTTING_DOWN -> {
                 if (retryAfter > 0) {
@@ -634,8 +643,9 @@ public final class CloudClient {
         int gen = generation;
         sendInFlight = true;
         try {
-            ws.sendBinary(ByteBuffer.wrap(frame), true)
-                    .whenComplete((ignored, error) -> post(() -> onSendComplete(gen, error)));
+            CompletableFuture<WebSocket> sent = ws.sendBinary(ByteBuffer.wrap(frame), true);
+            lastSend = sent;
+            sent.whenComplete((ignored, error) -> post(() -> onSendComplete(gen, error)));
         } catch (RuntimeException e) {
             sendInFlight = false;
             fail("send failed: " + describe(e), -1);
@@ -668,6 +678,7 @@ public final class CloudClient {
         }
         generation++;
         sendInFlight = false;
+        lastSend = null;
         pingDue = false;
         long delay = delayMillis >= 0 ? delayMillis : delayOverrideMillis >= 0 ? delayOverrideMillis : backoff.nextDelayMillis();
         delayOverrideMillis = -1;
@@ -733,10 +744,17 @@ public final class CloudClient {
         }
     }
 
-    /** Goodbye, then a close frame (1001), together bounded by the deadline; best effort. */
-    private static void closeGracefully(WebSocket ws, byte[] goodbye, long deadlineNanos) {
+    /**
+     * Goodbye once {@code inFlight} (the last send, may be null) has completed, then a close frame (1001),
+     * together bounded by the deadline; best effort. Sent earlier, the Goodbye would be refused ("send
+     * pending": one binary send at a time) while the close frame, a control frame, still went out.
+     */
+    static void closeGracefully(WebSocket ws, CompletableFuture<WebSocket> inFlight, byte[] goodbye,
+                                long deadlineNanos) {
+        CompletableFuture<WebSocket> previous = inFlight == null ? CompletableFuture.completedFuture(ws) : inFlight;
         try {
-            ws.sendBinary(ByteBuffer.wrap(goodbye), true)
+            previous.handle((ignored, error) -> ws)
+                    .thenCompose(socket -> socket.sendBinary(ByteBuffer.wrap(goodbye), true))
                     .exceptionally(error -> ws)
                     .thenCompose(socket -> socket.sendClose(CLOSE_GOING_AWAY, "plugin stopping"))
                     .get(Math.max(1, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);

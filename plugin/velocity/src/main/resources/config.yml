@@ -1,6 +1,8 @@
 # shadow = observe only: never kicks, bans or runs commands (the unban of a ban this proxy executed excepted).
 # live   = KICK/BAN verdicts may run the proxy commands below when the dashboard also enables enforcement.
 mode: shadow
+# Every proxy ships as "proxy": give each one its own name (proxy-1, proxy-2, ...) so the dashboard can tell
+# them apart. For another proxy copy only this file, never the folder (a copied server-id is refused).
 server-name: "proxy"
 network-id: ""
 # HMAC secret for the pandaeye:session message sent to backends (must match proxy.secret on the backends).
