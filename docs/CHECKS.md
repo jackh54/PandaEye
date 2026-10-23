@@ -44,13 +44,14 @@ levitating = exempt). Decreases therefore never make a check stricter before the
 
 **Pending velocity.** Every S `ENTITY_VELOCITY` for the own entity and every S `EXPLOSION` with player
 knockback, plus every Bukkit `PlayerVelocityEvent` seen at MONITOR (covers packets other plugins write
-silently), adds a pending velocity. It stays pending until a movement matching it is observed (consumed),
-or until it is applied by the client plus 2 movement packets, with a 5 s fallback. While any velocity is
-pending, movement.speed/fly/step/groundspoof skip.
+silently), adds a pending velocity. It stays pending until the client has applied it (as above, 5 s
+fallback included) and then a movement matches it (consumed) or 2 more movement packets arrive. While any
+velocity is pending, movement.speed/fly/step/groundspoof skip.
 
 **Without a PING sender** (no plugin pings the player, or the sender's PONGs never reach PandaEye),
-nothing is acknowledged: pending changes stay pending until JOIN_GAME/RESPAWN (or the hot-load snapshot)
-replaces the state, except for the overflow below.
+nothing is acknowledged: pending changes stay pending until JOIN_GAME (or the hot-load snapshot) replaces
+the state, except for the overflow below. RESPAWN does not replace it (its resets are pending changes
+too); it only clears pending velocities and teleports.
 - Each tracked value keeps at most 16 pending changes; the 17th forces the oldest into "applied". Abilities
   start unknown at join (movement checks exempt as `STATE_UNKNOWN`) and become known only after 16 more
   ability updates.

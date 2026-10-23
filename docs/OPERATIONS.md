@@ -605,9 +605,11 @@ Keep the circuit-breaker defaults.
 2. On every backend: the same `network-id`, `proxy.session-channel: true`, and `proxy.secret` equal to
    the proxy's `session-secret`; then restart, or `plugman unload PandaEye` + `plugman load PandaEye`
    (`/pandaeye reload` does not apply `network-id` or `proxy.*`). `/pandaeye status` counts the
-   `pandaeye:session` messages accepted and rejected by reason (`wrong secret`, `clock skew` beyond 30 s:
-   keep NTP running on every host, `no secret`, `wrong player`, `malformed`); none at all means the proxy
-   sends none (no `session-secret` there).
+   `pandaeye:session` messages accepted and rejected by reason: `wrong secret` (the secrets differ),
+   `clock skew` (the clocks are more than 30 s apart; keep NTP running on every host), `no secret` (empty
+   `proxy.secret`), `wrong player`, `malformed`. No messages at all means the proxy sends none (empty
+   `session-secret`). Rejections can also be messages a client forged, when it reaches the backend through
+   a proxy without PandaEye (a PandaEye proxy drops them).
 3. Effect: the proxy reports joins (with brand and Bedrock detection), server switches and quits, and
    after each backend connect sends the HMAC-signed `pandaeye:session` message, so backend sessions carry
    the network session (PROTOCOL section 11). The proxy drops client-sent messages on that channel; the
@@ -704,9 +706,10 @@ dashboard (server online, probe RTT).
 14. KnockbackSync shades its own PacketEvents and its decoder runs first: it drops the PONGs answering its
     own PINGs, so PandaEye (on the PacketEvents plugin) never sees them. Passive acknowledgement then
     depends on other PING senders; without any, see CHECKS 1.1 "Without a PING sender": mostly fewer
-    detections (velocity and vehicle exemptions that last the session, abilities known only after 16
-    changes), but a stale swim flag reports the swimming eye height, so killaura.hitbox can misjudge a
-    standing attacker (more flags, not only fewer) until the cloud also tests the standing eye.
+    detections (a velocity exemption until the next respawn, vehicle state until the next join, abilities
+    known only after 16 changes), but a stale swim flag reports the swimming eye height, so killaura.hitbox
+    can misjudge a standing attacker (more flags, not only fewer) until the cloud also tests the standing
+    eye.
 15. `plugman unload` of an instance that was loaded at server start leaves its class loader reachable
     through `CraftServer`'s help map (the plugin.yml command's help topic) until the next restart, a few MB.
     Instances loaded with `plugman load` are collected. Registering `/pandaeye` at runtime would avoid it.
