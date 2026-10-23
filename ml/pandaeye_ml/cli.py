@@ -98,8 +98,8 @@ def cmd_onnx(args: argparse.Namespace) -> int:
     doc = json.loads((model_dir / META_FILE).read_text(encoding="utf-8"))
     meta = doc["metadata"]
     if args.threshold is not None:
-        if not 0.0 <= args.threshold <= 1.0:
-            raise SystemExit("--threshold must be in [0, 1]")
+        if not 0.0 < args.threshold <= 1.0:  # the Go scorer refuses thresholds <= 0
+            raise SystemExit("--threshold must be in (0, 1]")
         meta["pandaeye.threshold"] = repr(float(args.threshold))
         doc["metadata"] = meta
         (model_dir / META_FILE).write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")

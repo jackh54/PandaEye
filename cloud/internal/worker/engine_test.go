@@ -18,6 +18,7 @@ import (
 	"github.com/jackh54/PandaEye/cloud/internal/telemetry"
 	"github.com/jackh54/PandaEye/cloud/internal/testkit"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -686,5 +687,78 @@ func TestFeatureWindowsRecorded(t *testing.T) {
 	defer h.rec.mu.Unlock()
 	if len(h.rec.windows) != n+1 {
 		t.Fatalf("the quit finalises the open window: %d -> %d", n, len(h.rec.windows))
+	}
+}
+
+// fixedScorer scores every window P(cheat) p, flagged at p >= 0.9.
+type fixedScorer struct {
+	ml.Disabled
+	p, points float64
+}
+
+func (fixedScorer) Enabled() bool           { return true }
+func (fixedScorer) CheckID() string         { return "ml.test" }
+func (s fixedScorer) Points() float64       { return s.points }
+func (fixedScorer) Applies(*ml.Window) bool { return true }
+func (s fixedScorer) Score(ws []*ml.Window) ([]ml.Score, error) {
+	res := make([]ml.Score, len(ws))
+	for i := range res {
+		res[i] = ml.Score{PCheat: s.p, Flagged: s.p >= 0.9}
+	}
+	return res, nil
+}
+
+// Shadow ML (0 points) is counted and observed but never sent to the verdict service, where a
+// zero-point signal would still run the ladder.
+func TestMLSignals(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		p, points     float64
+		flagged, sent bool
+	}{
+		{"shadow flagged", 0.95, 0, true, false},
+		{"points flagged", 0.95, 5, true, true},
+		{"points not flagged", 0.5, 5, false, false},
+	} {
+		h := newHarness(t, nil)
+		h.env.scorer = fixedScorer{p: tc.p, points: tc.points}
+		o := origin(testkit.NewServerID(), pb.Platform_PLATFORM_PAPER)
+		p := testkit.NewPlayer("ml")
+		h.send(o, 1, false, p.Join(), p.State())
+		var evs []*pb.Event
+		for i := 0; i < 700; i++ { // one window finalised
+			evs = append(evs, p.Move(geom.V(0.05, 0, 0), geom.Rotation{Yaw: float64(i % 30)}))
+		}
+		var sent []*pb.Signal
+		for _, s := range signals(h.send(o, 2, false, evs...)) {
+			if s.CheckId == "ml.test" {
+				sent = append(sent, s)
+			}
+		}
+		h.rec.mu.Lock()
+		n := len(h.rec.windows)
+		h.rec.mu.Unlock()
+		var counted, observed dto.Metric
+		if err := h.env.m.Signals.WithLabelValues("ml.test").Write(&counted); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.env.wm.MLPCheat.Write(&observed); err != nil {
+			t.Fatal(err)
+		}
+		wantCounted, wantSent := 0, 0
+		if tc.flagged {
+			wantCounted = n
+		}
+		if tc.sent {
+			wantSent = n
+		}
+		if n == 0 || int(observed.GetHistogram().GetSampleCount()) != n || int(counted.GetCounter().GetValue()) != wantCounted ||
+			len(sent) != wantSent {
+			t.Errorf("%s: %d windows, %d observed, %v counted, %d sent", tc.name, n, observed.GetHistogram().GetSampleCount(),
+				counted.GetCounter().GetValue(), len(sent))
+		}
+		if len(sent) > 0 && (sent[0].Points != tc.points || sent[0].Confidence != tc.p) {
+			t.Errorf("%s: %+v", tc.name, sent[0])
+		}
 	}
 }

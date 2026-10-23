@@ -15,6 +15,8 @@ type workerMetrics struct {
 	Players    prometheus.Gauge
 	Clips      *prometheus.CounterVec // result: saved, exists, error, queue_full
 	Windows    prometheus.Counter
+	MLLoaded   prometheus.Gauge     // 1 while an ML model scores windows
+	MLPCheat   prometheus.Histogram // P(cheat) of every scored window
 }
 
 func newWorkerMetrics(m *metrics.Metrics) *workerMetrics {
@@ -29,6 +31,11 @@ func newWorkerMetrics(m *metrics.Metrics) *workerMetrics {
 			Help: "Replay clips by result."}, []string{"result"})),
 		Windows: register(m, prometheus.NewCounter(prometheus.CounterOpts{Namespace: "pandaeye", Name: "worker_feature_windows_total",
 			Help: "Feature windows finalised."})),
+		MLLoaded: register(m, prometheus.NewGauge(prometheus.GaugeOpts{Namespace: "pandaeye", Name: "worker_ml_model_loaded",
+			Help: "1 when an ML model is loaded and scores feature windows, 0 when PE_ML_MODEL is unset or did not load."})),
+		MLPCheat: register(m, prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: "pandaeye", Name: "worker_ml_p_cheat",
+			Help:    "Model P(cheat) of every scored feature window.",
+			Buckets: []float64{.05, .1, .2, .3, .4, .5, .6, .7, .8, .85, .9, .925, .95, .975, .99}})),
 	}
 	return w
 }

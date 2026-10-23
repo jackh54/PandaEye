@@ -129,5 +129,10 @@ func (s *Service) newEnv(tenants tenantSource, erasures erasureSource) (*env, er
 		}
 		en.scorer = sc
 	}
+	if en.scorer.Enabled() {
+		en.wm.MLLoaded.Set(1)
+	} else {
+		en.wm.MLLoaded.Set(0)
+	}
 	return en, nil
 }

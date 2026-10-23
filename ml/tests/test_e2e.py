@@ -1,5 +1,6 @@
 """End to end through the CLI: synth -> train (+ ONNX export) -> evaluate, in a temp dir."""
 
+import hashlib
 import json
 
 import numpy as np
@@ -20,6 +21,10 @@ TRAIN_FLAGS = [
     "--calibration-folds", str(FAST["calibration_folds"]),
     "--threshold-folds", str(FAST["threshold_folds"]),
 ]
+
+
+def sha256(path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 @pytest.fixture(scope="module")
@@ -82,6 +87,7 @@ def test_gate_passes_on_synthetic_and_is_never_deployable(run_dir, capsys):
     assert code == 0, report["gate"]["reasons"]
     assert report["gate"]["passed"] is True
     assert report["scored_with"] == "onnxruntime"
+    assert report["model_sha256"] == sha256(run_dir / "model" / "model.onnx")
     assert report["synthetic"] is True and report["deployable"] is False
     g = report["gate"]
     assert g["model"]["fpr"] <= g["baseline"]["fpr"]
@@ -93,6 +99,7 @@ def test_gate_passes_on_synthetic_and_is_never_deployable(run_dir, capsys):
 
 def test_fixed_threshold_mode_and_onnx_reexport(run_dir):
     model = run_dir / "model"
+    before = sha256(model / "model.onnx")
     # A deploy threshold of 1.0 flags nothing: FPR 0 but no TPR gain -> the fixed-mode gate fails.
     assert cli.main(["onnx", "--model-dir", str(model), "--threshold", "1.0"]) == 0
     assert E.read_metadata(model / "model.onnx")["pandaeye.threshold"] == "1.0"
@@ -101,6 +108,23 @@ def test_fixed_threshold_mode_and_onnx_reexport(run_dir):
     rep = json.loads((run_dir / "fixed.json").read_text())
     assert code == 1 and rep["gate"]["threshold_mode"] == "fixed"
     assert rep["gate"]["model"]["tp"] == 0 and rep["gate"]["model"]["fp"] == 0
+    # The re-export is a different file: a gate report of the old one no longer matches it.
+    assert rep["model_sha256"] == sha256(model / "model.onnx") != before
+
+
+@pytest.mark.parametrize("threshold", ["0", "-0.1", "1.5", "nan"])
+def test_onnx_rejects_thresholds_go_refuses(run_dir, threshold):
+    model = run_dir / "model"
+    meta, onnx = (model / "model.json").read_bytes(), sha256(model / "model.onnx")
+    with pytest.raises(SystemExit):
+        cli.main(["onnx", "--model-dir", str(model), "--threshold", threshold])
+    assert (model / "model.json").read_bytes() == meta and sha256(model / "model.onnx") == onnx
+
+
+def test_sklearn_gate_report_binds_no_model_file(run_dir):
+    cli.main(["evaluate", "--model-dir", str(run_dir / "model"), "--sklearn", "--report", str(run_dir / "sk.json")])
+    rep = json.loads((run_dir / "sk.json").read_text())
+    assert rep["scored_with"] == "scikit-learn" and rep["model_sha256"] is None
 
 
 def test_model_trained_on_noise_fails_the_gate(run_dir, tmp_path):

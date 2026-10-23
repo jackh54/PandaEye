@@ -301,9 +301,11 @@ needed before the FPR means "rate among all players".
   to keep the FPR at or below the heuristic baseline's), `pandaeye.min_client_protocol` (768),
   `pandaeye.trained_on_synthetic` (`true` = never deploy), `pandaeye.created_at`.
 - The scorer refuses to load a model whose `feature_version` or `feature_names` differ from the Go
-  constants, or that says `trained_on_synthetic=true`. It scores only windows with `client_protocol >=
-  min_client_protocol`. It emits `ml.<model_name>` when `P(cheat) >= threshold`, with 0 points unless
-  `PE_ML_POINTS` > 0 (shadow by default, ARCHITECTURE 5.10).
+  constants, that says `trained_on_synthetic=true`, or that has no matching gate report
+  (`model.gate.json` next to `model.onnx`, README step 4). It scores only windows with `client_protocol
+  >= min_client_protocol` and flags those with `P(cheat) >= threshold`. Flagged windows become
+  `ml.<model_name>` signals only when `PE_ML_POINTS` > 0; in shadow (the default) they are only counted
+  (ARCHITECTURE 5.10).
 
 ## 9. Versioning and changelog
 

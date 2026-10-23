@@ -18,13 +18,15 @@ Procedure on the held-out windows (players never seen in training or threshold s
 
 Both operating points are always reported. ``deployable`` is true only when the gate passed, the data is
 not synthetic, and the deploy threshold itself keeps FPR <= ``FPR_b`` on the held-out players (otherwise
-re-export with ``onnx --threshold``). Also reported (not gating): ROC-AUC and PR-AUC of both scores,
-per-category and per-archetype TPRs, FPR by label source, and a player-level bootstrap of the TPR/FPR
-differences at the gate's operating point.
+re-export with ``onnx --threshold``). ``model_sha256`` is the SHA-256 of the ONNX file that was scored
+(null with ``--sklearn``); the Go loader refuses a model unless its gate report matches the file. Also
+reported (not gating): ROC-AUC and PR-AUC of both scores, per-category and per-archetype TPRs, FPR by label
+source, and a player-level bootstrap of the TPR/FPR differences at the gate's operating point.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -264,7 +266,9 @@ def evaluate_model_dir(
         model = joblib.load(model_dir / MODEL_FILE)
         p = model.predict_proba(X.astype(np.float64))[:, 1].astype(np.float32)
         scored_with = "scikit-learn"
+        model_sha256 = None
     else:
+        model_sha256 = hashlib.sha256((model_dir / ONNX_FILE).read_bytes()).hexdigest()
         scorer = OnnxScorer(model_dir / ONNX_FILE)
         check_feature_contract(scorer.metadata)
         metadata = scorer.metadata
@@ -311,6 +315,7 @@ def evaluate_model_dir(
         "evaluated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "model_dir": str(model_dir),
         "scored_with": scored_with,
+        "model_sha256": model_sha256,
         "synthetic": synthetic,
         "deployable": bool(result.passed and not synthetic and deploy_ok),
         "gate": {**result.to_dict(), "threshold_mode": mode},

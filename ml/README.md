@@ -100,19 +100,31 @@ booleans into tree attributes that protobuf 7 rejects.
    category), FPR per label source (`overturned` vs `manual`), both operating points, and a player-level
    bootstrap of the TPR/FPR differences. `deployable` is true only if the gate passed, the data was real,
    and the deploy threshold itself kept FPR at or below the baseline's on the held-out players. If only
-   the last condition fails, set a new threshold with
+   the last condition fails, set a new threshold (0 < p <= 1) with
    `python -m pandaeye_ml onnx --model-dir models/gbm1 --threshold <p>` and evaluate again with
-   `--threshold-mode fixed`.
+   `--threshold-mode fixed`. `model_sha256` is the SHA-256 of the `model.onnx` that was scored (null with
+   `--sklearn`); a re-export changes it, so only the report of the last evaluation matches the file.
 
-4. **Deploy** (only with `"deployable": true`). Copy `model.onnx` to the worker host and run a worker
-   built with `-tags onnx` (ONNX Runtime shared library installed) with `PE_ML_MODEL=/path/model.onnx`.
-   The scorer checks `pandaeye.feature_version`/`pandaeye.feature_names` against its own constants,
-   refuses synthetic models, scores tick-client windows and emits `ml.<model_name>` signals when
-   `P(cheat) >= pandaeye.threshold`.
+4. **Deploy** (only with `"deployable": true`). Copy exactly two files to the worker host, side by
+   side: `model.onnx` and its gate report under the name `model.gate.json` (copy `gate_report.json` to
+   that name, or evaluate with `--report models/gbm1/model.gate.json`). Nothing else from the model
+   directory: `heldout.parquet` holds player UUIDs. Run a worker built with `-tags onnx` (cgo, not
+   static: `deploy/pterodactyl.md` "ML scoring") with `PE_ML_MODEL=/path/model.onnx` and
+   `PE_ML_ONNXRUNTIME_LIB=/path/libonnxruntime.so.<version>` (OPERATIONS section 3). The scorer
+   refuses the model unless the gate report says `deployable: true` and `synthetic: false`, has feature
+   version 1 and a `model_sha256` equal to the file's SHA-256. It checks
+   `pandaeye.feature_version`/`pandaeye.feature_names` against its own constants, refuses synthetic
+   models, scores tick-client windows and flags windows with `P(cheat) >= pandaeye.threshold`.
 
-   **Points stay 0 until `PE_ML_POINTS` is set**, so the model runs in shadow by default: its signals
-   are visible in evidence and telemetry but cannot move a player's score. Compare its signals with
-   verdict outcomes in shadow before giving it points (the `ml` family cap is 50, CHECKS.md section 4).
+   **Points stay 0 until `PE_ML_POINTS` is set**, so the model runs in shadow by default. Flagged
+   windows are counted in `pandaeye_signals_total{check="ml.<model_name>"}` and every scored window's
+   P(cheat) goes to the `pandaeye_worker_ml_p_cheat` histogram, but no signal reaches the verdict
+   service: shadow flags are not in evidence, the API or the dashboard, and cannot move a score or
+   trigger an alert. A model that fails to load in shadow is logged as an error and leaves ML off
+   (`pandaeye_worker_ml_model_loaded` 0) instead of stopping the node; with points > 0 it stops the
+   process. Shadow results are aggregates only (per-window scores are not recorded): compare the flag
+   rate with the heuristics' before giving the model points (the `ml` family cap is 50, CHECKS.md
+   section 4).
 
 ## Feature-window files (no ClickHouse)
 
