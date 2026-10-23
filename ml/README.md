@@ -163,7 +163,7 @@ To train from the files:
    ```sh
    export PE_API_KEY='pe_<id>_<secret>'          # API key with scope "read"
    python -c 'import os; from pandaeye_ml import dataset as D; D.write_ndjson(D.fetch_labels_api("https://<api-host>", os.environ["PE_API_KEY"]), "data/labels.ndjson")'
-   python -c 'import json; [print(e["tenant_id"] + "," + e["player_uuid"]) for e in map(json.loads, open("data/ml/erasures.jsonl"))]' > data/erased.txt
+   (umask 077; python -c 'import json; [print(e["tenant_id"] + "," + e["player_uuid"]) for e in map(json.loads, open("data/ml/erasures.jsonl"))]' > data/erased.txt)
    ```
 
 4. Train with `--windows data/feature_windows.parquet --labels data/labels.ndjson --erased data/erased.txt`
