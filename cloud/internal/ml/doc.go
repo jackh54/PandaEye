@@ -6,8 +6,8 @@
 //     feature_windows) and, when a model is loaded, scores them.
 //   - Scorer scores windows. Default builds have only the disabled scorer; `-tags onnx` builds an
 //     ONNX Runtime implementation (github.com/yalue/onnxruntime_go, shared library at runtime) that
-//     refuses models whose feature version or names differ from FeatureNames or that were trained on
-//     synthetic data.
+//     refuses models whose feature version or names differ from FeatureNames, that were trained on
+//     synthetic data, or that lack a deployable gate report for exactly this file (CheckGate).
 package ml
 
 import (
@@ -60,7 +60,10 @@ type Scorer interface {
 var ErrModelRejected = errors.New("ml: model rejected")
 
 // New returns the scorer configured by PE_ML_MODEL: disabled when unset; in builds without the onnx
-// tag a configured model is an error. The scorer is shared by every service of the process.
+// tag a configured model cannot load. A model that cannot load (no onnx support, no ONNX Runtime,
+// rejected metadata or gate report) is an error when PE_ML_POINTS > 0; in shadow (0 points) it is
+// logged and scoring stays off, so the rest of the process keeps running. The scorer is shared by
+// every service of the process.
 func New(d *app.Deps) (Scorer, error) {
 	if d == nil || d.Config == nil || strings.TrimSpace(d.Config.ML.Model) == "" {
 		return Disabled{}, nil
@@ -68,7 +71,13 @@ func New(d *app.Deps) (Scorer, error) {
 	s, err := d.Shared("ml.scorer", func() (any, error) {
 		sc, err := openModel(d.Config.ML.Model, d.Config.ML.Points)
 		if err != nil {
-			return nil, err
+			if d.Config.ML.Points > 0 {
+				return nil, err
+			}
+			if d.Log != nil {
+				d.Log.Error("ml: model not loaded, scoring is off (PE_ML_POINTS is 0)", "model", d.Config.ML.Model, "err", err)
+			}
+			return Disabled{}, nil
 		}
 		d.OnClose(sc.Close)
 		return sc, nil

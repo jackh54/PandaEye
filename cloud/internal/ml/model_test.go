@@ -1,8 +1,15 @@
 package ml
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackh54/PandaEye/cloud/internal/app"
@@ -58,5 +65,84 @@ func TestNewScorerDisabledByDefault(t *testing.T) {
 	}
 	if s, err := New(nil); err != nil || s.Enabled() {
 		t.Fatal("nil deps")
+	}
+}
+
+// writeGated writes model bytes to <dir>/model.onnx with a passing gate report (adjusted by mod) and
+// returns the model path.
+func writeGated(t *testing.T, model []byte, mod func(g map[string]any)) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "model.onnx")
+	sum := sha256.Sum256(model)
+	g := map[string]any{"deployable": true, "synthetic": false, "feature_version": 1, "model_sha256": hex.EncodeToString(sum[:])}
+	if mod != nil {
+		mod(g)
+	}
+	b, _ := json.Marshal(g)
+	if err := os.WriteFile(path, model, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(GatePath(path), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestCheckGate(t *testing.T) {
+	if GatePath("/srv/ml/model.onnx") != "/srv/ml/model.gate.json" {
+		t.Fatal(GatePath("/srv/ml/model.onnx"))
+	}
+	model := []byte("stand-in model bytes")
+	if err := CheckGate(writeGated(t, model, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckGate(writeGated(t, model, func(g map[string]any) { g["model_sha256"] = strings.ToUpper(g["model_sha256"].(string)) })); err != nil {
+		t.Fatalf("hex case: %v", err)
+	}
+	for name, mod := range map[string]func(g map[string]any){
+		"not deployable":    func(g map[string]any) { g["deployable"] = false },
+		"deployable absent": func(g map[string]any) { delete(g, "deployable") },
+		"synthetic":         func(g map[string]any) { g["synthetic"] = true },
+		"synthetic absent":  func(g map[string]any) { delete(g, "synthetic") },
+		"feature version":   func(g map[string]any) { g["feature_version"] = 2 },
+		"hash absent":       func(g map[string]any) { delete(g, "model_sha256") },
+		"hash of another":   func(g map[string]any) { g["model_sha256"] = strings.Repeat("0", 64) },
+	} {
+		if err := CheckGate(writeGated(t, model, mod)); !errors.Is(err, ErrModelRejected) {
+			t.Errorf("%s: accepted (%v)", name, err)
+		}
+	}
+	path := writeGated(t, model, nil)
+	if err := os.WriteFile(path, append(model, '!'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckGate(path); !errors.Is(err, ErrModelRejected) {
+		t.Errorf("model changed after its gate: %v", err)
+	}
+	if err := os.WriteFile(GatePath(path), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckGate(path); !errors.Is(err, ErrModelRejected) {
+		t.Errorf("invalid report: %v", err)
+	}
+	if err := CheckGate(filepath.Join(t.TempDir(), "model.onnx")); !errors.Is(err, ErrModelRejected) {
+		t.Errorf("no report: %v", err)
+	}
+}
+
+// A model that cannot load disables ML in shadow (0 points) and fails the process with points.
+func TestNewLoadFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model.onnx") // no model, no gate report (and no onnx support by default)
+	var logs bytes.Buffer
+	d := &app.Deps{Config: &config.Config{ML: config.ML{Model: path}}, Log: slog.New(slog.NewJSONHandler(&logs, nil))}
+	s, err := New(d)
+	if err != nil || s.Enabled() {
+		t.Fatalf("shadow: %v %v", s, err)
+	}
+	if !strings.Contains(logs.String(), `"level":"ERROR"`) || !strings.Contains(logs.String(), "scoring is off") {
+		t.Fatalf("load failure not logged: %s", logs.String())
+	}
+	if s, err := New(&app.Deps{Config: &config.Config{ML: config.ML{Model: path, Points: 5}}}); err == nil {
+		t.Fatalf("points > 0: %v loaded", s)
 	}
 }

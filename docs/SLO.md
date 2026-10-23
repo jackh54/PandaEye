@@ -137,7 +137,7 @@ Not defined in the specification available to this document (**Open**).
 | Data | windows and labels from trusted tenants only, erased subjects excluded, tick-client windows of the model's feature version, held-out players never seen in training (split by player UUID; [`ml/FEATURES.md`](../ml/FEATURES.md) section 7); never synthetic data |
 | Pass (as implemented) | on the held-out windows the model's FPR <= the heuristic baseline's FPR AND the model's TPR > the baseline's TPR (+ `--min-tpr-gain`, default 0), with at least 50 cheat and 50 legit windows and 5 players per class |
 | Release | exit 0 and `deployable: true` in the report (non-synthetic data, and the deploy threshold in the model metadata also keeps FPR <= the baseline's on the held-out players); running it once more with `--threshold-mode fixed` tests that the shipped threshold transfers |
-| Deployment | ship the model with `PE_ML_POINTS=0` first (signals with 0 points, shadow scoring); raise points only after a further gate-2-style observation of the `ml.<model>` signals |
+| Deployment | copy `model.onnx` with its gate report as `model.gate.json` (the worker refuses a model whose report is not deployable or is for another file); ship it with `PE_ML_POINTS=0` first (shadow: flagged windows are counted in `pandaeye_signals_total{check="ml.<model>"}`, no signals reach the verdict service); raise points only after a further gate-2-style observation of the shadow flags |
 
 The labelled set over-represents players the heuristics already flagged (FEATURES.md section 7), so the
 gate's FPR is the FPR on that set, not on the whole player population.

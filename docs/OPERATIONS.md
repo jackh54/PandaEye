@@ -139,7 +139,8 @@ it does not use.
 | `PE_WORKER_MAX_MEMORY` | `2GiB` | worker, all | byte budget of worker state and clip rings (LRU, per tenant first); keep it well below the container limit |
 | `PE_REGION` | `local` | gateway, api | shown on `/status` |
 | `PE_LOG_LEVEL` | `info` | all roles | `debug`, `info`, `warn`, `error`; secrets are redacted at every level |
-| `PE_ML_MODEL`, `PE_ML_POINTS` | empty, `0` | worker (`-tags onnx` builds) | ONNX model path; 0 points = shadow scoring. The static image cannot load models |
+| `PE_ML_MODEL`, `PE_ML_POINTS` | empty, `0` | worker (`-tags onnx` builds) | model path, e.g. `/home/container/ml/model.onnx`. Its gate report must sit next to it as `model.gate.json` (`pandaeye_ml evaluate` output with `deployable: true`, `synthetic: false`, `feature_version: 1` and `model_sha256` equal to the file's SHA-256), or the model is refused. 0 points = shadow: flagged windows are only counted (`pandaeye_signals_total{check="ml.<model>"}`, section 9.1) and never reach the verdict service, and a model that cannot load (default build, no ONNX Runtime, rejected model or gate report) is logged as an error and leaves ML off. With points > 0 a load failure stops the process. The static image cannot load models |
+| `PE_ML_ONNXRUNTIME_LIB` | `onnxruntime.so` on the library search path | worker (`-tags onnx` builds) | absolute path of the ONNX Runtime shared library, e.g. `/home/container/ort/libonnxruntime.so.1.31.0` (release archives never name it `onnxruntime.so`; tested with 1.29.0 and 1.31.0). Environment only, no file key. Scoring uses one thread without spinning. Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_OWNER_ID` | `<role>-<hostname>` | worker, verdict, api, all | stable lease owner id, `[A-Za-z0-9_-]{1,64}`. Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_LEASES` | `auto` (`all` in `all`) | worker, verdict | `auto` (fair share), `all`, or a list like `0-3,7`. Not in ARCHITECTURE 5.1 (implementation) |
 
@@ -614,7 +615,7 @@ Keep the circuit-breaker defaults.
 ### 9.1 Metrics
 
 PandaEye metrics (`/metrics` on `PE_METRICS_LISTEN`; no tenant or server labels), from
-`cloud/internal/metrics`:
+`cloud/internal/metrics` (the `pandaeye_worker_ml_*` rows from `cloud/internal/worker`):
 
 | Metric | Labels | Meaning |
 |---|---|---|
@@ -626,7 +627,9 @@ PandaEye metrics (`/metrics` on `PE_METRICS_LISTEN`; no tenant or server labels)
 | `pandaeye_gateway_connections_closed_total` | `reason` | closed connections by close reason |
 | `pandaeye_consumer_lag_messages` | `consumer` | messages pending for a stream consumer |
 | `pandaeye_leases_held`, `pandaeye_lease_changes_total` | `group`; `group`, `event` (`acquired`, `released`, `lost`) | partition and singleton leases |
-| `pandaeye_signals_total` | `check` | signals emitted |
+| `pandaeye_signals_total` | `check` | signals emitted; for `ml.<model>` with `PE_ML_POINTS=0`, flagged windows (counted, not emitted) |
+| `pandaeye_worker_ml_model_loaded` | - | 1 while an ML model scores windows, 0 when `PE_ML_MODEL` is unset or the model did not load |
+| `pandaeye_worker_ml_p_cheat` | - | histogram of the model's P(cheat) over every scored window |
 | `pandaeye_verdicts_total` | `action`, `shadow` | verdicts produced |
 | `pandaeye_dropped_total` | `reason` (overflow, stale, erased, ...) | anything dropped |
 | `pandaeye_stream_publish_errors_total` | `stream` | failed publishes |
@@ -654,6 +657,7 @@ dashboard (server online, probe RTT).
 | Enforcement spike | non-shadow KICK/BAN rate of `pandaeye_verdicts_total` above 3x its 7-day baseline | possible false-positive wave (8.5) |
 | Connection drop | `pandaeye_gateway_connections` falls by > 20% in 5 min | gateway, proxy or network incident |
 | NATS storage | JetStream storage > 80% of its limit | `PE_EVENTS` discards old data at its byte limit; other streams fail to accept |
+| ML model not loaded | `pandaeye_worker_ml_model_loaded == 0` on a worker with `PE_ML_MODEL` set | in shadow a load failure only logs an error; the console says why |
 
 ## 10. Security checklist
 

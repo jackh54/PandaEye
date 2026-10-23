@@ -900,10 +900,17 @@ func (e *engine) windows(m *batchMeta, i int, s *session, ws []*ml.Window) {
 		origin = m.origin
 	}
 	for k, w := range apply {
+		e.env.wm.MLPCheat.Observe(scores[k].PCheat)
 		if !scores[k].Flagged {
 			continue
 		}
 		check := sc.CheckID()
+		if sc.Points() <= 0 {
+			// Shadow (PE_ML_POINTS=0): counted, never a verdict input. A zero-point signal adds nothing
+			// to the score but would still run the verdict ladder (ALERT re-timing, watch requests).
+			e.env.m.Signals.WithLabelValues(check).Inc()
+			continue
+		}
 		sig := &pb.Signal{Origin: origin, Player: s.key.player.Bytes(), PlayerName: s.name, CheckId: check,
 			Category: pb.Category_CATEGORY_HEURISTICS, Points: sc.Points(), Confidence: scores[k].PCheat,
 			EventTimeUs: uint64(w.WindowEndUs - origin.GetClockOffsetUs()), WorkerUnixUs: uint64(e.env.now().UnixMicro()),

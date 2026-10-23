@@ -12,7 +12,8 @@ import (
 )
 
 // OnnxRuntimeLibEnv names the environment variable with the path of the ONNX Runtime shared library
-// (default: "onnxruntime.so" on the library search path).
+// (default: "onnxruntime.so" on the library search path; release archives name it
+// libonnxruntime.so.<version>, so set an absolute path).
 const OnnxRuntimeLibEnv = "PE_ML_ONNXRUNTIME_LIB"
 
 var ortEnv struct {
@@ -40,11 +41,35 @@ type onnxScorer struct {
 	session *ort.DynamicAdvancedSession
 }
 
+// sessionOptions keep ONNX Runtime to one thread that does not spin: ORT sizes its default pools from
+// the host's cores, not from a container's CPU limit, and Score calls are serialised anyway.
+func sessionOptions() (*ort.SessionOptions, error) {
+	o, err := ort.NewSessionOptions()
+	if err != nil {
+		return nil, err
+	}
+	if err := errors.Join(o.SetIntraOpNumThreads(1), o.SetInterOpNumThreads(1),
+		o.AddSessionConfigEntry("session.intra_op.allow_spinning", "0"),
+		o.AddSessionConfigEntry("session.inter_op.allow_spinning", "0")); err != nil {
+		_ = o.Destroy()
+		return nil, err
+	}
+	return o, nil
+}
+
 func openModel(path string, points float64) (Scorer, error) {
+	if err := CheckGate(path); err != nil {
+		return nil, fmt.Errorf("ml: model %s: %w", path, err)
+	}
 	if err := initRuntime(); err != nil {
 		return nil, fmt.Errorf("ml: onnxruntime: %w", err)
 	}
-	meta, err := ort.GetModelMetadata(path)
+	opts, err := sessionOptions()
+	if err != nil {
+		return nil, fmt.Errorf("ml: onnxruntime session options: %w", err)
+	}
+	defer opts.Destroy()
+	meta, err := ort.GetModelMetadataWithOptions(path, opts)
 	if err != nil {
 		return nil, fmt.Errorf("ml: model %s: %w", path, err)
 	}
@@ -56,7 +81,7 @@ func openModel(path string, points float64) (Scorer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ml: model %s: %w", path, err)
 	}
-	sess, err := ort.NewDynamicAdvancedSession(path, []string{"features"}, []string{"label", "probabilities"}, nil)
+	sess, err := ort.NewDynamicAdvancedSession(path, []string{"features"}, []string{"label", "probabilities"}, opts)
 	if err != nil {
 		return nil, fmt.Errorf("ml: model %s: %w", path, err)
 	}

@@ -413,7 +413,8 @@ confidence 0.6.
 
 ### 2.16 ml.<model> - by model
 
-See ARCHITECTURE 5.10. Points 0 unless `PE_ML_POINTS` is set.
+See ARCHITECTURE 5.10. Emitted only when `PE_ML_POINTS` > 0; with 0 (shadow) flagged windows are only
+counted.
 
 ## 3. Forwarded local flags
 

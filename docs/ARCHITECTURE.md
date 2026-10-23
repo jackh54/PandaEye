@@ -793,8 +793,16 @@ writes `usage_daily = max(existing, value)`.
 - `internal/ml/features.go` defines the feature vector (names and order in `ml/FEATURES.md`, versioned)
   per player per 30 s window from worker state; written to telemetry `feature_windows`.
 - `Scorer` interface; default build = disabled; `-tags onnx` builds an ONNX Runtime implementation
-  (github.com/yalue/onnxruntime_go, shared library at runtime). Emits `ml.<model>` signals with 0 points
-  unless `PE_ML_POINTS` > 0.
+  (github.com/yalue/onnxruntime_go, shared library at runtime from `PE_ML_ONNXRUNTIME_LIB`, one intra-op
+  and one inter-op thread, no spinning). It loads a model only with its gate report next to it
+  (`model.onnx` -> `model.gate.json`: `deployable` true, `synthetic` false, feature version 1,
+  `model_sha256` of the file). This guards against deploying the wrong file, not against tampering.
+- With `PE_ML_POINTS` > 0 a flagged window (P(cheat) >= threshold) becomes an `ml.<model>` signal with
+  those points, and a model that cannot load stops the process. With 0 (default, shadow) flagged windows
+  are only counted (`pandaeye_signals_total{check="ml.<model>"}`) and never reach the verdict service,
+  where a zero-point signal would still run the ladder (ALERT timing, watch requests); a model that cannot
+  load is logged and leaves ML off (`pandaeye_worker_ml_model_loaded` 0). Every scored window feeds the
+  `pandaeye_worker_ml_p_cheat` histogram.
 - `ml/` (Python): dataset export (API label export + ClickHouse feature windows, erased subjects excluded,
   labels only from trusted tenants), training (gradient boosting), ONNX export, `evaluate.py` gate (must beat
   the heuristic baseline on a held-out set at an equal or lower false-positive rate, else exit 1). A

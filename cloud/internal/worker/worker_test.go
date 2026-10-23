@@ -4,19 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/jackh54/PandaEye/cloud/internal/app"
+	"github.com/jackh54/PandaEye/cloud/internal/config"
 	"github.com/jackh54/PandaEye/cloud/internal/geom"
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
+	"github.com/jackh54/PandaEye/cloud/internal/metrics"
 	"github.com/jackh54/PandaEye/cloud/internal/store"
 	"github.com/jackh54/PandaEye/cloud/internal/stream"
 	"github.com/jackh54/PandaEye/cloud/internal/testkit"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go/jetstream"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -335,5 +340,34 @@ func TestReplayNeedsBusForStreamData(t *testing.T) {
 	err := Replay(context.Background(), &app.Deps{}, ReplayOptions{TenantID: testTenant, Player: identity.NewUUID().String()}, &lineBuffer{})
 	if err == nil || errors.Is(err, context.Canceled) {
 		t.Fatalf("replay without a bus: %v", err)
+	}
+}
+
+// A model that cannot load leaves a shadow worker running with ML off (gauge 0) and stops a worker
+// that would give it points.
+func TestWorkerMLModelLoad(t *testing.T) {
+	model := filepath.Join(t.TempDir(), "model.onnx") // missing (and no onnx support by default)
+	newEnv := func(ml config.ML, o Options) (*env, error) {
+		d := &app.Deps{Config: &config.Config{ML: ml}, Log: slog.New(slog.DiscardHandler), Metrics: metrics.New()}
+		o.Telemetry = &recorder{}
+		svc, _ := NewWithOptions(d, o)
+		return svc.newEnv(mapTenants{}, mapErasures{})
+	}
+	loaded := func(en *env) float64 {
+		var m dto.Metric
+		if err := en.wm.MLLoaded.Write(&m); err != nil {
+			t.Fatal(err)
+		}
+		return m.GetGauge().GetValue()
+	}
+	en, err := newEnv(config.ML{Model: model}, Options{})
+	if err != nil || en.scorer.Enabled() || loaded(en) != 0 {
+		t.Fatalf("shadow: %v", err)
+	}
+	if _, err := newEnv(config.ML{Model: model, Points: 5}, Options{}); err == nil {
+		t.Fatal("points > 0: a model that does not load must stop the worker")
+	}
+	if en, err := newEnv(config.ML{}, Options{Scorer: fixedScorer{}}); err != nil || loaded(en) != 1 {
+		t.Fatalf("loaded: %v", err)
 	}
 }
