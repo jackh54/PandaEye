@@ -47,5 +47,6 @@
 // queued rows, appends the erasure to <dir>/erasures.jsonl (fsynced) and returns: later rows of the
 // player from before the erasure are not written, and a background loop rewrites the .csv.gz files
 // without them (the current hour's file when it is compressed). Rows from after the erasure are kept,
-// as the worker keeps new data. The journal is re-read at start, so an interrupted rewrite resumes.
+// as the worker keeps new data. The journal is re-read at start, so an interrupted rewrite resumes. A
+// damaged file keeps the rows before the damage and never holds up the other files.
 package telemetry

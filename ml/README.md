@@ -130,7 +130,8 @@ retention and disk sizing). Signals, verdicts and sessions are not recorded ther
 The columns are the metadata of FEATURES.md section 5, then `worker_unix_us`, then the 94 features in
 table order. Values are written as ClickHouse stores them: canonical lowercase UUIDs (the nil UUID for an
 invalid server or session id), `0`/`1` flags, and floats in the shortest form that parses back to the same
-float32. Each file loads unchanged with `load_windows_file` (`.csv` or `.csv.gz`); the Go golden file
+float32. Files written before a feature-version change keep that version's columns. Each file loads
+unchanged with `load_windows_file` (`.csv` or `.csv.gz`); the Go golden file
 `cloud/internal/telemetry/testdata/windows-20260105T10Z.csv` and `tests/test_go_windows.py` keep it that way.
 A window re-emitted after a restart can appear twice; `dedupe_windows` keeps the newest `worker_unix_us`.
 

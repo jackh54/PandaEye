@@ -347,3 +347,4 @@ Points where the spec does not support a statement the notice needs. Resolve the
     erasure time) is kept as long as the directory, like the `erasures` table (item 1). Copies of the files
     taken off the node for training, and Pterodactyl or host backups of the directory, are not reached by
     an erasure: they need their own retention, and training filters them with the journal (`--erased`).
+    Switching the files off stops their retention and erasure, so the directory must then be deleted.

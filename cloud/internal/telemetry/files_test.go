@@ -664,3 +664,136 @@ func TestNewPicksFiles(t *testing.T) {
 		t.Fatalf("d.Close did not flush the files: %v", files)
 	}
 }
+
+// otherHeader is the header of a window file of another feature version.
+const otherHeader = "tenant_id,player,server_id,session_id,window_start_us,window_end_us,client_protocol,tick_client,hot_loaded," +
+	"feature_version,worker_unix_us,f_a,f_b\n"
+
+// otherRow is a row of otherHeader's columns.
+func otherRow(p identity.UUID, startUs int64) string {
+	s := strconv.FormatInt(startUs, 10)
+	return tenant + "," + p.String() + "," + server + "," + session + "," + s + "," + s + ",769,1,0,0," + s + ",1,2\n"
+}
+
+func gzBytes(t *testing.T, content string) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	zw := gzip.NewWriter(&b)
+	if _, err := zw.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+func TestFileDamagedFilesDoNotHoldUpErasure(t *testing.T) {
+	dir := t.TempDir()
+	h := func(n int) time.Time { return hour0.Add(time.Duration(n) * time.Hour) }
+	w := func(p identity.UUID, at time.Time) FeatureWindow { return win(p, at.UnixMicro(), at.UnixMicro()) }
+	write := func(name string, b []byte) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Oldest first, each before the file whose erasure it used to block: a corrupt gzip stream, a file
+	// with garbage after its gzip stream, a file of another feature version, and a past .csv whose
+	// .csv.gz of the same hour is corrupt.
+	write(csvName(h(-6))+".gz", []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xffnot deflate"))
+	write(csvName(h(-5))+".gz", append(gzBytes(t, string(appendRow(appendRow([]byte(wantHeader+"\n"), w(other, h(-5))), w(player, h(-5))))), "junk"...))
+	write(csvName(h(-4))+".gz", gzBytes(t, otherHeader+otherRow(player, h(-4).UnixMicro())+otherRow(other, h(-4).UnixMicro())))
+	write(csvName(h(-3))+".gz", []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xffnot deflate"))
+	writeCSV(t, filepath.Join(dir, csvName(h(-3))), "", w(other, h(-3)))
+	writeGz(t, gzPath(dir, h(-1)), w(player, h(-1)), w(other, h(-1)))
+	line := `{"tenant_id":"` + tenant + `","player_uuid":"` + player.String() + `","erased_at_us":` + strconv.FormatInt(hour0.UnixMicro(), 10) + "}\n"
+	write(ErasureJournal, []byte(line))
+
+	s := newFiles(t, dir, &clock{t: hour0.Add(5 * time.Minute)}, FileOptions{})
+	compacted(t, dir) // the pass completes: no file holds it up
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if exists(gzPath(dir, h(-6))) {
+		t.Error("a file without a readable row must be deleted")
+	}
+	for _, c := range []struct {
+		hour int
+		want []string
+	}{{-5, []string{other.String()}}, {-3, []string{other.String()}}, {-1, []string{other.String()}}} {
+		if got := players(t, gzPath(dir, h(c.hour))); !slices.Equal(got, c.want) {
+			t.Errorf("hour %d: rows %v, want %v", c.hour, got, c.want)
+		}
+	}
+	// A file of another feature version keeps its header.
+	if got := string(readFile(t, gzPath(dir, h(-4)))); got != otherHeader+otherRow(other, h(-4).UnixMicro()) {
+		t.Errorf("other feature version: %q", got)
+	}
+}
+
+func TestFileOfAnotherFeatureVersion(t *testing.T) {
+	// The node was upgraded to other features: the old version's .csv files are compressed with their
+	// own header, and the current hour's is started over instead of getting rows of other columns.
+	dir := t.TempDir()
+	past := hour0.Add(-time.Hour)
+	pastCSV := otherHeader + otherRow(player, past.UnixMicro())
+	if err := os.WriteFile(filepath.Join(dir, csvName(past)), []byte(pastCSV), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cur := filepath.Join(dir, csvName(hour0))
+	if err := os.WriteFile(cur, []byte(otherHeader+otherRow(player, hour0.UnixMicro())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newFiles(t, dir, &clock{t: hour0.Add(10 * time.Minute)}, FileOptions{})
+	s.RecordFeatureWindow(win(other, hour0.UnixMicro(), hour0.UnixMicro()))
+	flush(t, s)
+	eventually(t, "past hour compressed", func() bool { return exists(gzPath(dir, past)) })
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(readFile(t, gzPath(dir, past))); got != pastCSV {
+		t.Errorf("past hour %q", got)
+	}
+	header, rs := rows(t, cur)
+	if header != wantHeader || len(rs) != 1 || rs[0][1] != other.String() || len(rs[0]) != 11+ml.NumFeatures {
+		t.Fatalf("current hour: %q %v", header, rs)
+	}
+}
+
+func TestFileRecoverLeavesOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{".tmp-notes.txt", ".compact-backup.db", tmpPrefix + csvName(hour0), "README"}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := newFiles(t, dir, &clock{t: hour0}, FileOptions{})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range names {
+		if !exists(filepath.Join(dir, n)) {
+			t.Errorf("%s deleted", n)
+		}
+	}
+}
+
+func TestFileJanitorKeepsNewerCurrentFile(t *testing.T) {
+	// The janitor works on a snapshot of the writer's hour: a .csv of a later hour is the writer's
+	// new file, not a past one.
+	dir := t.TempDir()
+	s, err := openFiles(dir, FileOptions{MaxBytes: 1, Now: (&clock{t: hour0}).Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.journal.Close()
+	writeGz(t, gzPath(dir, hour0.Add(-time.Hour)), win(player, 0, 0))
+	next := filepath.Join(dir, csvName(hour0.Add(time.Hour)))
+	writeCSV(t, next, "", win(player, 0, 0))
+	s.janitor()
+	if !exists(next) || exists(gzPath(dir, hour0.Add(-time.Hour))) {
+		t.Fatalf("byte cap: newer current file kept %v, past file kept %v", exists(next), exists(gzPath(dir, hour0.Add(-time.Hour))))
+	}
+}

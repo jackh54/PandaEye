@@ -46,11 +46,22 @@ const (
 
 var windowFileRE = regexp.MustCompile(`^windows-([0-9]{8}T[0-9]{2})Z\.csv(\.gz)?$`)
 
-// fileColumns is the header of every window file: the metadata columns of ml/FEATURES.md section 5,
-// worker_unix_us, then the features in table order.
+// metaColumns are the first columns of every window file: the metadata columns of ml/FEATURES.md
+// section 5 and worker_unix_us. The feature columns after them change with the feature version.
+var metaColumns = []string{"tenant_id", "player", "server_id", "session_id", "window_start_us", "window_end_us",
+	"client_protocol", "tick_client", "hot_loaded", "feature_version", "worker_unix_us"}
+
+// metaHeader starts the header of a window file of any feature version.
+var metaHeader = []byte(strings.Join(metaColumns, ",") + ",")
+
+// errBadFile marks a window file whose content cannot be read: a corrupt gzip stream, an overlong line
+// or a first line that is not a window header. Rewrites keep the rows read before the damage.
+var errBadFile = errors.New("damaged window file")
+
+// fileColumns is the header of the files this version writes: metaColumns, then the features in table
+// order.
 func fileColumns() []string {
-	return append([]string{"tenant_id", "player", "server_id", "session_id", "window_start_us", "window_end_us",
-		"client_protocol", "tick_client", "hot_loaded", "feature_version", "worker_unix_us"}, ml.FeatureNames()...)
+	return append(append([]string(nil), metaColumns...), ml.FeatureNames()...)
 }
 
 // FileOptions tunes the file sink; zero values take the defaults.
@@ -204,6 +215,7 @@ func openFiles(dir string, o FileOptions) (*Files, error) {
 	if err != nil {
 		return nil, fmt.Errorf("telemetry: %w", err)
 	}
+	syncDir(dir) // a new journal must survive a crash after its first fsynced erasure
 	s.journal = j
 	return s, nil
 }
@@ -226,8 +238,12 @@ func (s *Files) recover() error {
 	for _, e := range entries {
 		name := e.Name()
 		p := filepath.Join(s.dir, name)
+		// Only the sink's own temporary files are touched: the directory may hold other files.
 		switch {
 		case strings.HasPrefix(name, scratchPrefix):
+			if rest := strings.TrimPrefix(name, scratchPrefix); rest != erasureDone && !windowFileRE.MatchString(rest) {
+				continue
+			}
 			if err := os.Remove(p); err != nil {
 				return err
 			}
@@ -235,7 +251,10 @@ func (s *Files) recover() error {
 			// The temp file is complete once its .csv is gone (compress removes the .csv first).
 			gz := strings.TrimPrefix(name, tmpPrefix)
 			m := windowFileRE.FindStringSubmatch(gz)
-			if m == nil || m[2] == "" || exists(filepath.Join(s.dir, strings.TrimSuffix(gz, ".gz"))) {
+			if m == nil || m[2] == "" {
+				continue
+			}
+			if exists(filepath.Join(s.dir, strings.TrimSuffix(gz, ".gz"))) {
 				err = os.Remove(p)
 			} else {
 				err = os.Rename(p, filepath.Join(s.dir, gz))
@@ -537,7 +556,8 @@ func (s *Files) write(b []byte) error {
 }
 
 // open opens the current hour's file for appending: a new file gets the header, an existing one loses
-// a partial last line left by a crash.
+// a partial last line left by a crash. An existing file with another header (written by a version with
+// other features, upgraded within the hour) cannot take these rows: it is started over.
 func (s *Files) open() error {
 	p := filepath.Join(s.dir, csvName(s.curHour))
 	f, err := os.OpenFile(p, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
@@ -545,6 +565,17 @@ func (s *Files) open() error {
 		return err
 	}
 	size, err := completeLen(f)
+	if err == nil && size > 0 {
+		head := make([]byte, len(s.header))
+		if n, rerr := f.ReadAt(head, 0); !bytes.Equal(head[:n], s.header) {
+			if rerr != nil && rerr != io.EOF {
+				f.Close()
+				return rerr
+			}
+			s.o.Log.Warn("feature file of another feature version replaced", "file", p)
+			size = 0
+		}
+	}
 	if err == nil {
 		err = f.Truncate(size)
 	}
@@ -712,7 +743,8 @@ func (s *Files) compress(hour time.Time, filter erasures) error {
 }
 
 // compact removes erased rows from every .csv.gz once the journal has grown, then records how far the
-// journal is done, so a restart resumes an interrupted pass. Running it again changes nothing.
+// journal is done, so a restart resumes an interrupted pass. Running it again changes nothing. A file
+// that fails does not hold up the others; the pass is retried at the next run.
 func (s *Files) compact() {
 	filter, target, _ := s.snapshot()
 	if target <= s.doneLen {
@@ -723,6 +755,7 @@ func (s *Files) compact() {
 		s.logErr("feature files: list failed", 0, err)
 		return
 	}
+	failed := false
 	for _, f := range files {
 		if !f.gz {
 			continue
@@ -731,11 +764,15 @@ func (s *Files) compact() {
 			return
 		}
 		if err := s.compactFile(f.name, filter); err != nil {
-			if !errors.Is(err, errStopped) {
-				s.logErr("feature file erasure failed", 0, err)
+			if errors.Is(err, errStopped) {
+				return
 			}
-			return // retried at the next run
+			s.logErr("feature file erasure failed", 0, err)
+			failed = true
 		}
+	}
+	if failed {
+		return
 	}
 	if err := s.writeDone(target); err != nil {
 		s.logErr("feature files: erasure progress not saved", 0, err)
@@ -747,6 +784,9 @@ func (s *Files) compact() {
 func (s *Files) compactFile(name string, filter erasures) error {
 	p := filepath.Join(s.dir, name)
 	hit, err := s.scan(p, filter)
+	if errors.Is(err, errBadFile) {
+		hit, err = true, nil // the rewrite keeps the rows before the damage
+	}
 	if err != nil || !hit {
 		return err
 	}
@@ -801,7 +841,7 @@ func (s *Files) janitor() {
 		removed = true
 	}
 	for _, f := range files {
-		current := !f.gz && f.hour.Equal(active)
+		current := !f.gz && !f.hour.Before(active) // the writer may have moved on since the snapshot
 		if !current && !f.hour.Add(time.Hour).After(cutoff) {
 			remove(f)
 			continue
@@ -813,7 +853,7 @@ func (s *Files) janitor() {
 		if total <= s.o.MaxBytes {
 			break
 		}
-		if !f.gz && f.hour.Equal(active) {
+		if !f.gz && !f.hour.Before(active) {
 			continue
 		}
 		remove(f)
@@ -858,8 +898,11 @@ func (s *Files) list() ([]windowFile, error) {
 	return out, nil
 }
 
-// rewrite writes the header and every kept data row of srcs, in order, gzip-compressed to dst (mode
-// 0600, fsynced). It returns the number of rows written.
+// rewrite writes the header of the first source and every kept data row of srcs, in order,
+// gzip-compressed to dst (mode 0600, fsynced). It returns the number of rows written. Of a damaged
+// source (errBadFile) only the rows before the damage are kept, and a source with another header (the
+// hour's files of two feature versions, after a clock going back) is left out: neither can hold up
+// compression or an erasure.
 func (s *Files) rewrite(dst string, srcs []string, filter erasures) (int, error) {
 	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -869,12 +912,19 @@ func (s *Files) rewrite(dst string, srcs []string, filter erasures) (int, error)
 	bw := bufio.NewWriterSize(f, 256<<10)
 	zw := gzip.NewWriter(bw)
 	rows := 0
-	_, err = zw.Write(s.header)
+	var header []byte
 	for _, src := range srcs {
-		if err != nil {
-			break
-		}
-		err = s.eachRow(src, func(line []byte) error {
+		err = s.eachRow(src, func(h []byte) error {
+			if header == nil {
+				header = append([]byte(nil), h...)
+				_, err := zw.Write(header)
+				return err
+			}
+			if !bytes.Equal(h, header) {
+				return fmt.Errorf("%s: %w: another header than %s", filepath.Base(src), errBadFile, filepath.Base(srcs[0]))
+			}
+			return nil
+		}, func(line []byte) error {
 			if filter.drops(line) {
 				return nil
 			}
@@ -882,6 +932,13 @@ func (s *Files) rewrite(dst string, srcs []string, filter erasures) (int, error)
 			_, err := zw.Write(line)
 			return err
 		})
+		if errors.Is(err, errBadFile) {
+			s.o.Log.Error("damaged feature file: only the rows before the damage are kept", "dir", s.dir, "err", err)
+			err = nil
+		}
+		if err != nil {
+			break
+		}
 	}
 	if err == nil {
 		err = zw.Close()
@@ -901,7 +958,7 @@ func (s *Files) rewrite(dst string, srcs []string, filter erasures) (int, error)
 // scan reports whether src holds a row that filter drops.
 func (s *Files) scan(src string, filter erasures) (bool, error) {
 	errHit := errors.New("hit")
-	err := s.eachRow(src, func(line []byte) error {
+	err := s.eachRow(src, nil, func(line []byte) error {
 		if filter.drops(line) {
 			return errHit
 		}
@@ -913,9 +970,11 @@ func (s *Files) scan(src string, filter erasures) (bool, error) {
 	return false, err
 }
 
-// eachRow calls fn with every complete data line of a .csv or .csv.gz window file (with its newline),
-// after checking that the first line is the header. A missing file has no rows.
-func (s *Files) eachRow(src string, fn func(line []byte) error) error {
+// eachRow calls header with the first line of a .csv or .csv.gz window file (nil header: not called),
+// then fn with every complete data line (with its newline). The header may be of any feature version:
+// it only has to start with metaColumns. A missing file has no rows. Content that cannot be read fails
+// with errBadFile after the rows before it.
+func (s *Files) eachRow(src string, header, fn func(line []byte) error) error {
 	f, err := os.Open(src)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -928,7 +987,7 @@ func (s *Files) eachRow(src string, fn func(line []byte) error) error {
 	if strings.HasSuffix(src, ".gz") {
 		zr, err := gzip.NewReader(f)
 		if err != nil {
-			return fmt.Errorf("%s: %w", filepath.Base(src), err)
+			return readErr(src, err)
 		}
 		defer zr.Close()
 		r = zr
@@ -940,11 +999,16 @@ func (s *Files) eachRow(src string, fn func(line []byte) error) error {
 			return nil // a partial last line (a crash while appending) is not a row
 		}
 		if err != nil {
-			return fmt.Errorf("%s: %w", filepath.Base(src), err)
+			return readErr(src, err)
 		}
 		if n == 0 {
-			if !bytes.Equal(line, s.header) {
-				return fmt.Errorf("%s: unexpected header", filepath.Base(src))
+			if !bytes.HasPrefix(line, metaHeader) {
+				return fmt.Errorf("%s: %w: not a window header", filepath.Base(src), errBadFile)
+			}
+			if header != nil {
+				if err := header(line); err != nil {
+					return err
+				}
 			}
 			continue
 		}
@@ -955,6 +1019,16 @@ func (s *Files) eachRow(src string, fn func(line []byte) error) error {
 			return err
 		}
 	}
+}
+
+// readErr wraps an error reading src. One that does not come from the operating system is about the
+// content (a corrupt or truncated gzip stream, an overlong line) and wraps errBadFile.
+func readErr(src string, err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("%s: %w", filepath.Base(src), err)
+	}
+	return fmt.Errorf("%s: %w: %w", filepath.Base(src), errBadFile, err)
 }
 
 // rowFields returns a data line's "tenant_id,player" prefix, window_start_us and worker_unix_us (ok is
