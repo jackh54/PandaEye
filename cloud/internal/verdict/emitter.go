@@ -115,47 +115,51 @@ func (s *Service) emit(ctx context.Context, pv *pendingVerdict) error {
 	return nil
 }
 
-// resolveNetwork routes a BAN of an offline player to a connected server of the same network, else
-// leaves the fallback (the newest signal's server, pending until it reconnects).
+// resolveNetwork routes a BAN without an open backend session to a connected server: a backend of
+// the same network (or the player's newest backend, whatever its network) before any proxy, since a
+// proxy has no ban command by default; a proxy (preferably the one the player is on) only when no
+// backend is connected. Nothing connected leaves the fallback (the newest backend, pending until it
+// reconnects).
 func (s *Service) resolveNetwork(ctx context.Context, pv *pendingVerdict) {
 	lctx, cancel := context.WithTimeout(ctx, storeTimeout)
 	defer cancel()
 	conns, err := s.bus.ListConnections(lctx, pv.rec.TenantId)
 	if err != nil {
-		s.log.Debug("verdict: connection lookup failed; using the newest signal's server", "err", err)
+		s.log.Debug("verdict: connection lookup failed; using the newest backend", "err", err)
 		return
 	}
+	r := &pv.route
 	var match []stream.Connection
 	for _, c := range conns {
-		if c.Info.NetworkID == pv.route.network {
+		if (r.network != "" && c.Info.NetworkID == r.network) || c.ServerID == r.fallback || c.ServerID == r.proxy {
 			match = append(match, c)
 		}
 	}
 	if len(match) == 0 {
 		return
 	}
-	// Prefer the fallback server when it is connected, then backends over proxies, then by id.
+	// Backends before proxies; within each, the fallback and the player's proxy first; then by id.
+	rank := func(c stream.Connection) int {
+		n := 0
+		if c.Info.Platform == pb.Platform_PLATFORM_VELOCITY {
+			n = 2
+		}
+		if c.ServerID != r.fallback && c.ServerID != r.proxy {
+			n++
+		}
+		return n
+	}
 	slices.SortFunc(match, func(a, b stream.Connection) int {
-		af, bf := a.ServerID == pv.route.fallback, b.ServerID == pv.route.fallback
-		if af != bf {
-			if af {
-				return -1
-			}
-			return 1
-		}
-		ap, bp := a.Info.Platform == pb.Platform_PLATFORM_VELOCITY, b.Info.Platform == pb.Platform_PLATFORM_VELOCITY
-		if ap != bp {
-			if bp {
-				return -1
-			}
-			return 1
-		}
-		return cmp.Compare(a.ServerID, b.ServerID)
+		return cmp.Or(cmp.Compare(rank(a), rank(b)), cmp.Compare(a.ServerID, b.ServerID))
 	})
 	c := match[0]
-	pv.rec.ServerId, pv.route.server = c.ServerID, c.ServerID
-	if c.ServerID != pv.route.fallback {
-		pv.route.serverName = ""
+	pv.rec.ServerId, r.server = c.ServerID, c.ServerID
+	switch c.ServerID {
+	case r.fallback:
+	case r.proxy:
+		r.serverName = r.proxyName
+	default:
+		r.serverName = ""
 	}
 	if c.Info.ShadowMode {
 		pv.rec.Verdict.Shadow = true

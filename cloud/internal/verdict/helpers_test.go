@@ -105,6 +105,7 @@ type tplayer struct {
 	shadow  bool
 	hot     bool
 	exempt  bool
+	proxy   bool // a Velocity proxy's origin
 }
 
 func (h *harness) player(tenant string) *tplayer {
@@ -113,8 +114,19 @@ func (h *harness) player(tenant string) *tplayer {
 }
 
 func (tp *tplayer) origin() *pb.Origin {
+	platform := pb.Platform_PLATFORM_PAPER
+	if tp.proxy {
+		platform = pb.Platform_PLATFORM_VELOCITY
+	}
 	return &pb.Origin{TenantId: tp.tenant, ServerId: tp.server, ServerName: "srv-" + tp.server[:4], NetworkId: tp.network,
-		ShadowMode: tp.shadow, Platform: pb.Platform_PLATFORM_PAPER, ClockOffsetUs: tp.offset}
+		ShadowMode: tp.shadow, Platform: platform, ClockOffsetUs: tp.offset}
+}
+
+// onProxy returns the player's session on a Velocity proxy of the same network.
+func (tp *tplayer) onProxy() *tplayer {
+	p := *tp
+	p.server, p.session, p.proxy = testkit.NewServerID(), identity.NewUUID().String(), true
+	return &p
 }
 
 // nowUs is the harness clock in plugin time (normalised = plugin + offset).

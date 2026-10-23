@@ -262,8 +262,10 @@ StateChange.
 3. It publishes `VerdictRecord` to `pe.verdicts.<tenant>` and waits for the PubAck, then publishes a
    `SignedOutbound{Outbound{verdict}}` to `pe.out.<tenant>.<server>`, then posts to Discord.
 4. Routing: KICK, MITIGATE and ALERT go to the server of the open session; BAN to the open session's
-   server, else any connected server with the same `network_id`, else the server of the newest signal
-   (pending until it reconnects).
+   server unless that is a Velocity proxy, else a connected backend with the same `network_id` (or the
+   player's newest backend), else a connected proxy (the one the player is on first), else the player's
+   newest backend (pending until it reconnects). A proxy has no ban command by default, so a player
+   online only through the proxy, or whose proxy quit was processed last, is banned on a backend.
 5. The gateway holding that server's connection verifies the HMAC and that `tenant_id`/`server_id` match
    the session (else drops the message), forces `shadow = true` while the tenant's current `enforcement`
    (KV `PE_TENANTS`) is false, and sends `ServerFrame.verdict`.

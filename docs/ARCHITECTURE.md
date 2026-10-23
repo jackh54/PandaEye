@@ -674,8 +674,9 @@ internal/testkit           fake plugin client, event builders, helpers
 - Order of operations: publish `VerdictRecord` to `pe.verdicts.<tenant>` (PubAck) -> publish SignedOutbound
   to `pe.out.<tenant>.<server>` -> Discord. `shadow` = tenant `enforcement` false (current KV) OR origin
   `shadow_mode`. Routing: KICK/MITIGATE/ALERT to the open session's server; BAN to the open session's
-  server, else any connected server of the same network_id, else the server of the newest signal
-  (pending until it reconnects).
+  server unless it is a proxy (no ban command by default), else a connected backend of the same
+  network_id (or the player's newest backend), else a connected proxy (the player's first), else the
+  player's newest backend (pending until it reconnects). UNBAN goes to the server that executed the BAN.
 - Store writer (one leased instance, `writer` lease): consumes `PE_VERDICTS`, upserts verdicts by id
   (including the serialized Verdict in `verdicts.payload` for redelivery), applies AckRecords (`acked_at`,
   `executed`, `note`), creates `bans` rows only on executed (ack executed=true) non-shadow BANs, records
