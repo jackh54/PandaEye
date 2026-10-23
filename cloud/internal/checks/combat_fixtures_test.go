@@ -95,6 +95,14 @@ func (w *cfWorld) attack(mod ...func(*pb.Attack)) *pb.Event {
 	return e
 }
 
+// lowEye makes an attack report the swimming/gliding eye (0.4), as the plugin does while its swimming
+// or gliding flag is set. The flag includes values the client has not acknowledged yet, so without
+// PONGs it can stay set long after the server cleared it.
+func (w *cfWorld) lowEye(a *pb.Attack) {
+	eye := geom.Eye(w.att.Pos, geom.PoseSwimming, w.att.Protocol, 1)
+	a.Eye, a.EyeHeight = &pb.Vec3{X: eye.X, Y: eye.Y, Z: eye.Z}, float32(eye.Y-w.att.Pos.Y)
+}
+
 func (w *cfWorld) swing() {
 	e := w.base()
 	e.Kind = &pb.Event_Swing{Swing: &pb.Swing{Hand: pb.Hand_HAND_MAIN}}

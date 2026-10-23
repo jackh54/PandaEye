@@ -1,6 +1,8 @@
 package checks_test
 
 import (
+	"math"
+	"slices"
 	"testing"
 
 	"github.com/jackh54/PandaEye/cloud/internal/checks"
@@ -75,6 +77,138 @@ func TestHitboxCheat(t *testing.T) {
 	}
 	if es[0].Points != 5 || es[0].Confidence != 0.85 {
 		t.Fatalf("scoring %+v", es[0])
+	}
+}
+
+// A standing player whose swimming flag is stale (no PONG acknowledged the server's clear) is reported
+// with the 0.4 eye but hits from 1.62. Aiming at the target's legs, the same rays from 0.4 pass below
+// the box.
+func TestHitboxLegitStaleSwimFlag(t *testing.T) {
+	w := cfNewWorld(t, 769)
+	w.idle(30)
+	var lastAim geom.Rotation
+	for i := 0; i < 200; i++ {
+		strafingTarget(w, i)
+		w.advance()
+		lastAim = w.lookAt(w.tgt.Pos.Add(geom.V(0, 0.5, 0)))
+		if i%4 == 0 {
+			w.attack(w.lowEye)
+			w.swing()
+		}
+		w.move(geom.Vec3{}, lastAim, pb.MoveFlag_MOVE_FLAG_SWIMMING)
+	}
+	if n := checktest.Count(cfRun(t, "killaura", w), checks.KillauraHitbox); n != 0 {
+		t.Fatalf("standing player with a stale swimming flag flagged %d times", n)
+	}
+	// The case is meaningful: from the reported eye alone the ray misses the expanded box.
+	low := geom.Eye(w.att.Pos, geom.PoseSwimming, 769, 1)
+	box := geom.PlayerBox(w.tgt.Pos, 1).Expand(checks.TargetMargin + checks.HitboxTimingMargin + geom.EyeUncertainty(769))
+	if _, hit := box.IntersectRay(low, lastAim.Look(), math.Inf(1)); hit {
+		t.Fatal("fixture: the ray from the 0.4 eye hits the target")
+	}
+}
+
+// The standing and sneaking eyes are only added to the reported one: a real swimmer in the water
+// hitting the top of a player's head on the bank is judged from 0.4, where the higher eyes' rays pass
+// over the box.
+func TestHitboxLegitSwimmer(t *testing.T) {
+	w := cfNewWorld(t, 769)
+	w.att.Pos = geom.V(0, 63, 0)
+	w.tgt.Pos = geom.V(0, 64, 2.5)
+	w.hist = nil
+	low := func() geom.Vec3 { return geom.Eye(w.att.Pos, geom.PoseSwimming, 769, 1) }
+	aim, ok := geom.Angles(geom.V(0, 65.75, 2.5).Sub(low()))
+	if !ok {
+		t.Fatal("aim")
+	}
+	for range 30 {
+		w.advance()
+		w.move(geom.Vec3{}, aim, pb.MoveFlag_MOVE_FLAG_SWIMMING)
+	}
+	for i := 0; i < 20; i++ {
+		w.advance()
+		w.attack(w.lowEye)
+		w.swing()
+		w.move(geom.Vec3{}, aim, pb.MoveFlag_MOVE_FLAG_SWIMMING)
+		w.advance()
+		w.move(geom.Vec3{}, aim, pb.MoveFlag_MOVE_FLAG_SWIMMING)
+	}
+	if n := checktest.Count(cfRun(t, "killaura", w), checks.KillauraHitbox); n != 0 {
+		t.Fatalf("swimmer judged without the 0.4 eye: %d emissions", n)
+	}
+	box := geom.PlayerBox(w.tgt.Pos, 1).Expand(checks.TargetMargin + checks.HitboxTimingMargin + geom.EyeUncertainty(769))
+	for _, pose := range []geom.Pose{geom.PoseStanding, geom.PoseSneaking} {
+		if _, hit := box.IntersectRay(geom.Eye(w.att.Pos, pose, 769, 1), aim.Look(), math.Inf(1)); hit {
+			t.Fatalf("fixture: the ray from pose %d hits the target", pose)
+		}
+	}
+}
+
+// Misses stay misses with a reduced eye: none of the 0.4, sneaking or standing eyes sees the target.
+func TestHitboxCheatWithStaleSwimFlag(t *testing.T) {
+	w := cfNewWorld(t, 769)
+	w.idle(30)
+	away := geom.Rotation{Yaw: 90, Pitch: 10}
+	w.move(geom.Vec3{}, away, pb.MoveFlag_MOVE_FLAG_SWIMMING)
+	for i := 0; i < 8; i++ {
+		w.advance()
+		w.attack(w.lowEye)
+		w.swing()
+		w.move(geom.Vec3{}, away, pb.MoveFlag_MOVE_FLAG_SWIMMING)
+		w.idle(5)
+	}
+	if n := checktest.Count(cfRun(t, "killaura", w), checks.KillauraHitbox); n != 6 {
+		t.Fatalf("hitbox emissions = %d, want 6", n)
+	}
+}
+
+// The eye heights an attack is judged from: a plain standing or sneaking report keeps its one eye; the
+// reduced eye adds the standing and sneaking ones.
+func TestAttackEyeCandidateHeights(t *testing.T) {
+	heights := func(pose geom.Pose) []float64 {
+		w := cfNewWorld(t, 769)
+		var flags []pb.MoveFlag
+		mod := func(*pb.Attack) {}
+		switch pose {
+		case geom.PoseSneaking:
+			flags = append(flags, pb.MoveFlag_MOVE_FLAG_SNEAKING)
+			mod = func(a *pb.Attack) {
+				eye := geom.Eye(w.att.Pos, geom.PoseSneaking, 769, 1)
+				a.Sneaking, a.Eye, a.EyeHeight = true, &pb.Vec3{X: eye.X, Y: eye.Y, Z: eye.Z}, float32(eye.Y-w.att.Pos.Y)
+			}
+		case geom.PoseSwimming:
+			flags, mod = append(flags, pb.MoveFlag_MOVE_FLAG_SWIMMING), w.lowEye
+		}
+		for range 5 {
+			w.advance()
+			w.move(geom.Vec3{}, w.att.Rot, flags...)
+		}
+		w.advance()
+		ev := w.attack(mod)
+		v := checks.NewView()
+		for _, e := range w.events {
+			v.Apply(e, 0)
+		}
+		a, _ := checks.NewAttackObs(v, ev)
+		var hs []float64
+		for _, e := range a.EyeCandidates() {
+			if h := math.Round((e.Y-w.att.Pos.Y)*100) / 100; !slices.Contains(hs, h) {
+				hs = append(hs, h)
+			}
+		}
+		slices.Sort(hs)
+		return hs
+	}
+	for name, c := range map[string]struct {
+		got, want []float64
+	}{
+		"standing": {heights(geom.PoseStanding), []float64{1.62}},
+		"sneaking": {heights(geom.PoseSneaking), []float64{1.27}},
+		"reduced":  {heights(geom.PoseSwimming), []float64{0.4, 1.27, 1.62}},
+	} {
+		if !slices.Equal(c.got, c.want) {
+			t.Errorf("%s: eye heights %v, want %v", name, c.got, c.want)
+		}
 	}
 }
 

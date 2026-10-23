@@ -251,10 +251,16 @@ OPEN_WINDOW/CLOSE_WINDOW. Points 3, confidence 0.8.
 - **Eye of an attack/placement/dig.** Since 1.20 the client picks its target every frame from
   `getEyePosition(partialTick)`: the eye lies between the position before the last movement packet and the
   last one. Clicks and attacks go out in the next tick with the last frame's pick, so a moving player clicks
-  from up to one tick of movement behind the reported eye. Candidates: the reported eye, the other of the
-  standing/sneaking heights at the same feet, 8 points on the segment from the previous position (when the
-  last position arrived within 150 ms and the step is under 4 blocks; both heights) and, for placements and
-  digs, the next move's eyes.
+  from up to one tick of movement behind the reported eye. Candidates: the reported eye, the other heights
+  at the same feet, 8 points on the segment from the previous position (when the last position arrived
+  within 150 ms and the step is under 4 blocks) and, for placements and digs, the next move's eyes, each at
+  every candidate height. Heights: placements and digs standing and sneaking; attacks the reported height,
+  plus the other of standing/sneaking when the sneaking state changed around the attack. A reduced report
+  (swimming/gliding, eye 0.4) also tests standing and sneaking for attacks, and 0.4 for placements and
+  digs: the plugin reports these flags while a change is unacknowledged, so without PONGs a stale flag can
+  outlast the server's clear, while a real swim or crawl is judged from 0.4. Plain standing and sneaking
+  reports never get the 0.4 eye, so a crawl the server does not flag (the vanilla pose-only crawl) is
+  judged from the standing eye.
 - **Rotation of an attack/placement.** Tick clients pick the target at the start of the tick with the
   rotation that the same tick's movement packet sends: `R1` = the rotation of the next movement packet with
   the same tick number. Candidates: R1, R0 (the previous rotation) and R0->R1 interpolations at 0.25 steps

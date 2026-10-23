@@ -693,7 +693,9 @@ dashboard (server online, probe RTT).
 14. KnockbackSync shades its own PacketEvents and its decoder runs first: it drops the PONGs answering its
     own PINGs, so PandaEye (on the PacketEvents plugin) never sees them. Passive acknowledgement then
     depends on other PING senders; without any, pending values are promoted only at JOIN/RESPAWN, so
-    movement checks stay exempt after a player's first change (fewer detections, never more flags).
+    movement checks stay exempt after a player's first change (fewer detections, never more flags). A
+    swimming/gliding flag left pending reports the 0.4 eye; the cloud's geometry checks then also test the
+    standing and sneaking eyes (CHECKS 2.1).
 15. `plugman unload` of an instance that was loaded at server start leaves its class loader reachable
     through `CraftServer`'s help map (the plugin.yml command's help topic) until the next restart, a few MB.
     Instances loaded with `plugman load` are collected. Registering `/pandaeye` at runtime would avoid it.

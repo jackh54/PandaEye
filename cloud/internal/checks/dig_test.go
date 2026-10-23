@@ -91,6 +91,33 @@ func TestDigLegitWhileTurning(t *testing.T) {
 	}
 }
 
+// A crawler mines the block ahead and the floor in front of it: only the 0.4 eye sees them.
+func TestDigLegitCrawling(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	crawlTunnel(r, 20, func(i int, eye, reported geom.Vec3) {
+		z := int32(math.Floor(eye.Z)) - 1
+		c := blockClick{block: [3]int32{0, 64, z}, face: pb.Face_FACE_SOUTH, eye: reported, rot: r.p.Rot}
+		look := aim(eye, geom.V(0.5, 64.5, float64(z)+1)) // the south face ahead
+		if i%2 == 1 {
+			c.block, c.face = [3]int32{0, 63, z}, pb.Face_FACE_UP
+			look = aim(eye, geom.V(0.5, 64, float64(z)+0.5)) // the floor's top face
+		}
+		for _, h := range []float64{1.27, 1.62} {
+			if _, hit := geom.BlockBox(c.block[0], c.block[1], c.block[2]).Expand(0.05).IntersectRay(eye.Add(geom.V(0, h-0.4, 0)), look.Look(), 6); hit {
+				t.Fatalf("fixture: the %.2f eye sees %v", h, c.block)
+			}
+		}
+		r.dig(pb.BlockDig_ACTION_START, c)
+		r.tick(r.p.Pos, look)
+		c.rot = look
+		r.dig(pb.BlockDig_ACTION_FINISH, c)
+		r.tick(r.p.Pos, look)
+	})
+	if es := r.run("dig"); len(es) != 0 {
+		t.Fatalf("legit crawling digs: %+v", es)
+	}
+}
+
 func TestDigCheatNuker(t *testing.T) {
 	// Breaks every block around the player while looking straight ahead.
 	r := newRig(t, rigProtocol)
