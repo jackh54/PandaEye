@@ -247,7 +247,8 @@ TTL time + INTERVAL 180 DAY DELETE;
 hours). Every file has a header row and the wide CSV layout of an export: the section 5 columns,
 `worker_unix_us` and one column per feature. Readers combine the files and de-duplicate as above.
 `erasures.jsonl` holds one `{"tenant_id", "player_uuid", "erased_at_us"}` object per line: rows of that
-(tenant, player) recorded before `erased_at_us` (Unix microseconds) are erased, later rows are new data.
+(tenant, player) whose window started before `erased_at_us` (Unix microseconds), or that were written
+(`worker_unix_us`) at or before it, are erased, as in the worker; later rows are new data.
 The pipeline applies it on load (`--windows <dir>`) and can export it as an `--erased` list (section 7).
 
 ## 7. Labels and the training set

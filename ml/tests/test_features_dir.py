@@ -144,6 +144,45 @@ def test_dir_filters_each_file_before_concatenating(features_dir, monkeypatch):
     assert len(D.load_windows_file(features_dir, pairs=set(), since_us=T0 + 2 * W)) == 0
 
 
+def test_dir_follows_files_the_cloud_compresses_or_deletes_while_loading(features_dir, monkeypatch):
+    hour = 3_600_000_000 // W
+    oldest = write_hour(features_dir, windows([("t1", P2, 0)]))
+    current = windows([("t1", P1, hour + k) for k in range(2)])
+    csv = write_hour(features_dir, current, current=True)
+    read = D._read_window_csv
+
+    def racing(path):
+        if path == oldest:
+            oldest.unlink()  # retention deleted the oldest hour after the listing
+        elif path == csv:
+            write_hour(features_dir, current)  # the hour ended: compressed to its .csv.gz, .csv removed
+            csv.unlink()
+        return read(path)
+
+    monkeypatch.setattr(D, "_read_window_csv", racing)
+    out = D.load_windows_file(features_dir)
+    assert sorted((out["window_start_us"] - T0) // W) == [hour, hour + 1]
+    assert set(out["player"]) == {P1}
+
+
+def test_dir_applies_an_erasure_journaled_while_loading(features_dir, monkeypatch):
+    hour = 3_600_000_000 // W
+    write_hour(features_dir, windows([("t1", P1, 0), ("t1", P2, 0)]))
+    write_hour(features_dir, windows([("t1", P1, hour)]), current=True)
+    journal = features_dir / D.ERASURE_JOURNAL
+    read = D._read_window_csv
+
+    def erase_after_the_first_file(path):
+        frame = read(path)
+        if not journal.exists():
+            journal.write_text(journal_line("t1", P1, T0 + 2 * hour * W))
+        return frame
+
+    monkeypatch.setattr(D, "_read_window_csv", erase_after_the_first_file)
+    out = D.load_windows_file(features_dir)
+    assert list(out["player"]) == [P2]  # P1's first hour was read before the erasure, and is dropped too
+
+
 def test_dir_honours_the_erasure_journal(features_dir):
     w = windows([("t1", P1, k) for k in range(6)] + [("t2", P1, 0), ("t1", P2, 0)])
     # Clock skew: window 5 starts after the erasure but was written before it, so it is erased too.
@@ -156,6 +195,17 @@ def test_dir_honours_the_erasure_journal(features_dir):
     kept = sorted(zip(out["tenant_id"], out["player"], (out["window_start_us"] - T0) // W))
     # t1/P1 windows 0-2 predate the erasure; 3 and 4 are new data; t2's P1 and t1's P2 are other subjects.
     assert kept == [("t1", P1, 3), ("t1", P1, 4), ("t1", P2, 0), ("t2", P1, 0)]
+
+
+def test_journal_cutoff_is_the_clouds(features_dir):
+    at = T0 + 3 * W
+    w = windows([("t1", P1, k) for k in (2, 3, 4)])
+    # As the sink and the worker: erased when the window started before erased_at_us or was written at
+    # or before it. Window 3 starts at the erasure and was written after it; window 4 was written at it.
+    w.loc[w["window_start_us"] == T0 + 4 * W, "worker_unix_us"] = at
+    write_hour(features_dir, w)
+    (features_dir / D.ERASURE_JOURNAL).write_text(journal_line("t1", P1, at))
+    assert list((D.load_windows_file(features_dir)["window_start_us"] - T0) // W) == [3]
 
 
 @pytest.mark.parametrize(

@@ -256,6 +256,8 @@ def _read_window_csv(path: Path) -> pd.DataFrame | None:
         if end < len(data):
             log.info("%s: ignoring an incomplete last line (%d bytes)", path, len(data) - end)
         return pd.read_csv(io.BytesIO(data[:end]))
+    except FileNotFoundError:
+        raise
     except (OSError, EOFError, zlib.error, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
         raise ValueError(f"cannot read window file {path}: {exc}") from exc
 
@@ -272,32 +274,58 @@ def load_windows_dir(
     Each file is filtered (as in load_windows_file, plus the directory's ``erasures.jsonl``) before the
     files are concatenated, so memory follows the rows kept rather than the size of the directory. The
     result is de-duplicated like a single file.
+
+    The cloud keeps working meanwhile: a file it removes after the listing is skipped, files it creates
+    (the ``.csv.gz`` of an hour it compressed) are read in another pass, and an erasure it journals before
+    the last file is read applies too.
     """
     d = Path(directory)
-    files = sorted({p for g in WINDOW_FILE_GLOBS for p in d.glob(g) if p.is_file()})
+    files = _window_files(d)
     if not files:
         raise ValueError(f"no windows-*.csv or windows-*.csv.gz files in {d}")
-    journal_path = d / ERASURE_JOURNAL
-    journal = load_erasure_journal(journal_path) if journal_path.exists() else ErasureJournal()
+    journal = _dir_journal(d)
     frames = []
     rows = erased = 0
-    for path in files:
-        raw = _read_window_csv(path)
-        if raw is None:
-            continue
-        df = normalize_windows(raw)
-        rows += len(df)
-        df = _filter_windows(df, pairs, since_us, until_us)
-        gone = journal.erased(df)
-        n_gone = int(gone.sum())
-        erased += n_gone
-        if len(df) > n_gone:
-            frames.append(df[~gone])
-    log.info("%s: %d files, %d rows, %d kept, %d erased (%s)", d, len(files), rows,
-             sum(len(f) for f in frames), erased, ERASURE_JOURNAL)
-    if not frames:
+    seen: set[Path] = set()
+    while files:
+        for path in files:
+            seen.add(path)
+            try:
+                raw = _read_window_csv(path)
+            except FileNotFoundError:  # compressed (its .csv.gz is listed next) or deleted (retention)
+                log.info("%s: removed while loading", path)
+                continue
+            if raw is None:
+                continue
+            df = normalize_windows(raw)
+            rows += len(df)
+            df = _filter_windows(df, pairs, since_us, until_us)
+            gone = journal.erased(df)
+            n_gone = int(gone.sum())
+            erased += n_gone
+            if len(df) > n_gone:
+                frames.append(df[~gone])
+        files = [p for p in _window_files(d) if p not in seen]
+    out = pd.concat(frames, ignore_index=True) if frames else None
+    latest = _dir_journal(d)
+    if out is not None and latest != journal:
+        gone = latest.erased(out)
+        erased += int(gone.sum())
+        out = out[~gone]
+    log.info("%s: %d files, %d rows, %d kept, %d erased (%s)", d, len(seen), rows,
+             0 if out is None else len(out), erased, ERASURE_JOURNAL)
+    if out is None or out.empty:
         return normalize_windows(pd.DataFrame(columns=[*F.META_COLUMNS, *F.FEATURE_NAMES]))
-    return dedupe_windows(pd.concat(frames, ignore_index=True))
+    return dedupe_windows(out)
+
+
+def _window_files(d: Path) -> list[Path]:
+    return sorted({p for g in WINDOW_FILE_GLOBS for p in d.glob(g) if p.is_file()})
+
+
+def _dir_journal(d: Path) -> ErasureJournal:
+    path = d / ERASURE_JOURNAL
+    return load_erasure_journal(path) if path.exists() else ErasureJournal()  # no erasure yet
 
 
 def load_windows_file(
@@ -595,15 +623,16 @@ class ErasureJournal:
         return len(self.erased_at)
 
     def erased(self, df: pd.DataFrame) -> pd.Series:
-        """Rows of an erased (tenant, player) whose window started, or that were written, before the erasure."""
+        """Rows of an erased (tenant, player) whose window started before the erasure or that were written
+        at or before it, as the cloud's sink and the worker decide."""
         if not self.erased_at or df.empty:
             return pd.Series(False, index=df.index)
         keys = pd.Series(list(zip(df["tenant_id"], df["player"])), index=df.index, dtype=object)
-        cutoff = keys.map(self.erased_at)
-        recorded = df["window_start_us"].astype(np.float64)
+        cutoff = keys.map(self.erased_at)  # NaN where the pair was never erased: every comparison is False
+        gone = df["window_start_us"] < cutoff
         if "worker_unix_us" in df.columns:
-            recorded = np.fmin(recorded, pd.to_numeric(df["worker_unix_us"], errors="coerce"))
-        return recorded < cutoff  # False where the pair was never erased (NaN cutoff)
+            gone |= pd.to_numeric(df["worker_unix_us"], errors="coerce") <= cutoff
+        return gone
 
 
 def load_erasure_journal(path: str | Path) -> ErasureJournal:

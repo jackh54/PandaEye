@@ -83,19 +83,23 @@ booleans into tree attributes that protobuf 7 rejects.
    - `--erased` (optional) drops `tenant_id,player_uuid` (or bare `player_uuid`) subjects, for exports
      made before an erasure.
    - `--windows` also takes a `PE_FEATURES_DIR` directory (`--windows data/ml`). Every `windows-*.csv`
-     (the current hour; an unfinished last line is ignored) and `windows-*.csv.gz` in it is read.
+     (the current hour; an unfinished last line is ignored) and `windows-*.csv.gz` in it is read. A file
+     the cloud compresses or deletes during the load is followed or skipped, so the live directory works.
    - Windows are cut to the labelled (tenant, player) pairs and to `--since`/`--until` (window start) as
      they load, file by file for a directory, so memory follows what is kept. `windows_in` in the report
      therefore counts only windows of labelled players. Rows are then de-duplicated as for a single file.
-   - A directory's `erasures.jsonl` is applied automatically: rows of an erased player recorded before
-     the erasure are dropped. A malformed journal line stops the run.
+   - A directory's `erasures.jsonl` is applied automatically: rows of an erased player from before the
+     erasure are dropped (FEATURES.md section 6), also for an erasure recorded while the files load. A
+     malformed journal line stops the run.
    - `--exclude-servers` / `--include-servers` (comma-separated server ids, from
      `plugins/PandaEye/server-id` or `GET /api/v1/servers`) filter windows before the label join. Keep
      lobby and hub servers out: visits there are short, and local movement checks are often exempt, so
      their flag features read 0 whatever the player does. Labels are per player and time, so a cheat
      verdict from a game server would also label the player's lobby windows in that interval, and the
      model would learn lobby behaviour as cheating. `train_report.json` counts the dropped windows
-     (`windows_server_filtered`).
+     (`windows_server_filtered`). The gate then measures only the servers kept, while the worker scores
+     every server's windows, so check the model's signals on the excluded servers in shadow (step 4)
+     before giving it points.
    - Windows of non-tick clients (`client_protocol < 768`) are excluded (`--all-clients` keeps them).
      The v1 model applies to tick clients only.
    - Windows are labelled by overlap with label intervals, ambiguous windows are dropped, and unlabelled
