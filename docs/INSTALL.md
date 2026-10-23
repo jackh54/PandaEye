@@ -64,7 +64,9 @@ their own.
 
 Install `pandaeye-velocity-<version>.jar` on the proxy with the same licence key, set the same random
 `session-secret` on the proxy and in every backend's `proxy.secret` (with `proxy.session-channel: true`),
-and the dashboard follows players across servers. Backends work without the proxy plugin.
+and the dashboard follows players across servers. Give each proxy its own `server-name` (the default is
+`proxy` on every one) and copy only `config.yml` between proxies, never the `plugins/pandaeye/` folder.
+Backends work without the proxy plugin.
 
 ## Updating and removing
 

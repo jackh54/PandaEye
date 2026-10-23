@@ -49,8 +49,9 @@ public final class ProxyTracker {
     static final int MAX_BRAND = 64;
     private static final int MAX_PENDING_BRANDS = 10_000;
 
-    /** One player's proxy session. */
+    /** One player's proxy session, bound to the connection that logged in. */
     static final class State {
+        final Player connection;
         final UUID player;
         final String name;
         final UUID networkSession;
@@ -62,8 +63,9 @@ public final class ProxyTracker {
         volatile String brand = "";
         volatile String server = "";
 
-        State(UUID player, String name, UUID networkSession, int protocol, String clientVersion, boolean bedrock,
-              boolean hotLoaded, boolean exempt) {
+        State(Player connection, UUID player, String name, UUID networkSession, int protocol, String clientVersion,
+              boolean bedrock, boolean hotLoaded, boolean exempt) {
+            this.connection = connection;
             this.player = player;
             this.name = name;
             this.networkSession = networkSession;
@@ -193,12 +195,22 @@ public final class ProxyTracker {
         }
     }
 
+    /**
+     * Ends the session only when it belongs to the disconnecting connection: a rejected duplicate login
+     * ({@code CONFLICTING_LOGIN}) and the old connection replaced under {@code kick-existing-players} have the
+     * UUID of a player who is still online, whose session stays.
+     */
     @Subscribe(order = PostOrder.LAST)
     public void onDisconnect(DisconnectEvent event) {
         try {
-            UUID id = event.getPlayer().getUniqueId();
+            Player player = event.getPlayer();
+            UUID id = player.getUniqueId();
+            State current = sessions.get(id);
+            if (current != null && current.connection != player) {
+                return;
+            }
             pendingBrands.remove(id);
-            State state = sessions.remove(id);
+            State state = current != null && sessions.remove(id, current) ? current : null;
             if (state != null && active.getAsBoolean()) {
                 DisconnectEvent.LoginStatus status = event.getLoginStatus();
                 offer(event(state.player).setQuit(PlayerQuit.newBuilder()
@@ -260,7 +272,7 @@ public final class ProxyTracker {
         ProtocolVersion version = player.getProtocolVersion();
         int protocol = version == null || version.isUnknown() ? -1 : version.getProtocol();
         String clientVersion = version == null || version.isUnknown() ? "" : version.getMostRecentSupportedVersion();
-        State state = new State(id, player.getUsername(), UUID.randomUUID(), protocol, clientVersion,
+        State state = new State(player, id, player.getUsername(), UUID.randomUUID(), protocol, clientVersion,
                 bedrock.isBedrock(id), hotLoaded, player.hasPermission("pandaeye.bypass"));
         String brand = pendingBrands.remove(id);
         if (brand == null) {

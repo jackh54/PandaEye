@@ -159,7 +159,7 @@ class WrapperHygieneTest {
         gate.open();
         cost = new PacketCost();
         listener = new PandaEyePacketListener(gate, sessions, () -> config, (session, nanos) -> {
-        }, cost, new RateLimitedLog(recordingLog(), 1));
+        }, new ProxySessionCounters(), cost, new RateLimitedLog(recordingLog(), 1));
         user = TestPacketEvents.user(uuid);
     }
 

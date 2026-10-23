@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.paper.command;
 
+import dev.pandascript.pandaeye.common.proxy.ProxySessionToken.Rejection;
 import dev.pandascript.pandaeye.common.transport.CloudClient;
 import dev.pandascript.pandaeye.common.transport.CloudStatus;
 import dev.pandascript.pandaeye.common.transport.RemoteSettings;
@@ -8,6 +9,7 @@ import dev.pandascript.pandaeye.common.verdict.CircuitBreaker;
 import dev.pandascript.pandaeye.paper.check.CheckHandle;
 import dev.pandascript.pandaeye.paper.enforce.EnforcerCounters;
 import dev.pandascript.pandaeye.paper.packet.PacketCost;
+import dev.pandascript.pandaeye.paper.packet.ProxySessionCounters;
 import dev.pandascript.pandaeye.paper.runtime.Runtime;
 import dev.pandascript.pandaeye.paper.session.MitigationState;
 import dev.pandascript.pandaeye.paper.session.Session;
@@ -134,6 +136,8 @@ public final class PandaEyeCommand implements TabExecutor {
         }
         lines.add(String.format(Locale.ROOT, "tracked players %d (%d unseeded), watched %d, alert recipients %d",
                 runtime.sessions().size(), unseeded, runtime.watches().active(), runtime.alerts().recipients().size()));
+        lines.add("proxy session messages: " + (runtime.config().proxy().sessionChannel()
+                ? counts(runtime.proxySessions()) : "off (proxy.session-channel: false)"));
         PacketCost.Summary cost = runtime.cost().summary();
         lines.add(String.format(Locale.ROOT, "packet handler: %d packets, avg %.2f us, p99 %.2f us; env sampler avg %.1f us",
                 cost.packets(), cost.averageMicros(), cost.p99Micros(), runtime.sampler().averageCostNanos() / 1e3));
@@ -399,6 +403,19 @@ public final class PandaEyeCommand implements TabExecutor {
             out.append(action.name().toLowerCase(Locale.ROOT)).append(' ').append(counters.get(action));
         }
         return out.toString();
+    }
+
+    /** "accepted 3, rejected 2 (no secret 0, malformed 0, wrong secret 2, wrong player 0, clock skew 0)". */
+    private static String counts(ProxySessionCounters counters) {
+        StringBuilder out = new StringBuilder();
+        for (Rejection reason : Rejection.values()) {
+            if (!out.isEmpty()) {
+                out.append(", ");
+            }
+            out.append(reason.name().toLowerCase(Locale.ROOT).replace('_', ' ')).append(' ')
+                    .append(counters.rejected(reason));
+        }
+        return "accepted " + counters.accepted() + ", rejected " + counters.rejectedTotal() + " (" + out + ")";
     }
 
     private static void reply(CommandSender sender, String text, NamedTextColor color) {

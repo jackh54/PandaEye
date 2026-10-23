@@ -32,6 +32,7 @@ import dev.pandascript.pandaeye.paper.packet.ActiveGate;
 import dev.pandascript.pandaeye.paper.packet.ClientInfos;
 import dev.pandascript.pandaeye.paper.packet.PacketCost;
 import dev.pandascript.pandaeye.paper.packet.PandaEyePacketListener;
+import dev.pandascript.pandaeye.paper.packet.ProxySessionCounters;
 import dev.pandascript.pandaeye.paper.platform.BukkitLog;
 import dev.pandascript.pandaeye.paper.platform.ClassPreloader;
 import dev.pandascript.pandaeye.paper.platform.Schedulers;
@@ -77,6 +78,7 @@ public final class Runtime {
     private final JavaPlugin plugin;
     private final ActiveGate gate = new ActiveGate();
     private final PacketCost cost = new PacketCost();
+    private final ProxySessionCounters proxySessions = new ProxySessionCounters();
     private volatile PluginConfig config;
     private Log log;
     private RateLimitedLog errors;
@@ -146,7 +148,7 @@ public final class Runtime {
         gate.open();
         packetListener = PacketEvents.getAPI().getEventManager().registerListener(
                 new PandaEyePacketListener(gate, sessions, this::config,
-                        (session, nanos) -> telemetry.playerJoin(session, true, nanos), cost, errors),
+                        (session, nanos) -> telemetry.playerJoin(session, true, nanos), proxySessions, cost, errors),
                 PacketListenerPriority.MONITOR);
         Bukkit.getPluginManager().registerEvents(new BukkitListeners(gate, sessions, errors), plugin);
         PluginCommand command = plugin.getCommand("pandaeye");
@@ -267,6 +269,10 @@ public final class Runtime {
 
     public PacketCost cost() {
         return cost;
+    }
+
+    public ProxySessionCounters proxySessions() {
+        return proxySessions;
     }
 
     public ConfirmationScheduler confirmations() {

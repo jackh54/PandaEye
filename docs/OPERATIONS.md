@@ -491,11 +491,12 @@ From the smallest to the largest blast radius:
   `go run . -out ../auth -revoke-old` and reload every nats-server (`nats-server --signal reload`). The
   revoked creds are refused from then on.
 - **Server secret**: a server whose `server-secret` leaked or was lost gets a new identity: delete
-  `plugins/PandaEye/server-id` and `server-secret` and restart; the dashboard shows a new server.
+  `plugins/PandaEye/server-id` and `server-secret` (`plugins/pandaeye/` on Velocity) and restart; the
+  dashboard shows a new server.
   **Open:** there is no API to reset a server's secret or remove the old server entry.
 - **Proxy session secret**: change Velocity's `session-secret` and every backend's `proxy.secret`
-  together. While they differ, backends reject the session message, sessions lose their
-  `network_session`, detection is unaffected.
+  together. While they differ, backends reject the session message (counted as `wrong secret` in
+  `/pandaeye status`), sessions lose their `network_session`, detection is unaffected.
 
 ### 8.7 Plugin rollout on a production server (Paper / Folia)
 
@@ -596,10 +597,17 @@ Keep the circuit-breaker defaults.
 ### 8.8 Velocity proxy and session secret
 
 1. Install the `pandaeye` plugin on Velocity; configure `plugins/pandaeye/config.yml`: licence,
-   endpoint, the network's `network-id`, `mode` (shadow until promoted) and `session-secret`
-   (`openssl rand -hex 32`).
+   endpoint, the network's `network-id`, `mode` (shadow until promoted), `session-secret`
+   (`openssl rand -hex 32`) and a `server-name` of its own: every proxy ships as `proxy`, so give each
+   one a distinct name (`proxy-1`, `proxy-2`) or the dashboard cannot tell them apart. For a second proxy
+   copy only `config.yml`, never the whole folder: a copied `server-id` is refused as a duplicate server.
+   The proxy has no reload; every change needs a proxy restart.
 2. On every backend: the same `network-id`, `proxy.session-channel: true`, and `proxy.secret` equal to
-   the proxy's `session-secret`; restart or reload the plugin.
+   the proxy's `session-secret`; then restart, or `plugman unload PandaEye` + `plugman load PandaEye`
+   (`/pandaeye reload` does not apply `network-id` or `proxy.*`). `/pandaeye status` counts the
+   `pandaeye:session` messages accepted and rejected by reason (`wrong secret`, `clock skew` beyond 30 s:
+   keep NTP running on every host, `no secret`, `wrong player`, `malformed`); none at all means the proxy
+   sends none (no `session-secret` there).
 3. Effect: the proxy reports joins (with brand and Bedrock detection), server switches and quits, and
    after each backend connect sends the HMAC-signed `pandaeye:session` message, so backend sessions carry
    the network session (PROTOCOL section 11). The proxy drops client-sent messages on that channel; the
@@ -607,7 +615,10 @@ Keep the circuit-breaker defaults.
 4. Verdicts on the proxy: in live mode with enforcement the proxy can run its configured commands for
    KICK/BAN; the default is shadow / log only. The same circuit breaker and placeholder rules apply.
 5. Metering: per network the proxy's player count is used while a proxy is connected, else the sum of the
-   backends. **Open:** whether the proxy's connection counts towards the licence's `maxServers`.
+   backends. Every connection counts towards the licence's `maxServers`, proxies included (the gateway
+   counts all of the tenant's connections, whatever the platform). Over the limit the server that connects
+   last is refused (`CODE_LICENSE_LIMIT`, retried every 10 min), which can be a backend, so check
+   `maxServers` (0 = unlimited) before adding proxies.
 
 ## 9. Monitoring
 
@@ -689,11 +700,13 @@ dashboard (server online, probe RTT).
 11. Decided: when `enforcement` turns off at runtime the plugin clears active mitigations and removes the
     mitigation listeners (8.4).
 12. Multi-region tenancy and how one dashboard serves several regional APIs.
-13. Whether a Velocity proxy connection counts towards `maxServers`.
+13. Decided: a Velocity proxy connection counts towards `maxServers` like any other server (8.8).
 14. KnockbackSync shades its own PacketEvents and its decoder runs first: it drops the PONGs answering its
     own PINGs, so PandaEye (on the PacketEvents plugin) never sees them. Passive acknowledgement then
-    depends on other PING senders; without any, pending values are promoted only at JOIN/RESPAWN, so
-    movement checks stay exempt after a player's first change (fewer detections, never more flags).
+    depends on other PING senders; without any, see CHECKS 1.1 "Without a PING sender": mostly fewer
+    detections (velocity and vehicle exemptions that last the session, abilities known only after 16
+    changes), but a stale swim flag reports the swimming eye height, so killaura.hitbox can misjudge a
+    standing attacker (more flags, not only fewer) until the cloud also tests the standing eye.
 15. `plugman unload` of an instance that was loaded at server start leaves its class loader reachable
     through `CraftServer`'s help map (the plugin.yml command's help topic) until the next restart, a few MB.
     Instances loaded with `plugman load` are collected. Registering `/pandaeye` at runtime would avoid it.

@@ -20,6 +20,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.net.http.WebSocket;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -27,7 +30,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.random.RandomGenerator;
@@ -107,6 +112,30 @@ class CloudClientTest {
         assertEquals(List.of(), httpAfter, "no HttpClient thread survives stop (it would pin the class loader)");
         waitUntil(() -> gateway.connection(0).closeReceived, "close frame sent");
         assertEquals("plugin stopping", gateway.await(ClientFrame::hasGoodbye, WAIT).frame().getGoodbye().getReason());
+    }
+
+    @Test
+    void theGoodbyeWaitsForTheSendInFlightAndStaysBounded() throws Exception {
+        // A batch or ping still in flight: sent right away, the Goodbye was refused and only the close went out.
+        OneSendAtATime ws = new OneSendAtATime();
+        CompletableFuture<WebSocket> batch = new CompletableFuture<>();
+        ws.inFlight = batch;
+        CompletableFuture.delayedExecutor(30, TimeUnit.MILLISECONDS).execute(() -> batch.complete(ws));
+        CloudClient.closeGracefully(ws, batch, new byte[1], System.nanoTime() + WAIT.toNanos());
+        assertEquals(List.of("binary", "close 1001"), ws.sent);
+
+        OneSendAtATime failed = new OneSendAtATime();
+        CloudClient.closeGracefully(failed, CompletableFuture.failedFuture(new IOException("reset")), new byte[1],
+                System.nanoTime() + WAIT.toNanos());
+        assertEquals(List.of("binary", "close 1001"), failed.sent, "a failed send does not cancel the Goodbye");
+
+        OneSendAtATime stuck = new OneSendAtATime();
+        stuck.inFlight = new CompletableFuture<>();
+        long started = System.nanoTime();
+        CloudClient.closeGracefully(stuck, stuck.inFlight, new byte[1], started + 50_000_000L);
+        long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(elapsedMillis < 1_000, "took " + elapsedMillis + " ms");
+        assertEquals(List.of(), stuck.sent, "nothing is sent behind a send that never completes");
     }
 
     @Test
@@ -224,7 +253,10 @@ class CloudClientTest {
         waitUntil(() -> client.state() == CloudState.WAITING, "waiting");
         Thread.sleep(500);
         assertEquals(1, gateway.connectionCount());
-        assertTrue(log.contains("delete plugins/PandaEye/server-id"), log.dump());
+        // The plugin's own data folder (plugins/PandaEye on Paper, plugins/pandaeye on Velocity), not a fixed name.
+        assertTrue(log.contains("delete " + dataDir.resolve(ServerIdentity.SERVER_ID_FILE) + " and "
+                + dataDir.resolve(ServerIdentity.SERVER_SECRET_FILE)), log.dump());
+        assertFalse(log.contains("plugins/PandaEye"), log.dump());
     }
 
     @Test
@@ -249,7 +281,8 @@ class CloudClientTest {
         gateway.remoteConfig = RemoteConfig.newBuilder().setLeniency(2).setEnforcement(true).build();
         waitUntil(() -> client.remoteSettings().enforcement(), "enforcement from Pong");
         assertEquals(2, client.remoteSettings().leniency());
-        assertTrue(listener.settings.stream().anyMatch(RemoteSettings::enforcement));
+        // The settings are visible before they are saved and the listener is told (both on the cloud thread).
+        waitUntil(() -> listener.settings.stream().anyMatch(RemoteSettings::enforcement), "listener notified");
         waitUntil(() -> client.status().connectionRttMicros() > 0, "connection RTT measured");
         client.stop(Duration.ofMillis(300));
         clients.remove(client);
@@ -278,7 +311,8 @@ class CloudClientTest {
         Batch resent = gateway.awaitAfter(mark, f -> f.hasBatch() && hasMoves(f.getBatch()), WAIT).frame().getBatch();
         assertEquals(seq, resent.getSeq());
         assertTrue(resent.getReplayed());
-        assertEquals(42, resent.getEvents(0).getTick());
+        // Not index 0: a probe event drained in the same tick can precede the move in the batch.
+        assertEquals(42, resent.getEventsList().stream().filter(Event::hasMove).findFirst().orElseThrow().getTick());
         waitUntil(() -> restarted.status().pendingBatches() == 0, "acknowledged after restart");
         assertTrue(Files.list(dataDir.resolve("spool")).findAny().isEmpty(), "spool consumed");
     }
@@ -463,6 +497,66 @@ class CloudClientTest {
         @Override
         public void onProbeResult(ProbeResult result, long rttMicros) {
             probeRtts.add(rttMicros);
+        }
+    }
+
+    /** Records sends; like the JDK's WebSocket, refuses a binary send while {@link #inFlight} is not done. */
+    private static final class OneSendAtATime implements WebSocket {
+        final List<String> sent = new CopyOnWriteArrayList<>();
+        volatile CompletableFuture<WebSocket> inFlight = CompletableFuture.completedFuture(null);
+
+        @Override
+        public CompletableFuture<WebSocket> sendBinary(ByteBuffer data, boolean last) {
+            if (!inFlight.isDone()) {
+                sent.add("refused");
+                return CompletableFuture.failedFuture(new IllegalStateException("Send pending"));
+            }
+            sent.add("binary");
+            return CompletableFuture.completedFuture(this);
+        }
+
+        @Override
+        public CompletableFuture<WebSocket> sendClose(int statusCode, String reason) {
+            sent.add("close " + statusCode);
+            return CompletableFuture.completedFuture(this);
+        }
+
+        @Override
+        public CompletableFuture<WebSocket> sendText(CharSequence data, boolean last) {
+            return CompletableFuture.completedFuture(this);
+        }
+
+        @Override
+        public CompletableFuture<WebSocket> sendPing(ByteBuffer message) {
+            return CompletableFuture.completedFuture(this);
+        }
+
+        @Override
+        public CompletableFuture<WebSocket> sendPong(ByteBuffer message) {
+            return CompletableFuture.completedFuture(this);
+        }
+
+        @Override
+        public void request(long n) {
+        }
+
+        @Override
+        public String getSubprotocol() {
+            return "";
+        }
+
+        @Override
+        public boolean isOutputClosed() {
+            return false;
+        }
+
+        @Override
+        public boolean isInputClosed() {
+            return false;
+        }
+
+        @Override
+        public void abort() {
         }
     }
 

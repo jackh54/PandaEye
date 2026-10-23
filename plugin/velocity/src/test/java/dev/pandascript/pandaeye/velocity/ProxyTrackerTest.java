@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Proxy events (ARCHITECTURE 6) and dropping client-originated pandaeye:session messages. */
@@ -88,13 +89,66 @@ class ProxyTrackerTest {
 
     @Test
     void eachLoginGetsANewNetworkSessionAndBedrockIsDetected() {
-        tracker.onPostLogin(new PostLoginEvent(player(PLAYER, "Steve")));
-        tracker.onDisconnect(new DisconnectEvent(player(PLAYER, "Steve"), DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN));
+        Player first = player(PLAYER, "Steve");
+        tracker.onPostLogin(new PostLoginEvent(first));
+        tracker.onDisconnect(new DisconnectEvent(first, DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN));
         tracker.onPostLogin(new PostLoginEvent(player(PLAYER, "Steve")));
         assertFalse(events.get(0).getJoin().getNetworkSession().equals(events.get(2).getJoin().getNetworkSession()));
         UUID bedrock = new UUID(0, 0x1234L);
         tracker.onPostLogin(new PostLoginEvent(player(bedrock, ".BedrockGuy")));
         assertTrue(events.get(3).getJoin().getBedrock(), "UUID msb == 0");
+    }
+
+    @Test
+    void aRejectedDuplicateLoginLeavesTheOnlinePlayersSession() {
+        Player online = player(PLAYER, "Steve");
+        tracker.onPostLogin(new PostLoginEvent(online));
+        tracker.onServerConnected(new ServerConnectedEvent(online, server("hub"), null));
+        String networkSession = events.get(0).getJoin().getNetworkSession();
+
+        // A second login with the same UUID is refused before PostLoginEvent; Velocity still fires its disconnect.
+        Player duplicate = player(PLAYER, "Steve");
+        tracker.onDisconnect(new DisconnectEvent(duplicate, DisconnectEvent.LoginStatus.CONFLICTING_LOGIN));
+        assertEquals(2, events.size(), "no quit for the player who is still online: " + events);
+        assertEquals(1, tracker.size());
+        assertSame(online, tracker.session(PLAYER).connection);
+
+        tracker.onServerConnected(new ServerConnectedEvent(online, server("survival"), server("hub")));
+        assertEquals(networkSession, events.get(2).getServerSwitch().getNetworkSession(), "switches still tracked");
+        tracker.onDisconnect(new DisconnectEvent(online, DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN));
+        assertEquals("successful_login", events.get(3).getQuit().getReason());
+        assertEquals(0, tracker.size());
+    }
+
+    @Test
+    void underKickExistingPlayersTheOldConnectionsLateDisconnectKeepsTheNewSession() {
+        Player old = player(PLAYER, "Steve");
+        tracker.onPostLogin(new PostLoginEvent(old));
+        Player replacement = player(PLAYER, "Steve");
+        tracker.onPostLogin(new PostLoginEvent(replacement));
+        String newSession = events.get(1).getJoin().getNetworkSession();
+        assertFalse(newSession.equals(events.get(0).getJoin().getNetworkSession()));
+
+        tracker.onDisconnect(new DisconnectEvent(old, DisconnectEvent.LoginStatus.CONFLICTING_LOGIN));
+        assertEquals(2, events.size(), "the replaced connection's disconnect is not the player's quit: " + events);
+        assertSame(replacement, tracker.session(PLAYER).connection);
+        assertEquals(newSession, tracker.session(PLAYER).networkSession.toString());
+
+        tracker.onDisconnect(new DisconnectEvent(replacement, DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN));
+        assertTrue(events.get(2).hasQuit());
+        assertEquals(0, tracker.size());
+    }
+
+    @Test
+    void underKickExistingPlayersAnEarlyDisconnectOfTheOldConnectionIsAQuit() {
+        Player old = player(PLAYER, "Steve");
+        tracker.onPostLogin(new PostLoginEvent(old));
+        tracker.onDisconnect(new DisconnectEvent(old, DisconnectEvent.LoginStatus.CONFLICTING_LOGIN));
+        Player replacement = player(PLAYER, "Steve");
+        tracker.onPostLogin(new PostLoginEvent(replacement));
+        assertTrue(events.get(1).hasQuit());
+        assertTrue(events.get(2).hasJoin());
+        assertSame(replacement, tracker.session(PLAYER).connection);
     }
 
     @Test

@@ -29,11 +29,13 @@ decompiled sources during the design review) unless stated.
 
 **Client acknowledgement (passive).** PandaEye never sends packets. It observes every server KEEP_ALIVE
 and PING that any plugin or the server sends (id + send time, per-id FIFO, entries expire after 30 s) and
-the client's KEEP_ALIVE/PONG/TELEPORT_CONFIRM replies. `ackedUpTo` = send time of the newest server
-packet the client has provably processed. A server-side change sent at time t is **applied by the client**
-once `ackedUpTo >= t` and one more movement packet has arrived. Fallback when no acknowledgement arrives:
-5 s after t. (Vulcan, TotemGuard and KnockbackSync send pings constantly, so acknowledgement normally
-takes about one RTT.)
+the client's KEEP_ALIVE and PONG replies. Only a PONG proves that the client applied what came before it
+(the client answers PING in order on its main thread); KEEP_ALIVE replies feed RTT only. `ackedUpTo` =
+send time of the newest server PING the client has answered. A server-side change sent at time t is
+**applied by the client** once `ackedUpTo >= t` and one more movement packet has arrived, or 5 s after t
+if a PONG has arrived since t. Time alone never applies a change. (Vulcan and TotemGuard send pings
+constantly, so acknowledgement normally takes about one RTT. KnockbackSync's PONGs never reach PandaEye,
+OPERATIONS 11 item 14.)
 
 **Pending state (old/new pairs).** Every check-relevant server state (abilities, game mode, potion
 effects, attributes, vehicle) is kept as `(applied, pending)`. Until the pending value is applied by the
@@ -45,6 +47,24 @@ knockback, plus every Bukkit `PlayerVelocityEvent` seen at MONITOR (covers packe
 silently), adds a pending velocity. It stays pending until a movement matching it is observed (consumed),
 or until it is applied by the client plus 2 movement packets, with a 5 s fallback. While any velocity is
 pending, movement.speed/fly/step/groundspoof skip.
+
+**Without a PING sender** (no plugin pings the player, or the sender's PONGs never reach PandaEye),
+nothing is acknowledged: pending changes stay pending until JOIN_GAME/RESPAWN (or the hot-load snapshot)
+replaces the state, except for the overflow below.
+- Each tracked value keeps at most 16 pending changes; the 17th forces the oldest into "applied". Abilities
+  start unknown at join (movement checks exempt as `STATE_UNKNOWN`) and become known only after 16 more
+  ability updates.
+- A pending velocity is only removed once applied, so after the first knockback, launch pad or double jump
+  the local movement checks stay exempt until the next JOIN_GAME/RESPAWN.
+- Vehicle state stays lenient: after one mount and dismount every later move and attack is reported as
+  in a vehicle, so the cloud combat checks, ML and aim.gcd skip them (and the local movement checks).
+- The swimming flag counts if any applied or pending value has it, so a stale swim flag makes the plugin
+  report the swimming eye height (0.4 instead of 1.62). Unlike the rest, this is not only lenient:
+  killaura.hitbox tests no standing eye unless sneaking is uncertain, so it can misjudge a standing
+  attacker until the cloud also tests the standing eye when the swim flag is unconfirmed.
+
+protocol.pitch/position/selfhit/slot/cursor/flood and timer.balance do not use the movement exemptions and
+still run.
 
 **Teleports.** A FIFO of pending server teleports (`PLAYER_POSITION_AND_LOOK`, relative flags resolved
 against the last known position). `TELEPORT_CONFIRM` pops entries up to its id; the confirm's PosRot sets

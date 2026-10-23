@@ -327,7 +327,7 @@ final class FakeGateway implements AutoCloseable {
             switch (frame.getKindCase()) {
                 case HELLO -> {
                     if (autoWelcome) {
-                        send(ServerFrame.newBuilder().setWelcome(Welcome.newBuilder()
+                        reply(ServerFrame.newBuilder().setWelcome(Welcome.newBuilder()
                                 .setConnectionId("conn-" + index)
                                 .setTenantId("t_test")
                                 .setServerTimeUnixMs(System.currentTimeMillis())
@@ -346,12 +346,12 @@ final class FakeGateway implements AutoCloseable {
                     if (autoAck) {
                         long seq = frame.getBatch().getSeq();
                         lastAckedSeq = Math.max(lastAckedSeq, seq);
-                        send(ServerFrame.newBuilder().setBatchAck(BatchAck.newBuilder().setSeq(seq)).build());
+                        reply(ServerFrame.newBuilder().setBatchAck(BatchAck.newBuilder().setSeq(seq)).build());
                     }
                 }
                 case PING -> {
                     if (autoPong) {
-                        send(ServerFrame.newBuilder().setPong(Pong.newBuilder()
+                        reply(ServerFrame.newBuilder().setPong(Pong.newBuilder()
                                 .setNonce(frame.getPing().getNonce())
                                 .setClientTimeUs(frame.getPing().getClientTimeUs())
                                 .setServerTimeUs(System.currentTimeMillis() * 1000)
@@ -361,8 +361,20 @@ final class FakeGateway implements AutoCloseable {
                 default -> {
                 }
             }
-            for (ServerFrame reply : script.apply(frame)) {
-                send(reply);
+            for (ServerFrame scripted : script.apply(frame)) {
+                reply(scripted);
+            }
+        }
+
+        /**
+         * Answers a client frame. A client that has gone (it aborts right after its close frame) makes the write
+         * fail, but what it sent before is still buffered here and is read on: Goodbye and close frame included.
+         */
+        private void reply(ServerFrame frame) {
+            try {
+                send(frame);
+            } catch (IOException e) {
+                // the client is gone; keep reading its buffered frames until the stream ends
             }
         }
     }
