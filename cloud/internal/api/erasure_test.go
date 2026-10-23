@@ -3,12 +3,16 @@ package api
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
 	"github.com/jackh54/PandaEye/cloud/internal/store"
 	"github.com/jackh54/PandaEye/cloud/internal/stream"
+	"github.com/jackh54/PandaEye/cloud/internal/telemetry"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
 )
 
@@ -90,6 +94,26 @@ func TestErasure(t *testing.T) {
 	}
 	if r := e.do("DELETE", "/api/v1/players/not-a-uuid", nil, as(tenantA, "admin")); r.status != 400 {
 		t.Fatalf("bad uuid: %d", r.status)
+	}
+}
+
+// With PE_FEATURES_DIR the erasure job reaches the worker's feature-window files through the shared sink.
+func TestErasureReachesFeatureFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ml")
+	e := newEnv(t, "PE_FEATURES_DIR="+dir)
+	// newEnv swaps in a fake analytics sink; a second service is wired like the one `all` runs.
+	svc, err := New(e.d)
+	check(t, err)
+	check(t, svc.setup())
+	if _, ok := svc.erasure.(*telemetry.Files); !ok {
+		t.Fatalf("erasure sink %T", svc.erasure)
+	}
+	e.s.erasure = svc.erasure
+	e.must(200, "DELETE", "/api/v1/players/"+player2, nil, as(tenantA, "owner"))
+	b, err := os.ReadFile(filepath.Join(dir, telemetry.ErasureJournal))
+	check(t, err)
+	if !strings.HasPrefix(string(b), `{"tenant_id":"`+tenantA+`","player_uuid":"`+player2+`","erased_at_us":`) {
+		t.Fatalf("erasure journal %q", b)
 	}
 }
 
