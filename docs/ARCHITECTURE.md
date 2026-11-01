@@ -274,7 +274,7 @@ false on older APIs). `server_tick_ms` = measured interval between runs / 10. Pu
   the player back to the last legitimate position with `player.teleportAsync`.
 - Tuning data: every local check exposes its test statistic. Per player per check per 5 minutes the plugin
   aggregates (max statistic, evaluated, candidates, discarded by confirmation, confirmed), writes it to
-  `logs/peaks-YYYY-MM-DD.jsonl` (same bounds as the flag log) and sends a `CheckStats` event. Gate 2
+  `logs/peaks-YYYY-MM-DD.jsonl` (4.9) and sends a `CheckStats` event. Gate 2
   (local false positives) is defined in SLO.md: >= 7 days and >= 1000 player-hours with <= 1 confirmed flag
   per 50 player-hours per check, and no staff-verified legitimate player ever reaching a setback VL.
 - Stall detector (daemon thread, 50 ms period): a stall is in progress when >= 20% of active players (min 3)
@@ -355,9 +355,14 @@ player name cannot be resolved locally, or the circuit breaker is open. Otherwis
 - In game: holders of `pandaeye.alerts` who toggled alerts on (`/pandaeye alerts`); `alerts.in-game-default:
   auto` = on in live mode, off in shadow mode. Recipients are kept in a set updated on join/quit/toggle (no per-flag permission scan).
 - Flag log `plugins/PandaEye/logs/flags-YYYY-MM-DD.jsonl`: aggregated per player+check per 5 s (count, max
-  severity, first/last info); global cap 50 lines/s then one summary line; bounded writer queue (10k);
-  daily size cap 256 MiB; writing stops while free disk < 1 GiB; files kept 14 days. Drops are shown in
-  `/pandaeye status`. `/pandaeye forget <uuid>` removes a player's lines from local logs.
+  severity, first/last info). Peaks log `logs/peaks-YYYY-MM-DD.jsonl` every 5 minutes: one summary line per
+  check without player fields (players, summed counts, `max_stat` p50/p90/p99/max over the players), then a
+  row per player+check with candidates, discards or confirmations (every row with `alerts.log-all-peaks`).
+  Verdict log `logs/verdicts-YYYY-MM-DD.jsonl`. Each file has its own line budget (flags and verdicts
+  50 lines/s each, peaks 2 000 lines per 5 minutes), then one `suppressed_lines` line in that file; bounded
+  writer queue (10k); daily size cap 256 MiB per file; writing stops while free disk < 1 GiB; files kept
+  14 days. Drops are shown in `/pandaeye status`. `/pandaeye forget <uuid>` removes a player's lines from
+  local logs.
 
 ### 4.10 Commands and permissions
 
@@ -408,6 +413,7 @@ alerts:
   console: true
   in-game-default: auto        # auto | on | off
   log-file: true
+  log-all-peaks: false         # true = a peaks-log row per player and check, not only those with candidates
 exempt:
   bedrock: true
   bypass-detection-in-shadow: false
