@@ -11,6 +11,7 @@ import dev.pandascript.pandaeye.paper.session.EntityIndex;
 import dev.pandascript.pandaeye.paper.session.Session;
 import dev.pandascript.pandaeye.paper.session.SessionSignals;
 import dev.pandascript.pandaeye.paper.state.ClientInfo;
+import dev.pandascript.pandaeye.paper.state.EnvSnapshot;
 import dev.pandascript.pandaeye.paper.state.PacketProcessor;
 import dev.pandascript.pandaeye.protocol.v1.Event;
 import dev.pandascript.pandaeye.protocol.v1.MoveSample;
@@ -183,6 +184,34 @@ class SessionTelemetryCatchUpTest {
         assertEquals(List.of(act.getTick() - 2, act.getTick() - 1), between.stream().map(Event::getTick).toList());
         // the moves before the latency event that were held back are counted by the first one sent after it
         assertTrue(between.get(0).getMove().getPacketsSinceLast() > 1);
+    }
+
+    /**
+     * The same holds for the player's events that other threads offer: the region thread's EnvSample (on
+     * change and at least every 5 s) and the 60 s PlayerJoin re-announce. A held move older than one of them
+     * would reach the cloud after it and be dropped there as stale (pandaeye_dropped_total{reason="stale"}).
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"env", "reannounce"})
+    void heldMovesOlderThanAnotherThreadsEventAreLeftOut(String source) {
+        join();
+        walk(97);
+        long at = now - TICK / 2; // between two movement packets
+        switch (source) {
+            case "env" -> telemetry.envSample(session, new EnvSnapshot(0, x, 64, 0.5, UUID.randomUUID(), 50, at));
+            case "reannounce" -> telemetry.playerJoin(session, true, at);
+            default -> throw new IllegalArgumentException(source);
+        }
+        walk(2);
+        act("place");
+        List<Event> events = SinkDrain.drain(sink);
+        assertOrdered(events);
+        assertPacketsAccounted(events);
+
+        Event act = events.stream().filter(Event::hasPlace).findFirst().orElseThrow();
+        Event other = events.stream().filter(e -> e.hasEnv() || e.hasJoin() && e.getJoin().getUpdate()).findFirst().orElseThrow();
+        List<Event> between = events.subList(events.indexOf(other) + 1, events.indexOf(act));
+        assertEquals(List.of(act.getTick() - 2, act.getTick() - 1), between.stream().map(Event::getTick).toList());
     }
 
     @Test

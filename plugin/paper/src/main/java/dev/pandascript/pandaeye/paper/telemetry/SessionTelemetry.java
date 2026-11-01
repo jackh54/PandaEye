@@ -66,8 +66,6 @@ public final class SessionTelemetry implements SessionEvents {
     private final int[] heldTick = new int[HELD_MOVES];
     private final int[] heldPackets = new int[HELD_MOVES];
     private int heldCount;
-    /** Time of the newest event this class offered: the cloud drops a player's events older than that. */
-    private long lastOffered = Long.MIN_VALUE;
 
     SessionTelemetry(Telemetry telemetry, Session session) {
         this.telemetry = telemetry;
@@ -78,7 +76,6 @@ public final class SessionTelemetry implements SessionEvents {
     public void joined(long nanos) {
         publish();
         telemetry.playerJoin(session, false, nanos);
-        offered(nanos);
         lastState = null;
         stateChanged(nanos);
     }
@@ -93,7 +90,6 @@ public final class SessionTelemetry implements SessionEvents {
         if (!change.equals(lastState)) {
             lastState = change;
             telemetry.sendState(session, change, nanos);
-            offered(nanos);
         }
     }
 
@@ -115,7 +111,7 @@ public final class SessionTelemetry implements SessionEvents {
             return;
         }
         int ticks = lastMoveSent == Long.MIN_VALUE ? 0 : Math.max(0, state.tick() - tickAtLastSent);
-        offer(nanos, telemetry.event(session, nanos, state.tick())
+        offer(telemetry.event(session, nanos, state.tick())
                 .setMove(Telemetry.moveSample(move, ticks, packetsSinceSent, focus)).build());
         lastMoveSent = nanos;
         tickAtLastSent = state.tick();
@@ -142,18 +138,20 @@ public final class SessionTelemetry implements SessionEvents {
      * packet counts they would have had, so the cloud judges the first action after a pause from the same
      * recent movement as an action in focus (without them the cloud's last position is up to 1 / idle-sample-hz
      * old, the eye path of CHECKS 2.1 is missing, and a moving player's click looks off by up to a tick of
-     * movement). Moves older than an event already offered are left out: the cloud would drop them as stale.
+     * movement). Moves older than an event already offered for this session, by any thread (the region
+     * thread's EnvSample, the PlayerJoin re-announce, LocalFlag, CheckStats: {@link Session#offered}), are
+     * left out: the cloud would drop them as stale.
      */
     private void catchUp() {
         int consumed = 0;
         for (int i = 0; i < heldCount; i++) {
             Move move = held[i];
             held[i] = null;
-            if (move.nanos() < lastOffered) {
+            if (telemetry.clock().toMicros(move.nanos()) < session.lastOfferedMicros()) {
                 continue;
             }
             int ticks = Math.max(0, heldTick[i] - tickAtLastSent);
-            offer(move.nanos(), telemetry.event(session, move.nanos(), heldTick[i])
+            offer(telemetry.event(session, move.nanos(), heldTick[i])
                     .setMove(Telemetry.moveSample(move, ticks, heldPackets[i] - consumed, false)).build());
             lastMoveSent = move.nanos();
             tickAtLastSent = heldTick[i];
@@ -206,13 +204,13 @@ public final class SessionTelemetry implements SessionEvents {
                         .setX(entry.x()).setY(entry.y()).setZ(entry.z()));
             }
         }
-        offer(nanos, telemetry.event(session, nanos, state.tick()).setAttack(attack).build());
+        offer(telemetry.event(session, nanos, state.tick()).setAttack(attack).build());
     }
 
     @Override
     public void swing(long nanos, int hand) {
         if (enabled()) {
-            offer(nanos, telemetry.event(session, nanos, session.state().tick())
+            offer(telemetry.event(session, nanos, session.state().tick())
                     .setSwing(Swing.newBuilder().setHand(hand(hand))).build());
         }
     }
@@ -227,7 +225,7 @@ public final class SessionTelemetry implements SessionEvents {
         catchUp();
         PacketState state = session.state();
         double eye = eyeHeight(state) * attribute(AttributeTracker.SCALE, 1);
-        offer(nanos, telemetry.event(session, nanos, state.tick()).setPlace(BlockPlace.newBuilder()
+        offer(telemetry.event(session, nanos, state.tick()).setPlace(BlockPlace.newBuilder()
                 .setBlock(Vec3i.newBuilder().setX(x).setY(y).setZ(z))
                 .setFace(face(face))
                 .setCursorX(cursorX).setCursorY(cursorY).setCursorZ(cursorZ)
@@ -258,7 +256,7 @@ public final class SessionTelemetry implements SessionEvents {
         PacketState state = session.state();
         double eye = eyeHeight(state) * attribute(AttributeTracker.SCALE, 1);
         int ticks = start == null ? 0 : Math.max(0, state.tick() - start.tick());
-        offer(nanos, telemetry.event(session, nanos, state.tick()).setDig(BlockDig.newBuilder()
+        offer(telemetry.event(session, nanos, state.tick()).setDig(BlockDig.newBuilder()
                 .setAction(wire)
                 .setBlock(Vec3i.newBuilder().setX(x).setY(y).setZ(z))
                 .setFace(face(face))
@@ -276,7 +274,7 @@ public final class SessionTelemetry implements SessionEvents {
         }
         PacketState state = session.state();
         boolean open = windowId != 0 && windowId == state.containers().openId();
-        offer(nanos, telemetry.event(session, nanos, state.tick()).setClick(InventoryClick.newBuilder()
+        offer(telemetry.event(session, nanos, state.tick()).setClick(InventoryClick.newBuilder()
                 .setWindowId(windowId).setSlot(slot).setButton(button).setMode(mode)
                 .setContainerOpen(open)
                 .setContainerType(open ? state.containers().openType() : "")).build());
@@ -285,7 +283,7 @@ public final class SessionTelemetry implements SessionEvents {
     @Override
     public void useItem(long nanos, int hand) {
         if (enabled()) {
-            offer(nanos, telemetry.event(session, nanos, session.state().tick())
+            offer(telemetry.event(session, nanos, session.state().tick())
                     .setUseItem(UseItem.newBuilder().setHand(hand(hand))).build());
         }
     }
@@ -298,7 +296,7 @@ public final class SessionTelemetry implements SessionEvents {
         }
         PacketState state = session.state();
         Move before = state.moves().get(0);
-        offer(nanos, telemetry.event(session, nanos, state.tick()).setVelocity(VelocityApplied.newBuilder()
+        offer(telemetry.event(session, nanos, state.tick()).setVelocity(VelocityApplied.newBuilder()
                 .setSource(source == VelocityTracker.Source.EXPLOSION
                         ? VelocityApplied.Source.SOURCE_EXPLOSION : VelocityApplied.Source.SOURCE_VELOCITY_PACKET)
                 .setVx(vx).setVy(vy).setVz(vz)
@@ -311,7 +309,7 @@ public final class SessionTelemetry implements SessionEvents {
         if (!enabled() || (reply.matched() && reply.injected())) {
             return;
         }
-        offer(nanos, telemetry.event(session, nanos, session.state().tick()).setLatency(LatencySample.newBuilder()
+        offer(telemetry.event(session, nanos, session.state().tick()).setLatency(LatencySample.newBuilder()
                 .setKind(pong ? LatencySample.Kind.KIND_PONG : LatencySample.Kind.KIND_KEEPALIVE)
                 .setRttUs((int) Math.min(Integer.MAX_VALUE, reply.rttNanos() / 1_000))
                 .setUnmatched(!reply.matched())).build());
@@ -320,7 +318,7 @@ public final class SessionTelemetry implements SessionEvents {
     @Override
     public void teleport(long nanos, TeleportTracker.Pending teleport, boolean confirmed) {
         if (enabled()) {
-            offer(nanos, telemetry.event(session, nanos, session.state().tick())
+            offer(telemetry.event(session, nanos, session.state().tick())
                     .setTeleport(TeleportApplied.newBuilder().setTeleportId(teleport.id())
                             .setX(teleport.x()).setY(teleport.y()).setZ(teleport.z())
                             .setConfirmed(confirmed)).build());
@@ -330,20 +328,14 @@ public final class SessionTelemetry implements SessionEvents {
     @Override
     public void brand(long nanos, String brand) {
         telemetry.playerJoin(session, true, nanos);
-        offered(nanos);
     }
 
     private boolean enabled() {
         return telemetry.enabled() && !telemetry.limited(session);
     }
 
-    private void offer(long nanos, Event event) {
-        offered(nanos);
-        telemetry.offer(event);
-    }
-
-    private void offered(long nanos) {
-        lastOffered = Math.max(lastOffered, nanos);
+    private void offer(Event event) {
+        telemetry.offer(session, event);
     }
 
     private boolean inFocus(long now) {

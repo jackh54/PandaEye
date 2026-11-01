@@ -81,8 +81,20 @@ public final class Telemetry {
                 .setTick(session.client().tickClient() ? tick : 0);
     }
 
+    /** A server-level event (no player). */
     void offer(Event event) {
         if (sink != null) {
+            sink.offer(event);
+        }
+    }
+
+    /**
+     * An event of {@code session}, from any thread: records its time first ({@link Session#offered}), so
+     * the catch-up of {@link SessionTelemetry} never sends a held move the cloud would drop as stale.
+     */
+    void offer(Session session, Event event) {
+        if (sink != null) {
+            session.offered(event.getTimeUs());
             sink.offer(event);
         }
     }
@@ -107,12 +119,12 @@ public final class Telemetry {
                 .setNetworkSession(session.networkSession())
                 .setUpdate(update)
                 .setSession(session.id().toString());
-        offer(event(session, nanos, session.publishedTick()).setJoin(join).build());
+        offer(session, event(session, nanos, session.publishedTick()).setJoin(join).build());
     }
 
     public void playerQuit(Session session, String reason, long nanos) {
         if (sink != null) {
-            offer(event(session, nanos, session.publishedTick())
+            offer(session, event(session, nanos, session.publishedTick())
                     .setQuit(PlayerQuit.newBuilder().setReason(reason)).build());
         }
     }
@@ -144,7 +156,7 @@ public final class Telemetry {
     }
 
     void sendState(Session session, StateChange change, long nanos) {
-        offer(event(session, nanos, session.publishedTick()).setState(change).build());
+        offer(session, event(session, nanos, session.publishedTick()).setState(change).build());
     }
 
     /** Region thread. */
@@ -152,7 +164,7 @@ public final class Telemetry {
         if (sink == null || limited(session)) {
             return;
         }
-        offer(event(session, env.sampledNanos(), session.publishedTick()).setEnv(EnvSample.newBuilder()
+        offer(session, event(session, env.sampledNanos(), session.publishedTick()).setEnv(EnvSample.newBuilder()
                 .setFlags(env.flags()).setX(env.x()).setY(env.y()).setZ(env.z())
                 .setServerTickMs(env.serverTickMs())).build());
     }
@@ -179,7 +191,7 @@ public final class Telemetry {
                     .setMove(moveSample(move, 1, 1, true)));
             tick = move.tick();
         }
-        offer(event(session, nanos, tick).setFlag(flag).build());
+        offer(session, event(session, nanos, tick).setFlag(flag).build());
     }
 
     /** Async thread: the 5-minute tuning statistics of one check. */
@@ -187,7 +199,7 @@ public final class Telemetry {
         if (sink == null || limited(session)) {
             return;
         }
-        offer(event(session, nanos, session.publishedTick()).setCheckStats(CheckStats.newBuilder()
+        offer(session, event(session, nanos, session.publishedTick()).setCheckStats(CheckStats.newBuilder()
                 .setCheckId(checkId).setMaxStat(stats.maxStat()).setEvaluated(stats.evaluated())
                 .setCandidates(stats.candidates()).setDiscarded(stats.discarded()).setConfirmed(stats.confirmed())
                 .setWindowS(windowSeconds)).build());
