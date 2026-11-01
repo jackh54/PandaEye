@@ -185,7 +185,7 @@ type Score struct {
 	Checks        []CheckContribution  // checks with acc >= emptyAcc, strongest first
 	Families      []FamilyContribution // families with a contribution, strongest first
 	FamiliesOver5 int                  // families contributing >= 5
-	StableOver5   int                  // of those, families whose stable (non-experimental) checks contribute >= 5
+	StableOver5   int                  // of those, families whose stable checks (CHECKS.md 4.1, 4.2) contribute >= 5
 	Dominant      pb.Category          // category with the largest contribution
 	CertainAcc    float64              // largest accumulator of a certain check
 }
@@ -222,7 +222,7 @@ func (s *scoreState) snapshot() Score {
 			famOrder = append(famOrder, c.spec.Family)
 		}
 		famSum[c.spec.Family] += contrib
-		if !c.spec.Experimental {
+		if !c.spec.Experimental && !c.spec.NonCorroborating {
 			stableSum[c.spec.Family] += contrib
 		}
 		catSum[c.spec.Category] += contrib

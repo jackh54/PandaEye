@@ -100,6 +100,52 @@ func TestCapsFamilyCapsAndConfidence(t *testing.T) {
 	}
 }
 
+// Non-corroborating checks add to their family but never make it stable (CHECKS.md 4.2): only the
+// family's other checks do.
+func TestStableFamiliesSkipNonCorroboratingChecks(t *testing.T) {
+	var s scoreState
+	t0 := int64(1_700_000_000_000_000)
+	s.advance(t0)
+	s.add(spec(t, "scaffold.ray"), 60, 0.85, "", t0)   // experimental
+	s.add(spec(t, "protocol.flood"), 20, 0.7, "", t0)  // non-corroborating
+	s.add(spec(t, "protocol.cursor"), 15, 0.6, "", t0) // non-corroborating
+	s.add(spec(t, "protocol.slot"), 4, 0.95, "", t0)
+	if sc := s.snapshot(); sc.FamiliesOver5 != 2 || sc.StableOver5 != 0 || !near(sc.S, 99) {
+		t.Fatalf("protocol 39 with 4 from a stable check: %+v", sc)
+	}
+	s.add(spec(t, "protocol.slot"), 1, 0.95, "", t0)
+	if sc := s.snapshot(); sc.FamiliesOver5 != 2 || sc.StableOver5 != 1 {
+		t.Fatalf("protocol with 5 from a stable check: %+v", sc)
+	}
+}
+
+// Every stable non-corroborating check shares the protocol family, so two families over 5 without
+// experimental checks always include a stable one: such verdicts KICK and BAN as they did before
+// non-corroborating checks existed.
+func TestTwoFamiliesWithoutExperimentalChecksAreCorroborated(t *testing.T) {
+	t0 := int64(1_700_000_000_000_000)
+	var stable []checks.Spec
+	for _, c := range checks.Catalog() {
+		if !c.Experimental {
+			stable = append(stable, c)
+		}
+	}
+	for i, a := range stable {
+		for _, b := range stable[i+1:] {
+			if a.Family == b.Family {
+				continue
+			}
+			var s scoreState
+			s.advance(t0)
+			s.add(a, 5, a.Confidence, "", t0)
+			s.add(b, 5, b.Confidence, "", t0)
+			if sc := s.snapshot(); sc.FamiliesOver5 != 2 || sc.StableOver5 < 1 {
+				t.Errorf("%s + %s: %d families over 5, %d stable", a.ID, b.ID, sc.FamiliesOver5, sc.StableOver5)
+			}
+		}
+	}
+}
+
 func TestEpisodeResetsWhenEmpty(t *testing.T) {
 	var s scoreState
 	t0 := int64(1_700_000_000_000_000)

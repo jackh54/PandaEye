@@ -644,7 +644,9 @@ Keep the circuit-breaker defaults.
 4. Verdicts on the proxy: in live mode with enforcement the proxy can run its configured commands for
    KICK/BAN; the default is shadow / log only. The same circuit breaker and placeholder rules apply.
    BANs go to a connected backend of the network first; the proxy gets one only when no backend is
-   connected, so configure its `ban-command` only if that case must ban.
+   connected, so configure its `ban-command` only if that case must ban. A BAN from a live server only
+   goes to live servers (a proxy or backend in shadow mode never runs it), so servers can be promoted
+   one at a time.
 5. Metering: per network the proxy's player count is used while a proxy is connected, else the sum of the
    backends. Every connection counts towards the licence's `maxServers`, proxies included (the gateway
    counts all of the tenant's connections, whatever the platform). Over the limit the server that connects

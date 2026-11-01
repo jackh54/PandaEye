@@ -488,6 +488,47 @@ func TestBanRoutingPrefersBackendsOverProxy(t *testing.T) {
 	}
 }
 
+// The player went from the live SMP to a lobby in shadow mode before the SMP's last signals were
+// scored: the BAN goes to the SMP, which runs it, not to the lobby the player is on, which never would.
+func TestLiveBanSkipsShadowServers(t *testing.T) {
+	l := newLive(t)
+	ctx := context.Background()
+	tenant := l.tenant()
+	smp := l.player(tenant)
+	lobby := *smp
+	lobby.server, lobby.session, lobby.shadow = testkit.NewServerID(), identity.NewUUID().String(), true
+	for i, c := range []*tplayer{smp, &lobby} {
+		info := stream.ConnectionInfo{ConnectionID: "c" + string(rune('0'+i)), NetworkID: "net-1", Platform: c.origin().Platform,
+			ShadowMode: c.shadow}
+		if _, err := l.d.Bus.CreateConnection(ctx, tenant, c.server, info); err != nil {
+			t.Fatal(err)
+		}
+	}
+	smpBox, lobbyBox := l.outbox(tenant, smp.server), l.outbox(tenant, lobby.server)
+	l.publish(smp.id.Bytes(), smp.marker(pb.SessionMarker_KIND_JOIN))
+	l.publish(smp.id.Bytes(), smp.marker(pb.SessionMarker_KIND_QUIT))
+	l.publish(smp.id.Bytes(), lobby.marker(pb.SessionMarker_KIND_JOIN))
+	for range 4 {
+		l.publish(smp.id.Bytes(), smp.signal("protocol.pitch", 25, local(), withClip("c")))
+	}
+	if vs := smpBox.verdicts(1); vs[0].Action != aB || vs[0].Shadow {
+		t.Fatalf("SMP got %v (shadow %v)", vs[0].Action, vs[0].Shadow)
+	}
+	// The ALERT still goes to where the player is; the BAN does not.
+	for {
+		ob, err := lobbyBox.next(time.Second)
+		if errors.Is(err, nats.ErrTimeout) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v := ob.GetVerdict(); v != nil && v.Action != aA {
+			t.Fatalf("shadow lobby got %v", v.Action)
+		}
+	}
+}
+
 // resolveNetwork's choice for a BAN without an open backend session.
 func TestResolveBanTarget(t *testing.T) {
 	d := newDeps(t)
@@ -507,9 +548,12 @@ func TestResolveBanTarget(t *testing.T) {
 	}
 	cases := []struct {
 		name                        string
+		live                        bool // the BAN's origin is live
 		network, fallback, viaProxy string
 		conns                       []conn
+		shadow                      []string // connected in shadow mode
 		want, wantName              string
+		wantShadow                  bool
 	}{
 		{name: "the player's backend is connected", network: "net-1", fallback: "smp", viaProxy: "proxy",
 			conns: []conn{{"proxy", "net-1", proxy}, {"smp", "net-1", backend}}, want: "smp", wantName: "SMP"},
@@ -523,17 +567,39 @@ func TestResolveBanTarget(t *testing.T) {
 			conns: []conn{{"proxy", "net-1", proxy}, {"smp", "", backend}}, want: "smp", wantName: "SMP"},
 		{name: "no network: no other server of the tenant", fallback: "smp",
 			conns: []conn{{"other", "", backend}}, want: "smp", wantName: "SMP"},
+		// A plugin in shadow mode never runs a BAN: a live origin's BAN takes live servers only.
+		{name: "live: the player's backend before a shadow lobby", live: true, network: "net-1", fallback: "smp", viaProxy: "proxy",
+			conns: []conn{{"lobby", "net-1", backend}, {"proxy", "net-1", proxy}, {"smp", "net-1", backend}}, shadow: []string{"lobby"},
+			want: "smp", wantName: "SMP"},
+		{name: "live: the player's backend reconnecting, another live backend", live: true, network: "net-1", fallback: "smp",
+			conns: []conn{{"lobby", "net-1", backend}, {"hub", "net-1", backend}}, shadow: []string{"lobby"}, want: "hub"},
+		{name: "live: its backend reconnected in shadow mode", live: true, network: "net-1", fallback: "smp",
+			conns: []conn{{"smp", "net-1", backend}, {"hub", "net-1", backend}}, shadow: []string{"smp"}, want: "hub"},
+		{name: "live: the player's live proxy before shadow backends", live: true, network: "net-1", fallback: "smp", viaProxy: "proxy-2",
+			conns:  []conn{{"lobby", "net-1", backend}, {"proxy-1", "net-1", proxy}, {"proxy-2", "net-1", proxy}},
+			shadow: []string{"lobby", "proxy-1"}, want: "proxy-2", wantName: "Proxy"},
+		{name: "live: another live proxy, not the player's shadow one", live: true, network: "net-1", fallback: "smp", viaProxy: "proxy-1",
+			conns:  []conn{{"lobby", "net-1", backend}, {"proxy-1", "net-1", proxy}, {"proxy-2", "net-1", proxy}},
+			shadow: []string{"lobby", "proxy-1"}, want: "proxy-2"},
+		{name: "live: only shadow servers connected, it waits for its backend", live: true, network: "net-1", fallback: "smp",
+			viaProxy: "proxy", conns: []conn{{"lobby", "net-1", backend}, {"proxy", "net-1", proxy}}, shadow: []string{"lobby", "proxy"},
+			want: "smp", wantName: "SMP"},
+		// A shadow origin's BAN is shadow anyway: the order above, shadow servers included.
+		{name: "shadow origin: a shadow backend before a live proxy", network: "net-1", fallback: "smp", viaProxy: "proxy",
+			conns: []conn{{"lobby", "net-1", backend}, {"proxy", "net-1", proxy}}, shadow: []string{"lobby"}, want: "lobby",
+			wantShadow: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			tenant := identity.NewTenantID()
 			for i, cn := range c.conns {
-				info := stream.ConnectionInfo{ConnectionID: "c" + string(rune('0'+i)), NetworkID: cn.network, Platform: cn.platform}
+				info := stream.ConnectionInfo{ConnectionID: "c" + string(rune('0'+i)), NetworkID: cn.network, Platform: cn.platform,
+					ShadowMode: slices.Contains(c.shadow, cn.server)}
 				if _, err := d.Bus.CreateConnection(ctx, tenant, id(cn.server), info); err != nil {
 					t.Fatal(err)
 				}
 			}
-			r := route{network: c.network, lookupNetwork: true, fallback: id(c.fallback), fallbackName: "SMP"}
+			r := route{network: c.network, lookupNetwork: true, live: c.live, fallback: id(c.fallback), fallbackName: "SMP"}
 			if c.viaProxy != "" {
 				r.proxy, r.proxyName = id(c.viaProxy), "Proxy"
 			}
@@ -542,6 +608,9 @@ func TestResolveBanTarget(t *testing.T) {
 			s.resolveNetwork(ctx, pv)
 			if pv.rec.ServerId != id(c.want) || pv.route.server != id(c.want) || pv.route.serverName != c.wantName {
 				t.Fatalf("routed to %s (%q), want %s", pv.rec.ServerId, pv.route.serverName, c.want)
+			}
+			if pv.rec.Verdict.Shadow != c.wantShadow {
+				t.Fatalf("shadow %v, want %v", pv.rec.Verdict.Shadow, c.wantShadow)
 			}
 		})
 	}

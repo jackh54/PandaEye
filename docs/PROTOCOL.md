@@ -70,7 +70,7 @@ in its pending buffer (section 3.3).
 | `instance_id` | random UUID per plugin process start; detects cloned plugin folders |
 | `server_name`, `network_id` | shown in the dashboard; backends and the proxy of one network share `network_id` |
 | `platform`, `platform_version`, `plugin_version`, `minecraft_version` | informational, stored on the server row |
-| `shadow_mode` | the plugin's local lock (`mode: shadow`); copied into `Origin.shadow_mode`, which makes every verdict from this connection `shadow = true` |
+| `shadow_mode` | the plugin's local lock (`mode: shadow`); copied into `Origin.shadow_mode`, which makes every verdict from this connection `shadow = true`; BANs from live servers are not routed to it (7.1) |
 | `capabilities` | optional features, e.g. `tick_end`, `env_sampling`, `target_history`, `probe`. **Open:** the spec does not define what the cloud does with them |
 | `online_players`, `client_time_unix_ms` | metering and diagnostics |
 
@@ -266,7 +266,11 @@ StateChange.
    (whatever its `network_id`), else another connected backend with the same `network_id`, else a
    connected proxy (the one the player is on first), else the player's newest backend (pending until it
    reconnects). A proxy has no ban command by default, so a player online only through the proxy, or
-   whose proxy quit was processed last, is banned on a backend.
+   whose proxy quit was processed last, is banned on a backend. A plugin in shadow mode never runs a BAN,
+   so a BAN whose triggering `Origin.shadow_mode` is false takes live servers only: it skips sessions and
+   connections with `shadow_mode` set, and the newest backend is the player's newest live one (else the
+   origin), which it waits for rather than going to a shadow server. A BAN from a shadow origin is shadow
+   anyway and routed as above.
 5. The gateway holding that server's connection verifies the HMAC and that `tenant_id`/`server_id` match
    the session (else drops the message), forces `shadow = true` while the tenant's current `enforcement`
    (KV `PE_TENANTS`) is false, and sends `ServerFrame.verdict`.

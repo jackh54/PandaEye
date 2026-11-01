@@ -659,10 +659,11 @@ internal/testkit           fake plugin client, event builders, helpers
     HEURISTICS/AUTO_CLICKER -> HIT_CANCEL + DAMAGE_REDUCE + VELOCITY_BOOST; MOVEMENT/TICK_SPEED -> SETBACK;
     WORLD_INTERACTION -> PLACE_CANCEL; others -> HIT_CANCEL. strength = clamp((S - MITIGATE)/(KICK - MITIGATE), 0.3, 1).
     A rejoin with a still-high score re-issues MITIGATE for the new session.
-  - KICK when S >= KICK, tenant `autokick`, C >= 0.8, session open, >= 2 families contributing >= 5 each.
+  - KICK when S >= KICK, tenant `autokick`, C >= 0.8, session open, >= 2 families contributing >= 5 each,
+    one of them stable (>= 5 from checks that are neither experimental nor non-corroborating, CHECKS 4.1/4.2).
   - BAN when tenant `autoban`, C >= 0.9, at least one committed clip among the contributing signals, and
-    either (S >= BAN and >= 2 families contributing >= 5 each) or (one `certain` check with
-    `acc_c >= BAN/2`, which suffices on its own even when its family cap keeps S below BAN).
+    either (S >= BAN and >= 2 families contributing >= 5 each, one of them stable) or (one `certain` check
+    with `acc_c >= BAN/2`, which suffices on its own even when its family cap keeps S below BAN).
   - Never MITIGATE/KICK/BAN from signals whose `gateway_recv_unix_us` is more than 2 min older than the
     cloud clock (re-consumption) or whose normalised event time is older than 10 min (stale catch-up):
     those produce ALERT at most. Hot-loaded sessions count half until the session's plugin snapshot is
@@ -679,7 +680,10 @@ internal/testkit           fake plugin client, event builders, helpers
   server unless it is a proxy (no ban command by default), else the player's newest backend when it is
   connected (whatever its network_id), else another connected backend of the same network_id, else a
   connected proxy (the player's first), else the player's newest backend (pending until it reconnects).
-  UNBAN goes to the server that executed the BAN.
+  A plugin in shadow mode never runs a BAN, so a BAN whose origin is live takes live servers only: it skips
+  sessions and connections in shadow mode, and its newest backend is the player's newest live one (the
+  origin when there is none), which it waits for rather than going to a shadow server. A BAN from a shadow
+  origin is shadow anyway and routed as above. UNBAN goes to the server that executed the BAN.
 - Store writer (one leased instance, `writer` lease): consumes `PE_VERDICTS`, upserts verdicts by id
   (including the serialized Verdict in `verdicts.payload` for redelivery), applies AckRecords (`acked_at`,
   `executed`, `note`), creates `bans` rows only on executed (ack executed=true) non-shadow BANs, records

@@ -34,9 +34,13 @@ type Spec struct {
 	Certain       bool    // may justify a BAN alone (ARCHITECTURE 5.6)
 	// Experimental checks are not yet validated on live traffic: they count towards the score (ALERT,
 	// MITIGATE) but KICK and BAN also need a stable family (CHECKS.md 4.1).
-	Experimental   bool
-	EnabledDefault bool // autoclicker.cps is off by default
-	Variants       []string
+	Experimental bool
+	// NonCorroborating checks can fire on legit players through lag, packet batching, protocol
+	// translation or plugins: they count towards the score and its families, but a family is only
+	// stable through its other checks (CHECKS.md 4.2).
+	NonCorroborating bool
+	EnabledDefault   bool // autoclicker.cps is off by default
+	Variants         []string
 }
 
 func spec(id string, cat pb.Category, where Where, conf, maxConf float64, halfLifeS int, cap float64, certain bool) Spec {
@@ -109,6 +113,10 @@ var catalog = func() []Spec {
 		if s[i].Experimental && s[i].Certain {
 			panic("checks: a certain check cannot be experimental: " + s[i].ID)
 		}
+		s[i].NonCorroborating = nonCorroborating[s[i].ID]
+		if s[i].NonCorroborating && s[i].Certain {
+			panic("checks: a certain check cannot be non-corroborating: " + s[i].ID)
+		}
 	}
 	return s
 }()
@@ -119,6 +127,15 @@ var catalog = func() []Spec {
 var experimental = map[string]bool{
 	"dig.speed": true, "dig.ray": true,
 	"scaffold.face": true, "scaffold.ray": true, "scaffold.cursor": true, "scaffold.reach": true,
+	"velocity.vertical": true, "velocity.horizontal": true,
+	"latency.pingspoof": true, "latency.blink": true,
+}
+
+// nonCorroborating lists the checks of CHECKS.md 4.2. A live would-have KICK came from experimental
+// scaffold checks plus protocol.flood, a packet-rate check that lag trips: checks that lag, packet
+// batching, protocol translation or plugins can trigger without cheating never make a family stable.
+var nonCorroborating = map[string]bool{
+	"protocol.cursor": true, "protocol.flood": true,
 	"velocity.vertical": true, "velocity.horizontal": true,
 	"latency.pingspoof": true, "latency.blink": true,
 }
