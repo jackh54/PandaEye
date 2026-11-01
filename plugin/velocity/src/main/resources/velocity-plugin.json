@@ -3,6 +3,7 @@
   "name": "PandaEye",
   "version": "${version}",
   "description": "Cloud anticheat (proxy integration)",
+  "authors": ["PandaScript"],
   "main": "dev.pandascript.pandaeye.velocity.PandaEyeVelocity",
   "dependencies": [
     {"id": "floodgate", "optional": true}

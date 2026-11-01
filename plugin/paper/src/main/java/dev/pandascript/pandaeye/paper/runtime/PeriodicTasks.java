@@ -5,7 +5,6 @@ import dev.pandascript.pandaeye.common.util.RateLimitedLog;
 import dev.pandascript.pandaeye.paper.check.CheckHandle;
 import dev.pandascript.pandaeye.paper.check.CheckStatsWindow;
 import dev.pandascript.pandaeye.paper.config.PluginConfig;
-import dev.pandascript.pandaeye.paper.log.Json;
 import dev.pandascript.pandaeye.paper.log.LogWriter;
 import dev.pandascript.pandaeye.paper.packet.ActiveGate;
 import dev.pandascript.pandaeye.paper.platform.Schedulers;
@@ -84,7 +83,8 @@ final class PeriodicTasks {
 
     void flushStats() {
         long now = System.nanoTime();
-        boolean logFile = config.get().alerts().logFile();
+        PluginConfig.Alerts alerts = config.get().alerts();
+        PeaksDigest peaks = alerts.logFile() ? new PeaksDigest(alerts.logAllPeaks(), STATS_WINDOW_SECONDS) : null;
         for (Session session : sessions.all()) {
             for (CheckHandle handle : session.checks().handles()) {
                 CheckStatsWindow.Snapshot stats = handle.stats().drain();
@@ -93,20 +93,13 @@ final class PeriodicTasks {
                 }
                 String check = handle.descriptor().id();
                 telemetry.checkStats(session, check, stats, STATS_WINDOW_SECONDS, now);
-                if (logFile) {
-                    logs.peak(new Json()
-                            .put("time", System.currentTimeMillis())
-                            .put("player", session.uuid().toString())
-                            .put("name", session.name())
-                            .put("check", check)
-                            .put("max_stat", stats.maxStat())
-                            .put("evaluated", stats.evaluated())
-                            .put("candidates", stats.candidates())
-                            .put("discarded", stats.discarded())
-                            .put("confirmed", stats.confirmed())
-                            .put("window_s", STATS_WINDOW_SECONDS));
+                if (peaks != null) {
+                    peaks.add(session.uuid(), session.name(), check, stats);
                 }
             }
+        }
+        if (peaks != null) {
+            peaks.lines(System.currentTimeMillis()).forEach(logs::peak);
         }
     }
 

@@ -44,7 +44,8 @@ public record PluginConfig(
     public record Telemetry(boolean full, int focusSeconds, double idleSampleHz) {
     }
 
-    public record Alerts(boolean console, InGameAlerts inGameDefault, boolean logFile) {
+    /** {@code logAllPeaks}: a peaks-log row for every player and check, not only those with candidates. */
+    public record Alerts(boolean console, InGameAlerts inGameDefault, boolean logFile, boolean logAllPeaks) {
     }
 
     public record Exempt(boolean bedrock, boolean bypassDetectionInShadow) {

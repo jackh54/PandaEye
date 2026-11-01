@@ -33,6 +33,8 @@ class ConfigLoaderTest {
         assertEquals(2, config.telemetry().idleSampleHz());
         assertEquals(PluginConfig.InGameAlerts.AUTO, config.alerts().inGameDefault());
         assertFalse(config.inGameAlertsByDefault(), "auto = off in shadow mode");
+        assertTrue(config.alerts().logFile());
+        assertFalse(config.alerts().logAllPeaks());
         assertTrue(config.exempt().bedrock());
         assertFalse(config.exempt().bypassDetectionInShadow());
         assertFalse(config.proxy().sessionChannel());
@@ -88,6 +90,21 @@ class ConfigLoaderTest {
         assertTrue(config.inGameAlertsByDefault(), "auto = on in live mode");
         assertTrue(loader.warnings().stream().anyMatch(w -> w.contains("note")));
         assertTrue(loader.warnings().stream().anyMatch(w -> w.contains("reach.distance")));
+    }
+
+    @Test
+    void logAllPeaksIsOffUnlessSet() throws Exception {
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.loadFromString("""
+                alerts:
+                  log-all-peaks: true
+                """);
+        ConfigLoader loader = new ConfigLoader();
+        PluginConfig config = loader.load(yaml);
+        assertTrue(config.alerts().logAllPeaks());
+        assertTrue(config.alerts().logFile());
+        assertEquals(java.util.List.of(), loader.warnings());
+        assertFalse(new ConfigLoader().load(new YamlConfiguration()).alerts().logAllPeaks());
     }
 
     @Test

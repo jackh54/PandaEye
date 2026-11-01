@@ -45,7 +45,8 @@ public final class ConfigLoader {
                 new PluginConfig.Alerts(
                         root.getBoolean("alerts.console", true),
                         inGame(root.getString("alerts.in-game-default", "auto")),
-                        root.getBoolean("alerts.log-file", true)),
+                        root.getBoolean("alerts.log-file", true),
+                        root.getBoolean("alerts.log-all-peaks", false)),
                 new PluginConfig.Exempt(
                         root.getBoolean("exempt.bedrock", true),
                         root.getBoolean("exempt.bypass-detection-in-shadow", false)),

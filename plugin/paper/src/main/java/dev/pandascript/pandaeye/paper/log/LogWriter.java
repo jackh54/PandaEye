@@ -17,6 +17,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -32,9 +33,10 @@ import java.util.function.Consumer;
  * The bounded local logs (ARCHITECTURE 4.9): {@code logs/flags-YYYY-MM-DD.jsonl} aggregated per player and
  * check per 5 s, {@code logs/peaks-YYYY-MM-DD.jsonl} with the 5-minute check statistics and
  * {@code logs/verdicts-YYYY-MM-DD.jsonl} with every verdict and what was done with it. One daemon
- * thread ({@code PandaEye-Log}) writes; producers only offer to a bounded queue (10 000). Global cap 50
- * lines/s (then one summary line), 256 MiB per file per day, no writes while free disk is below 1 GiB,
- * files kept 14 days.
+ * thread ({@code PandaEye-Log}) writes; producers only offer to a bounded queue (10 000). Each file has its own
+ * line budget, so a peaks dump never starves verdicts and flags: flags and verdicts 50 lines/s each, peaks
+ * 2 000 lines per 5 minutes. Refused lines are counted in one {@code suppressed_lines} line in the file that
+ * lost them. 256 MiB per file per day, no writes while free disk is below 1 GiB, files kept 14 days.
  */
 public final class LogWriter {
 
@@ -42,16 +44,36 @@ public final class LogWriter {
     static final long MAX_FILE_BYTES = 256L << 20;
     static final long MIN_FREE_BYTES = 1L << 30;
     static final int KEEP_DAYS = 14;
+    /** One 5-minute peaks dump with every row (about 130 players x 15 checks), refilled over 5 minutes. */
+    static final int PEAKS_BURST = 2_000;
     private static final long AGGREGATE_NANOS = 5_000_000_000L;
     private static final long DISK_CHECK_NANOS = 30_000_000_000L;
+    private static final long SUPPRESSED_FLUSH_NANOS = 1_000_000_000L;
     private static final double LINES_PER_SECOND = 50;
+
+    /** A log file and its line budget. */
+    private enum Kind {
+        FLAGS("flags", LINES_PER_SECOND, LINES_PER_SECOND),
+        PEAKS("peaks", PEAKS_BURST / 300.0, PEAKS_BURST),
+        VERDICTS("verdicts", LINES_PER_SECOND, LINES_PER_SECOND);
+
+        final String file;
+        final double linesPerSecond;
+        final double burst;
+
+        Kind(String file, double linesPerSecond, double burst) {
+            this.file = file;
+            this.linesPerSecond = linesPerSecond;
+            this.burst = burst;
+        }
+    }
 
     /** A confirmed flag to aggregate. */
     public record FlagRecord(UUID player, String name, String check, double severity, double vl, String info,
                              long unixMillis, long nanos) {
     }
 
-    private record Line(String kind, String json) {
+    private record Line(Kind kind, String json) {
     }
 
     /** What {@link #forget} removed. */
@@ -59,6 +81,17 @@ public final class LogWriter {
     }
 
     private record Forget(UUID player, Consumer<ForgetResult> done) {
+    }
+
+    /** A file's line budget and the lines it refused since its last {@code suppressed_lines} line. */
+    private static final class Budget {
+        final TokenBucket bucket;
+        long suppressed;
+        long lastSuppressedNanos;
+
+        Budget(Kind kind, long nowNanos) {
+            bucket = new TokenBucket(kind.linesPerSecond, kind.burst, nowNanos);
+        }
     }
 
     private static final class Aggregate {
@@ -80,10 +113,9 @@ public final class LogWriter {
     private final LongAdder dropped = new LongAdder();
     private final DaemonThreads threads = DaemonThreads.named("PandaEye-Log");
     private final Map<String, Aggregate> aggregates = new HashMap<>();
-    private final TokenBucket lineBudget = new TokenBucket(LINES_PER_SECOND, LINES_PER_SECOND, System.nanoTime());
+    private final Map<Kind, Budget> budgets = new EnumMap<>(Kind.class);
     private ExecutorService executor;
     private volatile boolean running;
-    private long suppressedLines;
     private long lastDiskCheck = Long.MIN_VALUE;
     private boolean diskFull;
     private LocalDate retentionDay;
@@ -97,6 +129,10 @@ public final class LogWriter {
         this.dir = dir;
         this.log = log;
         this.clock = clock;
+        long now = System.nanoTime();
+        for (Kind kind : Kind.values()) {
+            budgets.put(kind, new Budget(kind, now));
+        }
     }
 
     public void start() {
@@ -126,12 +162,12 @@ public final class LogWriter {
 
     /** A pre-built peaks line. */
     public void peak(Json line) {
-        offer(new Line("peaks", line.toString()));
+        offer(new Line(Kind.PEAKS, line.toString()));
     }
 
     /** A handled verdict. */
     public void verdict(Json line) {
-        offer(new Line("verdicts", line.toString()));
+        offer(new Line(Kind.VERDICTS, line.toString()));
     }
 
     /**
@@ -143,7 +179,7 @@ public final class LogWriter {
         return running && queue.offer(new Forget(player, done));
     }
 
-    /** Lines (or flags) dropped because the queue was full, the rate cap hit, the disk is full or the file is full. */
+    /** Lines (or flags) dropped because the queue was full, a line budget hit, the disk is full or the file is full. */
     public long dropped() {
         return dropped.sum();
     }
@@ -168,11 +204,14 @@ public final class LogWriter {
                     forget(forget);
                 }
                 flushAggregates(now, false);
+                flushSuppressed(now, false);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        flushAggregates(System.nanoTime(), true);
+        long now = System.nanoTime();
+        flushAggregates(now, true);
+        flushSuppressed(now, true);
     }
 
     private void aggregate(FlagRecord flag) {
@@ -194,7 +233,7 @@ public final class LogWriter {
             if (all || now - aggregate.first.nanos() >= AGGREGATE_NANOS) {
                 it.remove();
                 FlagRecord first = aggregate.first;
-                write(new Line("flags", new Json()
+                write(new Line(Kind.FLAGS, new Json()
                         .put("time", first.unixMillis())
                         .put("last", aggregate.last.unixMillis())
                         .put("player", first.player().toString())
@@ -211,36 +250,63 @@ public final class LogWriter {
     }
 
     private void write(Line line, long now) {
-        if (!lineBudget.tryAcquire(now, 1)) {
-            suppressedLines++;
+        Budget budget = budgets.get(line.kind());
+        if (!budget.bucket.tryAcquire(now, 1)) {
+            budget.suppressed++;
+            budget.lastSuppressedNanos = now;
             dropped.increment();
             return;
         }
         String text = line.json();
-        if (suppressedLines > 0) {
-            text = new Json().put("time", System.currentTimeMillis()).put("suppressed_lines", suppressedLines)
-                    + "\n" + text;
-            suppressedLines = 0;
+        if (budget.suppressed > 0) {
+            text = suppressedLine(budget) + "\n" + text;
         }
-        if (diskFull(now)) {
+        if (!append(line.kind(), text, now)) {
             dropped.increment();
-            return;
         }
-        Path file = dir.resolve(line.kind() + "-" + LocalDate.now(clock) + ".jsonl");
+    }
+
+    /**
+     * Writes a file's pending {@code suppressed_lines} line on its own once its budget refused nothing for 1 s
+     * (or at stop), so the count does not wait for that file's next line.
+     */
+    private void flushSuppressed(long now, boolean all) {
+        for (Map.Entry<Kind, Budget> entry : budgets.entrySet()) {
+            Budget budget = entry.getValue();
+            if (budget.suppressed > 0 && (all || now - budget.lastSuppressedNanos >= SUPPRESSED_FLUSH_NANOS)) {
+                append(entry.getKey(), suppressedLine(budget), now);
+            }
+        }
+    }
+
+    /** The line reporting the budget's refused lines; resets the count. */
+    private static String suppressedLine(Budget budget) {
+        String line = new Json().put("time", System.currentTimeMillis()).put("suppressed_lines", budget.suppressed)
+                .toString();
+        budget.suppressed = 0;
+        return line;
+    }
+
+    /** Appends {@code text} to today's file of {@code kind}; false when the disk or the file is full or it failed. */
+    private boolean append(Kind kind, String text, long now) {
+        if (diskFull(now)) {
+            return false;
+        }
+        Path file = dir.resolve(kind.file + "-" + LocalDate.now(clock) + ".jsonl");
         try {
             Files.createDirectories(dir);
             if (Files.exists(file) && Files.size(file) >= MAX_FILE_BYTES) {
-                dropped.increment();
-                return;
+                return false;
             }
             try (BufferedWriter writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
                 writer.write(text);
                 writer.write('\n');
             }
+            return true;
         } catch (IOException e) {
-            dropped.increment();
             log.warn("could not write " + file.getFileName() + ": " + e);
+            return false;
         }
     }
 

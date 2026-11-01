@@ -106,7 +106,7 @@ Measured on real players on a production server running the plugin in shadow mod
 | | |
 |---|---|
 | Period | at least **7 consecutive days** AND at least **1000 player-hours** |
-| Player-hours | the exposure of the local checks: the sum over Java players of the 5-minute `CheckStats` / peaks-log windows in which the player had a seeded session and at least one local check evaluated something, times 5 minutes. Local movement checks run only for tick clients (1.21.2+, CHECKS.md section 0); report the tick-client share |
+| Player-hours | the exposure of the local checks: the sum over Java players of the 5-minute `CheckStats` / peaks-log windows in which the player had a seeded session and at least one local check evaluated something, times 5 minutes (the local peaks log has a row for every such window only with `alerts.log-all-peaks: true`). Local movement checks run only for tick clients (1.21.2+, CHECKS.md section 0); report the tick-client share |
 | Confirmed flag | a violation that raised the check's VL (after the confirmation step where the check has one): `confirmed` in `CheckStats` and the peaks log, one line in the flags log |
 | Criterion A | for **every** local check: confirmed flags <= player-hours / 50 (at most 1 confirmed flag per 50 player-hours; 20 per 1000 player-hours) |
 | Criterion B | no staff-verified legitimate player reached the check's setback VL during the period. Setback VLs exist for `timer.balance` (2), `movement.speed` (5) and `movement.fly` (3). **Open:** the other local checks define no setback VL; until they do, every confirmed flag of a staff-verified legitimate player on them must be investigated and explained in the report |

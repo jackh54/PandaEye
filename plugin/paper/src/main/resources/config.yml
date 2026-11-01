@@ -36,6 +36,7 @@ alerts:
   console: true
   in-game-default: auto        # auto | on | off
   log-file: true
+  log-all-peaks: false         # true = a peaks-log row per player and check, not only those with candidates
 exempt:
   bedrock: true
   bypass-detection-in-shadow: false

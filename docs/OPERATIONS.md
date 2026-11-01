@@ -577,19 +577,26 @@ Use `/pandaeye forget <uuid>` to remove a player's lines from local logs.
 - `plugins/PandaEye/logs/flags-YYYY-MM-DD.jsonl`: confirmed local flags aggregated per player and check per
   5 s (count, max severity, first and last info). Bounded: 50 lines/s, 256 MiB per day, kept 14 days,
   writing stops below 1 GiB free disk.
-- `plugins/PandaEye/logs/peaks-YYYY-MM-DD.jsonl`: per player, per check, per 5 minutes: the maximum test
-  statistic, evaluated, candidates, discarded by the confirmation step, confirmed. The same numbers go to
-  the cloud as `CheckStats`.
+- `plugins/PandaEye/logs/peaks-YYYY-MM-DD.jsonl`, every 5 minutes: first one summary line per check without
+  player fields (`"summary": true`, `players`, `players_with_candidates`, `players_confirmed`, the summed
+  `evaluated`, `candidates`, `discarded` and `confirmed`, and `max_stat_p50`/`p90`/`p99`/`max` over the
+  maximum test statistic of the players that evaluated something, null if none), then a row per player and
+  check that had candidates, discards (by the confirmation step) or confirmations (`player`, `name`, `check`,
+  `max_stat`, `evaluated`, `candidates`, `discarded`, `confirmed`). `alerts.log-all-peaks: true` writes a row
+  for every player and check; turn it on for the peak-per-player method below. The cloud gets every row as
+  `CheckStats`. Bounded: 2 000 lines per 5 minutes.
+- `plugins/PandaEye/logs/verdicts-YYYY-MM-DD.jsonl`: every verdict and what was done with it. Bounded: 50
+  lines/s.
 
-The JSON field names of these logs are defined by the plugin, not the spec (**Open**). The examples
-assume the `CheckStats` names (`check_id`, `max_stat`, `evaluated`, `candidates`, `discarded`,
-`confirmed`) plus `player`; adjust them to the shipped format.
+Each file has its own line budget, so a peaks dump never costs flag or verdict lines. Lines over a budget are
+counted in one `{"suppressed_lines": n}` line in the same file and in `/pandaeye status` (log lines dropped).
+The JSON field names of these logs are defined by the plugin, not the spec (**Open**).
 
 ```sh
-# confirmed flags per check over the last 7 days
-cat logs/peaks-*.jsonl | jq -s 'group_by(.check_id) | map({check: .[0].check_id, confirmed: (map(.confirmed) | add)})'
-# each player's peak statistic for one check, highest first
-cat logs/peaks-*.jsonl | jq -s '[.[] | select(.check_id == "movement.speed")] | group_by(.player)
+# confirmed flags per check over the last 7 days (the summary lines count every player)
+cat logs/peaks-*.jsonl | jq -s '[.[] | select(.summary)] | group_by(.check) | map({check: .[0].check, confirmed: (map(.confirmed) | add)})'
+# each player's peak statistic for one check, highest first (every player only with alerts.log-all-peaks)
+cat logs/peaks-*.jsonl | jq -s '[.[] | select(.player and .check == "movement.speed")] | group_by(.player)
   | map({player: .[0].player, peak: (map(.max_stat) | max)}) | sort_by(-.peak) | .[:20]'
 ```
 
