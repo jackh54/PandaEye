@@ -539,10 +539,10 @@ licence key and the regional endpoint.
 **1. Install in shadow mode.** Put the PandaEye jar in `plugins/` and prepare
 `plugins/PandaEye/config.yml` before the first enable (defaults: ARCHITECTURE 4.11): keep `mode: shadow`,
 set `cloud.license-key`, `cloud.endpoint` (`wss://<regional host>/v1/connect`), `server-name` and, on a
-network, `network-id`. Shadow mode guarantees (ARCHITECTURE 1.1): no packet is sent to any client, no
-packet or event is cancelled or modified, no teleports or velocity changes, no punishment or mitigation
-(except UNBAN of a ban this server executed), bounded queues, files and logs, every callback catches
-every Throwable.
+network, `network-id` (also on a standalone server with its own LiteBans database, 8.9). Shadow mode
+guarantees (ARCHITECTURE 1.1): no packet is sent to any client, no packet or event is cancelled or
+modified, no teleports or velocity changes, no punishment or mitigation (except UNBAN of a ban this server
+executed), bounded queues, files and logs, every callback catches every Throwable.
 
 **2. Restart or hot load.**
 
@@ -686,8 +686,21 @@ With LiteBans on a backend or the proxy, PandaEye sends its cheating bans and th
   off.
 
 In the cloud (ARCHITECTURE 5.8 "LiteBans labels"), the api's label consumer (lease `labels`) applies each ban
-and wrongful unban once, whichever proxy or backend sent it:
+and wrongful unban once per network, whichever proxy or backend of the network sent it:
 
+- LiteBans numbers the bans of each database from 1, so the cloud keeps the bans of each `network-id` apart
+  (servers without one count as one network). Networks of one tenant that share one LiteBans database should
+  use the same `network-id`; networks with their own database and different `network-id`s are kept apart. Two
+  networks (or standalone servers, whose LiteBans uses its own local database by default) with their own
+  databases and the same (or no) `network-id` mix up their bans (the api warns when a ban and its wrongful
+  unban name different players, 9.3): give each its own `network-id`, the same on its proxy and every backend
+  (8.8). Networks sharing one database under different `network-id`s report every ban once per `network-id`:
+  verdicts are decided once and the unflagged window label is written once (a ban lifted as wrong keeps its
+  legit labels when another `network-id` reports the ban later), but the agreement statistics count such a ban
+  (and its wrongful unban) once per `network-id` that reports it. Setting or changing a `network-id` later
+  makes the next backfill report the bans of the last `backfill-days` again under the new one in the same way:
+  the decisions are idempotent and the window labels are written once, but the agreement statistics count
+  those bans and wrongful unbans twice until they are older than 30 d.
 - A cheat ban confirms the player's verdicts of the `PE_LABELS_LOOKBACK` (7 d) before it, shadow ones
   included, as a staff confirm would (status, `litebans` cheat label, reputation if eligible); a wrongful unban
   overturns them as a staff overturn would, so the open session gets an UNMITIGATE and an executed BAN its
@@ -787,6 +800,10 @@ Logs are JSON lines on stderr. These lines carry diagnostics without personal da
   ... `flagged_ban` (players by PandaEye's highest action in the lookback before their ban), `not_flagged`,
   `median_lead_time_s` (-1 = none), `would_kick_or_ban`, `would_kick_or_ban_banned`, `overturns`,
   `verdicts_overturned`. Aggregate counts and the tenant id only (8.9).
+- `labels: ban and wrongful unban of one entry have different players; applied as unrelated` (api, warn): a
+  LiteBans entry id of one `network-id` named two players, so two LiteBans databases report under that
+  `network-id` (or without one; 8.9). `tenant_id`, `network_id`, `entry_id` and the `kind` being applied; no
+  player ids. The unban only overturns its own player's verdicts, and the other player's ban stays.
 
 ## 10. Security checklist
 

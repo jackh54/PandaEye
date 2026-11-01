@@ -1064,8 +1064,9 @@ func (x *AckRecord) GetAckedUnixUs() uint64 {
 }
 
 // Subject pe.labels.<tenant_id> (stream PE_VERDICTS): a ModerationLabel event the worker took out of the
-// event stream, for the api's label consumer, which de-duplicates it by (tenant, source, entry id, kind)
-// and confirms or overturns the player's verdicts (ARCHITECTURE 5.8). The player may be offline.
+// event stream, for the api's label consumer, which de-duplicates it by (tenant, origin network_id, source,
+// entry id, kind) and confirms or overturns the player's verdicts (ARCHITECTURE 5.8). The player may be
+// offline.
 type LabelRecord struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Origin            *Origin                `protobuf:"bytes,1,opt,name=origin,proto3" json:"origin,omitempty"` // the server or proxy that sent it

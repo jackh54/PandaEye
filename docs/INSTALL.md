@@ -78,7 +78,12 @@ decide what counts as a cheating ban are under `labels.litebans` in `config.yml`
 apply); each matches where it starts a word of the reason ("hack" matches "hacking", "reach" does not match
 "breach"). `labels.litebans.enabled: false` turns it off. `/pandaeye status` shows the labels sent. In the
 dashboard, verdicts decided this way are marked "LiteBans" and the overview's "Accuracy (LiteBans)" card compares
-PandaEye with your staff's bans; a decision staff make in the dashboard always wins over LiteBans.
+PandaEye with your staff's bans; a decision staff make in the dashboard always wins over LiteBans. LiteBans ban ids
+are only unique within one LiteBans database, so the cloud keeps them apart by `network-id`, and by server for a
+server whose `network-id` is empty: a network (its proxy and all its backends with one `network-id`) or a standalone
+server with LiteBans' default local database needs nothing. Servers that share one LiteBans database without a
+shared `network-id` (for example standalone servers on one MySQL) should set the same `network-id`, or each of
+their bans is counted once per server in the accuracy figures.
 
 ## Updating and removing
 

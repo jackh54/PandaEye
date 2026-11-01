@@ -49,6 +49,13 @@ func (s *Store) DeletePlayerLabels(ctx context.Context, tenantID, player, label,
 		AND window_end >= ? AND window_end <= ?`, tenantID, player, label, source, endFrom.UnixMicro(), endTo.UnixMicro())
 }
 
+func (s *Store) HasPlayerLabel(ctx context.Context, tenantID, player, label, source string, windowStart, windowEnd time.Time) (bool, error) {
+	var n int
+	err := s.queryRow(ctx, s.r, `SELECT COUNT(*) FROM labels WHERE tenant_id = ? AND player_uuid = ? AND label = ? AND source = ?
+		AND window_start = ? AND window_end = ?`, tenantID, player, label, source, windowStart.UnixMicro(), windowEnd.UnixMicro()).Scan(&n)
+	return n > 0, mapErr(err)
+}
+
 func (s *Store) HasLegitCover(ctx context.Context, tenantID, player string, from, to time.Time) (bool, error) {
 	var n int
 	err := s.queryRow(ctx, s.r, `SELECT

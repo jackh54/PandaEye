@@ -2,9 +2,11 @@
 
 -- A ban of a punishment plugin that the plugin classified as for cheating (kind 'ban_added', label
 -- 'cheat') or lifted as wrong (kind 'ban_removed', label 'legit'). One row per entry and kind: the proxy
--- and every backend may report the same entry, and every plugin enable resends a backfill.
+-- and every backend may report the same entry, and every plugin enable resends a backfill. Entry ids are
+-- those of one punishment database, so the entry is scoped to the sending server's network id ('' = none).
 CREATE TABLE moderation_labels (
 	tenant_id   TEXT NOT NULL REFERENCES tenants (id),
+	network_id  TEXT NOT NULL DEFAULT '',
 	source      TEXT NOT NULL,
 	entry_id    TEXT NOT NULL,
 	kind        TEXT NOT NULL,
@@ -17,7 +19,7 @@ CREATE TABLE moderation_labels (
 	received_at BIGINT NOT NULL,
 	applied_at  BIGINT,
 	verdicts    BIGINT NOT NULL DEFAULT 0,
-	PRIMARY KEY (tenant_id, source, entry_id, kind)
+	PRIMARY KEY (tenant_id, network_id, source, entry_id, kind)
 );
 CREATE INDEX moderation_labels_start ON moderation_labels (tenant_id, label, ban_start);
 CREATE INDEX moderation_labels_player ON moderation_labels (tenant_id, player_uuid, ban_start);

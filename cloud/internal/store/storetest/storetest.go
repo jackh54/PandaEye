@@ -665,6 +665,29 @@ func testVerdictDecisions(t *testing.T, s store.Store) {
 	if ex, _, _ := s.ExportLabels(ctx, a, time.Time{}, store.Page{}); len(ex) != 4 {
 		t.Fatalf("labels left %d", len(ex))
 	}
+	// HasPlayerLabel: the player's label of that value and source over exactly that window.
+	unlabelled := uuid()
+	w0, w1 := t0.Add(-2*time.Hour), t0
+	check(t, s.InsertLabel(ctx, &store.Label{TenantID: a, PlayerUUID: player, Label: store.LabelCheat, Source: store.SourceLiteBansUnflagged,
+		WindowStart: w0, WindowEnd: w1}))
+	for _, c := range []struct {
+		name                          string
+		tenant, player, label, source string
+		from, to                      time.Time
+		want                          bool
+	}{
+		{"identical", a, player, store.LabelCheat, store.SourceLiteBansUnflagged, w0, w1, true},
+		{"other tenant", b, player, store.LabelCheat, store.SourceLiteBansUnflagged, w0, w1, false},
+		{"other player", a, unlabelled, store.LabelCheat, store.SourceLiteBansUnflagged, w0, w1, false},
+		{"other value", a, player, store.LabelLegit, store.SourceLiteBansUnflagged, w0, w1, false},
+		{"other source", a, player, store.LabelCheat, store.SourceLiteBans, w0, w1, false},
+		{"later start", a, player, store.LabelCheat, store.SourceLiteBansUnflagged, w0.Add(time.Microsecond), w1, false},
+		{"earlier end", a, player, store.LabelCheat, store.SourceLiteBansUnflagged, w0, w1.Add(-time.Microsecond), false},
+	} {
+		if got, err := s.HasPlayerLabel(ctx, c.tenant, c.player, c.label, c.source, c.from, c.to); err != nil || got != c.want {
+			t.Errorf("HasPlayerLabel %s: %v %v", c.name, got, err)
+		}
+	}
 }
 
 func moderation(tenant, entry, kind, player string, start time.Time) *store.ModerationLabel {
@@ -702,25 +725,39 @@ func testModerationLabels(t *testing.T, s store.Store) {
 	if _, created, err := s.RecordModerationLabel(ctx, moderation(b, "4521", store.ModerationBanAdded, player, t0)); err != nil || !created {
 		t.Fatalf("other tenant: %v %v", created, err)
 	}
-	check(t, s.MarkModerationLabelApplied(ctx, a, "litebans", "4521", store.ModerationBanAdded, 3, t0.Add(time.Minute)))
-	got, err = s.GetModerationLabel(ctx, a, "litebans", "4521", store.ModerationBanAdded)
+	// The same entry id and kind in another network of the tenant (with its own LiteBans database) is
+	// another entry, here of another player.
+	other := uuid()
+	nb := moderation(a, "4521", store.ModerationBanAdded, other, t0)
+	nb.NetworkID = "net-b"
+	if got, created, err := s.RecordModerationLabel(ctx, nb); err != nil || !created || got.NetworkID != "net-b" || got.PlayerUUID != other {
+		t.Fatalf("other network: %+v %v %v", got, created, err)
+	}
+	check(t, s.MarkModerationLabelApplied(ctx, a, "", "litebans", "4521", store.ModerationBanAdded, 3, t0.Add(time.Minute)))
+	got, err = s.GetModerationLabel(ctx, a, "", "litebans", "4521", store.ModerationBanAdded)
 	check(t, err)
-	if !got.AppliedAt.Equal(t0.Add(time.Minute)) || got.Verdicts != 3 {
+	if !got.AppliedAt.Equal(t0.Add(time.Minute)) || got.Verdicts != 3 || got.NetworkID != "" || got.PlayerUUID != player {
 		t.Fatalf("applied %+v", got)
 	}
-	if got, _ := s.GetModerationLabel(ctx, a, "litebans", "4521", store.ModerationBanRemoved); !got.RemovedAt.Equal(t0.Add(time.Hour)) || !got.AppliedAt.IsZero() {
+	if got, err := s.GetModerationLabel(ctx, a, "net-b", "litebans", "4521", store.ModerationBanAdded); err != nil || got.PlayerUUID != other ||
+		!got.AppliedAt.IsZero() {
+		t.Fatalf("other network's row %+v %v", got, err)
+	}
+	_, err = s.GetModerationLabel(ctx, a, "net-b", "litebans", "4521", store.ModerationBanRemoved)
+	wantErr(t, err, store.ErrNotFound)
+	if got, _ := s.GetModerationLabel(ctx, a, "", "litebans", "4521", store.ModerationBanRemoved); !got.RemovedAt.Equal(t0.Add(time.Hour)) || !got.AppliedAt.IsZero() {
 		t.Fatalf("removal row %+v", got)
 	}
-	_, err = s.GetModerationLabel(ctx, a, "litebans", "9", store.ModerationBanAdded)
+	_, err = s.GetModerationLabel(ctx, a, "", "litebans", "9", store.ModerationBanAdded)
 	wantErr(t, err, store.ErrNotFound)
-	wantErr(t, s.MarkModerationLabelApplied(ctx, a, "litebans", "9", store.ModerationBanAdded, 0, t0), store.ErrNotFound)
-	if got, _ := s.GetModerationLabel(ctx, b, "litebans", "4521", store.ModerationBanAdded); !got.AppliedAt.IsZero() {
+	wantErr(t, s.MarkModerationLabelApplied(ctx, a, "", "litebans", "9", store.ModerationBanAdded, 0, t0), store.ErrNotFound)
+	if got, _ := s.GetModerationLabel(ctx, b, "", "litebans", "4521", store.ModerationBanAdded); !got.AppliedAt.IsZero() {
 		t.Fatal("other tenant's row marked applied")
 	}
-	if n, _ := s.PurgeModerationLabels(ctx, a, t0.Add(time.Second)); n != 2 {
+	if n, _ := s.PurgeModerationLabels(ctx, a, t0.Add(time.Second)); n != 3 {
 		t.Fatalf("purged %d", n)
 	}
-	if _, err := s.GetModerationLabel(ctx, b, "litebans", "4521", store.ModerationBanAdded); err != nil {
+	if _, err := s.GetModerationLabel(ctx, b, "", "litebans", "4521", store.ModerationBanAdded); err != nil {
 		t.Fatal("other tenant's row purged")
 	}
 }
@@ -729,7 +766,7 @@ func testModerationAgreement(t *testing.T, s store.Store) {
 	a, b := newTenant(t, s, "A"), newTenant(t, s, "B")
 	day := 24 * time.Hour
 	lookback := 7 * day
-	flagged, missed, lifted, late, early, wouldBan := uuid(), uuid(), uuid(), uuid(), uuid(), uuid()
+	flagged, missed, lifted, late, early, wouldBan, otherNet := uuid(), uuid(), uuid(), uuid(), uuid(), uuid(), uuid()
 	srv := uuid()
 	add := func(tenant, player string, action pb.Action, at time.Time, shadow bool) {
 		v := verdict(tenant, srv, player, action, at)
@@ -766,16 +803,35 @@ func testModerationAgreement(t *testing.T, s store.Store) {
 	rm.RemovedAt = t0.Add(-time.Hour)
 	_, _, err := s.RecordModerationLabel(ctx, rm)
 	check(t, err)
-	check(t, s.MarkModerationLabelApplied(ctx, a, "litebans", "3", store.ModerationBanRemoved, 1, t0))
+	check(t, s.MarkModerationLabelApplied(ctx, a, "", "litebans", "3", store.ModerationBanRemoved, 1, t0))
 	// A removal without a known time counts by when it was received.
 	old := moderation(a, "7", store.ModerationBanRemoved, late, t0.Add(-40*day))
 	old.ReceivedAt = t0.Add(-3 * day)
 	_, _, err = s.RecordModerationLabel(ctx, old)
 	check(t, err)
+	// Network net-b runs its own LiteBans database: its ban #3 is not lifted by the removal of #3 above,
+	// and its removals of #1 and #2 (received before the period) do not lift the bans #1 and #2 above,
+	// even where they name the same player (missed, banned in both networks).
+	nb := moderation(a, "3", store.ModerationBanAdded, otherNet, ban2)
+	nbRm := moderation(a, "1", store.ModerationBanRemoved, otherNet, ban1)
+	nbRm.ReceivedAt = t0.Add(-40 * day)
+	nbSame := moderation(a, "2", store.ModerationBanRemoved, missed, ban2)
+	nbSame.ReceivedAt = t0.Add(-40 * day)
+	for _, m := range []*store.ModerationLabel{nb, nbRm, nbSame} {
+		m.NetworkID = "net-b"
+		_, _, err := s.RecordModerationLabel(ctx, m)
+		check(t, err)
+	}
+	// A removal of entry #5 naming another player (two databases behind one network id) does not lift
+	// early's ban #5.
+	stray := moderation(a, "5", store.ModerationBanRemoved, uuid(), ban2)
+	stray.ReceivedAt = t0.Add(-40 * day)
+	_, _, err = s.RecordModerationLabel(ctx, stray)
+	check(t, err)
 
 	got, err := s.ModerationAgreement(ctx, a, t0.Add(-30*day), t0, lookback)
 	check(t, err)
-	if len(got.Bans) != 3 {
+	if len(got.Bans) != 4 {
 		t.Fatalf("bans %+v", got.Bans)
 	}
 	byPlayer := map[string]store.ModerationBan{}
@@ -785,14 +841,17 @@ func testModerationAgreement(t *testing.T, s store.Store) {
 	if f := byPlayer[flagged]; f.TopAction != pb.Action_ACTION_KICK || !f.FirstVerdict.Equal(ban1.Add(-3*day)) || !f.BanStart.Equal(ban1) {
 		t.Fatalf("flagged %+v", f)
 	}
-	if m := byPlayer[missed]; m.TopAction != pb.Action_ACTION_UNSPECIFIED || !m.FirstVerdict.IsZero() {
-		t.Fatalf("missed %+v", m)
+	if m, ok := byPlayer[missed]; !ok || m.TopAction != pb.Action_ACTION_UNSPECIFIED || !m.FirstVerdict.IsZero() {
+		t.Fatalf("missed %+v %v", m, ok)
 	}
 	if e := byPlayer[early]; e.TopAction != pb.Action_ACTION_UNSPECIFIED {
 		t.Fatalf("a verdict before the lookback counted: %+v", e)
 	}
 	if _, ok := byPlayer[lifted]; ok {
 		t.Fatal("a ban lifted as wrong counted as a cheat ban")
+	}
+	if o, ok := byPlayer[otherNet]; !ok || o.TopAction != pb.Action_ACTION_UNSPECIFIED {
+		t.Fatalf("another network's ban with a lifted entry id: %+v %v", o, ok)
 	}
 	if got.Bans[0].PlayerUUID != flagged {
 		t.Fatalf("not oldest first: %+v", got.Bans)
@@ -807,7 +866,7 @@ func testModerationAgreement(t *testing.T, s store.Store) {
 	}
 	week, err := s.ModerationAgreement(ctx, a, t0.Add(-7*day), t0, lookback)
 	check(t, err)
-	if len(week.Bans) != 3 || week.Overturns != 2 || week.WouldAct != 3 || week.WouldActBanned != 1 {
+	if len(week.Bans) != 4 || week.Overturns != 2 || week.WouldAct != 3 || week.WouldActBanned != 1 {
 		t.Fatalf("7 d %+v", week)
 	}
 	none, err := s.ModerationAgreement(ctx, b, t0.Add(-30*day), t0, lookback)
