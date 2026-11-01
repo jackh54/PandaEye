@@ -810,11 +810,14 @@ func testModerationAgreement(t *testing.T, s store.Store) {
 	_, _, err = s.RecordModerationLabel(ctx, old)
 	check(t, err)
 	// Network net-b runs its own LiteBans database: its ban #3 is not lifted by the removal of #3 above,
-	// and its removal of #1 (received before the period) does not lift flagged's ban #1.
+	// and its removals of #1 and #2 (received before the period) do not lift the bans #1 and #2 above,
+	// even where they name the same player (missed, banned in both networks).
 	nb := moderation(a, "3", store.ModerationBanAdded, otherNet, ban2)
 	nbRm := moderation(a, "1", store.ModerationBanRemoved, otherNet, ban1)
 	nbRm.ReceivedAt = t0.Add(-40 * day)
-	for _, m := range []*store.ModerationLabel{nb, nbRm} {
+	nbSame := moderation(a, "2", store.ModerationBanRemoved, missed, ban2)
+	nbSame.ReceivedAt = t0.Add(-40 * day)
+	for _, m := range []*store.ModerationLabel{nb, nbRm, nbSame} {
 		m.NetworkID = "net-b"
 		_, _, err := s.RecordModerationLabel(ctx, m)
 		check(t, err)
@@ -838,8 +841,8 @@ func testModerationAgreement(t *testing.T, s store.Store) {
 	if f := byPlayer[flagged]; f.TopAction != pb.Action_ACTION_KICK || !f.FirstVerdict.Equal(ban1.Add(-3*day)) || !f.BanStart.Equal(ban1) {
 		t.Fatalf("flagged %+v", f)
 	}
-	if m := byPlayer[missed]; m.TopAction != pb.Action_ACTION_UNSPECIFIED || !m.FirstVerdict.IsZero() {
-		t.Fatalf("missed %+v", m)
+	if m, ok := byPlayer[missed]; !ok || m.TopAction != pb.Action_ACTION_UNSPECIFIED || !m.FirstVerdict.IsZero() {
+		t.Fatalf("missed %+v %v", m, ok)
 	}
 	if e := byPlayer[early]; e.TopAction != pb.Action_ACTION_UNSPECIFIED {
 		t.Fatalf("a verdict before the lookback counted: %+v", e)
