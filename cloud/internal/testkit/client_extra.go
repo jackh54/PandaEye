@@ -11,6 +11,12 @@ func (c *Client) SendText(ctx context.Context, s string) error {
 	return c.conn.Write(ctx, websocket.MessageText, []byte(s))
 }
 
+// CloseWith closes the connection with a close frame of code and reason (a proxy going away).
+func (c *Client) CloseWith(code int, reason string) error {
+	defer c.dec.Close()
+	return c.conn.Close(websocket.StatusCode(code), reason)
+}
+
 // ReadErr reads until a fatal Error frame or the end of the connection and returns the Error
 // (nil if none came) and the WebSocket close code (-1 when the connection ended without one).
 func (c *Client) ReadErr(ctx context.Context) (*ServerError, int) {

@@ -694,6 +694,16 @@ dashboard (server online, probe RTT).
 
 Logs are JSON lines on stdout. These lines carry diagnostics without personal data:
 
+- `connection closed` (gateway): one line per plugin connection, at info (at debug for connections that
+  ended before their Hello's licence was checked) with `connection`, `tenant`, `server`, `platform`,
+  `duration` and what ended it in `cause`: `peer_close` (the peer's `close_code` and `close_reason`, or a
+  Goodbye), `read_error` or `write_error` (`io_error`: `eof`, `reset`, `broken_pipe`, `timeout`, `closed`,
+  `other`; never the error text, which carries addresses), `silent_timeout` (`silent_for`), `replaced` (by
+  a newer connection of the server, which logs `replacing the previous connection`), `shutdown`, `refused`
+  (licence invalid, server limit, duplicate install, rate limit; a licence that does not verify has no
+  `tenant`), `protocol_error` or `internal_error`. When the gateway sent a fatal Error, `error_code` and
+  `error_message` are the ones sent. `reason` is the `reason` label of
+  `pandaeye_gateway_connections_closed_total`.
 - `store size` (api, info, once a day after the janitor): the database `bytes`, `free_bytes` (sqlite:
   pages freed by deletions, reused before the file grows) and per table `rows` and `table_bytes` (with its
   indexes). Two days' lines show which table grows.

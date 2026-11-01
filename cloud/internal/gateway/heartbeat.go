@@ -19,7 +19,7 @@ func (s *session) handlePing(p *pb.Ping, at time.Time) bool {
 	s.online.Store(p.OnlinePlayers)
 	pong := &pb.Pong{Nonce: p.Nonce, ClientTimeUs: p.ClientTimeUs, ServerTimeUs: uint64(time.Now().UnixMicro()), Config: s.remoteConfig()}
 	if err := s.write(&pb.ServerFrame{Kind: &pb.ServerFrame_Pong{Pong: pong}}); err != nil {
-		s.terminate("write_failed", nil)
+		s.writeFailed(err)
 		return false
 	}
 	if p.LastProbeRttUs > 0 {
@@ -63,7 +63,7 @@ func (s *session) heartbeat(now time.Time) {
 	if since := s.readSince.Load(); since != 0 {
 		idle := now.Sub(time.Unix(0, max(since, s.lastRecv.Load())))
 		if idle > silentIntervals*hb {
-			s.log.Info("closing a silent connection", "silent_for", idle.Round(time.Millisecond).String())
+			s.closeReason("silent", "silent_for", idle.Round(time.Millisecond).String())
 			s.terminate("silent", nil)
 			return
 		}
@@ -71,7 +71,7 @@ func (s *session) heartbeat(now time.Time) {
 	if now.Sub(time.Unix(0, s.lastSend.Load())) >= hb {
 		pong := &pb.Pong{ServerTimeUs: uint64(now.UnixMicro()), Config: s.remoteConfig()}
 		if err := s.write(&pb.ServerFrame{Kind: &pb.ServerFrame_Pong{Pong: pong}}); err != nil {
-			s.terminate("write_failed", nil)
+			s.writeFailed(err)
 		}
 	}
 }

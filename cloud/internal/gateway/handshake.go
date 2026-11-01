@@ -73,6 +73,7 @@ func (s *session) admit(h *pb.Hello, at time.Time) bool {
 		s.fail(fatal(pb.Error_CODE_RATE_LIMITED, "too many licence checks in progress from this address", 5_000))
 		return false
 	}
+	s.hello = h // from here on the close is logged at info
 	ctx, cancel := context.WithTimeout(s.ctx, 15*time.Second)
 	defer cancel()
 	adm, err := g.resolver.Resolve(ctx, h.LicenseKey)
@@ -88,7 +89,7 @@ func (s *session) admit(h *pb.Hello, at time.Time) bool {
 		return false
 	}
 	t := adm.Tenant
-	s.tenantID, s.serverID, s.hello = t.ID, h.ServerId, h
+	s.tenantID, s.serverID = t.ID, h.ServerId
 	s.tenantDef = tenantDefaults(t)
 	s.online.Store(h.OnlinePlayers)
 	if h.ClientTimeUnixMs > 0 {
@@ -170,7 +171,7 @@ func (s *session) admit(h *pb.Hello, at time.Time) bool {
 	}
 	s.conn.SetReadLimit(codec.MaxCompressed + 1)
 	if err := s.write(&pb.ServerFrame{Kind: &pb.ServerFrame_Welcome{Welcome: s.welcome(lastAcked, secret)}}); err != nil {
-		s.terminate("write_failed", nil)
+		s.writeFailed(err)
 		return false
 	}
 	s.ready.Store(true)

@@ -105,7 +105,7 @@ func (s *session) renew() {
 			s.terminate("replaced", nil)
 		}
 	case gerr == nil:
-		s.log.Info("connection replaced by a newer one", "new_connection", cur.Info.ConnectionID)
+		s.closeReason("replaced", "new_connection", cur.Info.ConnectionID)
 		s.kvRev.Store(0)
 		s.terminate("replaced", nil)
 	default:

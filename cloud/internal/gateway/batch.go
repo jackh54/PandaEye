@@ -144,7 +144,7 @@ func (s *session) origin() *pb.Origin {
 // ack sends BatchAck{seq} and raises the server's last acked seq.
 func (s *session) ack(seq uint64) bool {
 	if err := s.write(&pb.ServerFrame{Kind: &pb.ServerFrame_BatchAck{BatchAck: &pb.BatchAck{Seq: seq}}}); err != nil {
-		s.terminate("write_failed", nil)
+		s.writeFailed(err)
 		return false
 	}
 	s.seq.advance(seq)
@@ -157,7 +157,7 @@ func (s *session) poison(seq uint64, result, reason string) bool {
 	s.g.m.Batches.WithLabelValues(result).Inc()
 	s.log.Warn("poison batch acknowledged and dropped", "seq", seq, "result", result, "reason", reason)
 	if err := s.write(errorFrame(&pb.Error{Code: pb.Error_CODE_TOO_LARGE, Message: reason})); err != nil {
-		s.terminate("write_failed", nil)
+		s.writeFailed(err)
 		return false
 	}
 	return s.ack(seq)
