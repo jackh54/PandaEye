@@ -215,7 +215,7 @@ Every `Event` carries `player` (16 bytes, empty for server-level events), `time_
 |---|---|---|
 | `join` (PlayerJoin) | backend, proxy | real join (`update = false`, new `session` UUID); brand, `network_session` and the 60 s re-announce of every online session (`update = true`, never resets state) |
 | `quit` | backend, proxy | quit or disconnect |
-| `move` (MoveSample) | backend | every flying packet while the player is in focus (see below), else 2 Hz with `ticks_since_last` / `packets_since_last` |
+| `move` (MoveSample) | backend | every flying packet while the player is in focus (see below), else 2 Hz with `ticks_since_last` / `packets_since_last`, plus, right before an `attack`, `place` or `dig`, the up to 4 packets the 2 Hz sampling held back (their own times, `focus = false`) |
 | `attack`, `swing`, `place`, `dig`, `click`, `use_item` | backend | each client action (attacks carry the target's positions for the last 1500 ms, see section 15) |
 | `velocity` (VelocityApplied) | backend | own-entity velocity packet or explosion knockback |
 | `latency` | backend | each passively observed keep-alive or ping/pong round trip |

@@ -17,6 +17,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -42,6 +43,7 @@ public final class Session {
     private final ConcurrentLinkedQueue<double[]> bukkitVelocities = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicInteger outstandingConfirmations = new AtomicInteger();
+    private final AtomicLong lastOfferedMicros = new AtomicLong(Long.MIN_VALUE);
     private final TokenBucket confirmationRate;
 
     private PacketProcessor processor;
@@ -277,6 +279,23 @@ public final class Session {
         proxySessionAccepted = true;
         networkSession = session;
         return true;
+    }
+
+    /**
+     * Any thread, as an event of this session is offered to the sink: its event time (microseconds). The cloud
+     * drops a session's event older than one it has applied (ARCHITECTURE 5.5), so a late sender (the
+     * telemetry catch-up) leaves out what is older than {@link #lastOfferedMicros()}.
+     */
+    public void offered(long timeMicros) {
+        long last = lastOfferedMicros.get();
+        while (timeMicros > last && !lastOfferedMicros.compareAndSet(last, timeMicros)) {
+            last = lastOfferedMicros.get();
+        }
+    }
+
+    /** The newest event time offered for this session, from any thread; Long.MIN_VALUE before the first. */
+    public long lastOfferedMicros() {
+        return lastOfferedMicros.get();
     }
 
     /** Netty-published summary other threads may read (attack target info, env events, status). */

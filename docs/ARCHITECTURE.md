@@ -289,7 +289,14 @@ false on older APIs). `server_tick_ms` = measured interval between runs / 10. Pu
   the last 3 s, clicked in a window or had a container open in the last 3 s, a local flag in the last
   30 s, a `WatchRequest`
   active (clamped to <= 300 s, <= 20 concurrent), or `telemetry.full`); otherwise at 2 Hz
-  (`ticks_since_last` tells the cloud how many ticks were skipped). All other event kinds are always sent.
+  (`ticks_since_last` tells the cloud how many ticks were skipped). Before an attack, placement or dig the
+  up to 4 movement packets the 2 Hz sampling held back since its last sample are sent first, with their
+  own times, ticks and counts and `focus = false`, so the cloud has the positions just before the first
+  action after a pause (CHECKS 2.1; not when the last sample is the packet just before the action, about
+  1 in 10 at 2 Hz); held packets older than an event of the player already offered by
+  any thread (the region thread's `EnvSample`, the 60 s re-announce, `LocalFlag`, `CheckStats`) are left
+  out, since the cloud drops a session's events older than one it has applied (5.5) and counts them as
+  `stale` drops. All other event kinds are always sent.
   A per-player ring of the last 40 movement packets is kept for LocalFlag context.
 - `EventSink`: bounded MPSC queue (100k events; overflow drops newest and counts).
 - `CloudClient`, all network I/O on one daemon thread `PandaEye-Cloud` plus the JDK HttpClient (built with
