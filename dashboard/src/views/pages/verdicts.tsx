@@ -416,10 +416,12 @@ export function ReplayViewer(props: { verdictId: string; clipIds: string[]; clip
 export function VerdictPage(props: { nonce: string; session: Session; verdict: Verdict; clip: string; flash?: Flash | null }) {
   const v = props.verdict;
   const staff = can(props.session.user.role, "verdicts:decide");
-  // Staff may confirm what LiteBans confirmed: it becomes their decision, which a later LiteBans unban leaves alone.
+  // Staff may confirm what LiteBans confirmed, or overturn again what it overturned: it becomes their decision, which a
+  // later LiteBans label leaves alone (and their overturn lifts an executed ban that a late LiteBans unban left in place).
   const byLiteBans = v.decidedBy === "litebans";
   const canConfirm = staff && (v.status === "open" || (v.status === "confirmed" && byLiteBans)) && v.action !== "unban" && v.action !== "unmitigate";
-  const canOverturn = staff && (v.status === "open" || v.status === "confirmed") && v.action !== "unban" && v.action !== "unmitigate";
+  const canOverturn =
+    staff && (v.status === "open" || v.status === "confirmed" || (v.status === "overturned" && byLiteBans)) && v.action !== "unban" && v.action !== "unmitigate";
   return (
     <Layout title={`Verdict ${shortId(v.id)}`} nonce={props.nonce} session={props.session} active="verdicts" flash={props.flash} scripts={["/static/replay.js"]}>
       <div class="page-header">
@@ -536,6 +538,12 @@ export function VerdictPage(props: { nonce: string; session: Session; verdict: V
                 <p class="muted small">
                   LiteBans confirmed this verdict. Confirming it here makes it a staff decision, which a later LiteBans unban does not
                   change; overturning it here is final.
+                </p>
+              ) : null}
+              {byLiteBans && v.status === "overturned" ? (
+                <p class="muted small">
+                  A LiteBans unban overturned this verdict. Overturning it here makes it a staff decision and, for an executed ban, sends
+                  the unban if LiteBans' unban reached PandaEye too late to send it.
                 </p>
               ) : null}
               <form method="post" action={`/verdicts/${seg(v.id)}/confirm`} class="stack">

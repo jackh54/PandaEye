@@ -99,6 +99,13 @@ describe("LiteBans decisions and accuracy", () => {
     expect(html).toContain("LiteBans: overturned");
     expect(html).toContain("Overturned by a LiteBans unban (false ban or accepted appeal)");
     expect(html).toMatch(/<button[^>]*disabled[^>]*>\s*Confirm: cheating/);
+    // Staff may overturn it again to take it over (and lift a ban a late LiteBans unban left in place).
+    expect(html).not.toMatch(/<button[^>]*disabled[^>]*>\s*Overturn/);
+    expect(html).toContain("Overturning it here makes it a staff decision");
+
+    api.json("GET", "/api/v1/verdicts/v-so", verdictFixture({ id: "v-so", status: "overturned", decided_by: "staff" }));
+    html = await (await client.get("/verdicts/v-so")).text();
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>\s*Overturn/);
 
     api.json("GET", "/api/v1/verdicts/v-st", verdictFixture({ id: "v-st", status: "confirmed", decided_by: "staff" }));
     html = await (await client.get("/verdicts/v-st")).text();
