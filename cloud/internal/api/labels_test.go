@@ -569,6 +569,16 @@ func TestLiteBansSharedDatabaseLabelsOnce(t *testing.T) {
 	if got := unflaggedLabels(t, e, playerOther); got[store.LabelCheat] != 0 || got[store.LabelLegit] != 1 {
 		t.Fatalf("unflagged labels after the interleaved ban and unban: %v", got)
 	}
+	// Network B's ban arrives after network A's unban and B never sends that unban (its
+	// legit-unban-reasons differ): the window stays legit, as the verdicts an unban overturned stay
+	// overturned.
+	ban10 := fixedNow.Add(-5 * time.Hour)
+	e.applyLabel(inNetwork(cheatBan(playerOther, 10, ban10), "net-a"))
+	e.applyLabel(inNetwork(wrongfulUnban(playerOther, 10, ban10), "net-a"))
+	e.applyLabel(inNetwork(cheatBan(playerOther, 10, ban10), "net-b"))
+	if got := unflaggedLabels(t, e, playerOther); got[store.LabelCheat] != 0 || got[store.LabelLegit] != 2 {
+		t.Fatalf("unflagged labels after another network id's ban of a lifted ban: %v", got)
+	}
 }
 
 // Two LiteBans databases behind one network id give one entry id to bans of different players. A

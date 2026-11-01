@@ -859,7 +859,8 @@ endpoints, as decision `litebans` (`verdicts.decided_by`), audit principal `lite
 - A `litebans_unflagged` label is not written when the player already has the same one (value, source and
   window): networks that share one LiteBans database under different network ids report every ban once per
   network id, and the confirm and overturn are idempotent, but a second window label would count twice in
-  training.
+  training. Nor is a cheat one written over a window a wrongful unban already labelled legit (the ban
+  arriving under another network id after it), as the verdicts that unban overturned stay overturned.
 - A label never changes a verdict staff decided (`DecideVerdict` refuses it); a staff confirm or overturn
   takes over a LiteBans decision and its label. Overturned verdicts stay overturned (no confirm afterwards).
 - Agreement (`GET /api/v1/stats/litebans`, and a daily `litebans agreement` log line per tenant with data):
