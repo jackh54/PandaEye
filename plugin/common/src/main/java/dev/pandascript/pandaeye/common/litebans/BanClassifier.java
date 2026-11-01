@@ -1,7 +1,9 @@
 package dev.pandascript.pandaeye.common.litebans;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -10,8 +12,8 @@ import java.util.UUID;
  * An entry of any of the three lists matches where it starts a word, case-insensitively: at the start of the reason
  * or after a character that is not a letter or digit, ending anywhere ({@code "hack"} matches "hacking" and
  * {@code "reach"} does not match "breach", so {@code "killaura"} is listed apart from {@code "aura"}); a colour code
- * ({@code &c}, {@code §c}, {@code &#rrggbb}) counts as a separator, and an entry that starts with another character
- * ({@code "#30d"}) matches anywhere.
+ * ({@code &c}, {@code §c}, {@code &#rrggbb}) and a letter of Chinese, Japanese or Thai (written without spaces) count
+ * as a separator, and an entry that starts with another character ({@code "#30d"}, {@code "外挂"}) matches anywhere.
  * <ul>
  *   <li>{@link Label#CHEAT}: a ban added with a cheat reason by staff (by the console only with
  *       {@code count-console}).</li>
@@ -22,6 +24,11 @@ import java.util.UUID;
  * </ul>
  */
 public final class BanClassifier {
+
+    /** Scripts written without spaces between words: a letter of theirs does not continue a word. */
+    private static final Set<Character.UnicodeScript> UNSPACED = EnumSet.of(Character.UnicodeScript.HAN,
+            Character.UnicodeScript.HIRAGANA, Character.UnicodeScript.KATAKANA, Character.UnicodeScript.THAI,
+            Character.UnicodeScript.LAO, Character.UnicodeScript.KHMER, Character.UnicodeScript.MYANMAR);
 
     public enum Label {
         CHEAT,
@@ -76,9 +83,9 @@ public final class BanClassifier {
     /**
      * Whether one of {@code entries} (lowercase, as {@link LiteBansSettings} stores them) starts a word of
      * {@code text}: some occurrence of it, case-insensitively, is at the start of the text, after a character that is
-     * not a letter or digit or after a colour code ({@code "&cHacking"}). Every occurrence is tried ("reach" matches
-     * "breach, reach"); the end is free. An entry that does not start with a letter or digit ({@code "#30d"}, a quoted
-     * {@code " alt"}) brings its own word start and matches anywhere.
+     * not a word character (see {@code wordChar}) or after a colour code ({@code "&cHacking"}). Every occurrence is
+     * tried ("reach" matches "breach, reach"); the end is free. An entry that does not start with a word character
+     * ({@code "#30d"}, a quoted {@code " alt"}, {@code "外挂"}) brings its own word start and matches anywhere.
      */
     static boolean matches(String text, List<String> entries) {
         if (text == null || text.isEmpty()) {
@@ -86,15 +93,22 @@ public final class BanClassifier {
         }
         String lower = text.toLowerCase(Locale.ROOT);
         for (String entry : entries) {
-            boolean word = !entry.isEmpty() && Character.isLetterOrDigit(entry.codePointAt(0));
+            boolean word = !entry.isEmpty() && wordChar(entry.codePointAt(0));
             for (int at = lower.indexOf(entry); at >= 0; at = lower.indexOf(entry, at + 1)) {
-                if (!word || at == 0 || !Character.isLetterOrDigit(lower.codePointBefore(at))
-                        || colourCodeBefore(lower, at)) {
+                if (!word || at == 0 || !wordChar(lower.codePointBefore(at)) || colourCodeBefore(lower, at)) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /**
+     * A letter or digit of a script written with spaces between words: Chinese, Japanese and Thai have none
+     * ("使用外挂", "using cheats"), so a letter of theirs never continues a word.
+     */
+    private static boolean wordChar(int codePoint) {
+        return Character.isLetterOrDigit(codePoint) && !UNSPACED.contains(Character.UnicodeScript.of(codePoint));
     }
 
     /**

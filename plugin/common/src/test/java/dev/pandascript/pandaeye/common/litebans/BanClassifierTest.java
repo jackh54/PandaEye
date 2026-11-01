@@ -234,6 +234,25 @@ class BanClassifierTest {
         assertEquals(expected, BanClassifier.matches(text, List.of(entry)));
     }
 
+    /**
+     * Chinese, Japanese and Thai put no space between words, so a letter of theirs does not continue a word: "使用外挂"
+     * is "using cheats", "外部チート" "external cheat", "ใช้โปรแกรมโกง" "using a cheat program". Korean has spaces.
+     */
+    @ParameterizedTest(name = "{1} in {0} -> {2}")
+    @CsvSource(delimiter = '|', value = {
+            "使用外挂          | 外挂     | true",
+            "使用killaura      | killaura | true",
+            "外部チート        | チート   | true",
+            "ｸﾗｲｱﾝﾄﾁｰﾄ         | ﾁｰﾄ      | true",
+            "ใช้โปรแกรมโกง      | โกง      | true",
+            "hack外挂          | 外挂     | true",
+            "에임봇            | 봇       | false",
+            "breach 外挂       | reach    | false",
+    })
+    void wordsOfScriptsWithoutSpacesStartAnywhere(String text, String entry, boolean expected) {
+        assertEquals(expected, BanClassifier.matches(text, List.of(entry)));
+    }
+
     /** Reasons keep the colour codes staff type (LiteBans shows them coloured): a code before a word starts it. */
     @ParameterizedTest(name = "{0} -> {1}")
     @CsvSource(delimiter = '|', value = {

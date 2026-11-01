@@ -677,12 +677,13 @@ With LiteBans on a backend or the proxy, PandaEye sends its cheating bans and th
   `legit-unban-reasons`. An entry matches where it starts a word, never inside one (`reach` does not match
   "breach", `esp` not "disrespect", `test` not "fastest"; a colour code starts a word, as in "&cHacking"), and the
   word may go on (`hack` matches "hacking", `alt` "alts"), so list every spelling staff use (`killaura` and
-  `kill aura` besides `aura`); an entry that starts with a space or punctuation (`#30d`) matches anywhere. Keep
-  `count-console: false`: console bans come from other anticheats and from PandaEye's own `ban-command`, whose
-  default reason ("Unfair advantage. Appeal at ...") is a cheat reason, so they would label PandaEye's own
-  verdicts. `unfair advantage` is listed for the other direction: a PandaEye ban lifted with a legit-unban reason
-  is LEGIT and overturns its verdict as below. A backfill on every restart is harmless (the cloud de-duplicates);
-  `backfill-days: 0` turns it off.
+  `kill aura` besides `aura`); an entry that starts with a space or punctuation (`#30d`) matches anywhere, and
+  Chinese, Japanese and Thai letters (no spaces between words) never continue a word. Keep `count-console: false`:
+  console bans come from other anticheats and from PandaEye's own `ban-command`, whose default reason ("Unfair
+  advantage. Appeal at ...") is a cheat reason, so they would label PandaEye's own verdicts. `unfair advantage` is
+  listed for the other direction: a PandaEye ban lifted with a legit-unban reason is LEGIT and overturns its
+  verdict as below. A backfill on every restart is harmless (the cloud de-duplicates); `backfill-days: 0` turns it
+  off.
 
 In the cloud (ARCHITECTURE 5.8 "LiteBans labels"), the api's label consumer (lease `labels`) applies each ban
 and wrongful unban once, whichever proxy or backend sent it:
