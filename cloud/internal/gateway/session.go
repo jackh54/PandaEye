@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -55,7 +56,8 @@ type session struct {
 	out  chan outItem
 	aux  chan func(context.Context)
 
-	connectedMs int64 // set by register
+	opened      time.Time // the WebSocket was accepted
+	connectedMs int64     // set by register
 
 	// Owned by the processing loop.
 	offsetUs   int64
@@ -70,8 +72,10 @@ type session struct {
 	workers   sync.WaitGroup
 	closeOnce sync.Once
 	closed    chan struct{} // the WebSocket is closed
-	reasonMu  sync.Mutex
-	reason    string // why it closed (metrics label); the first reason wins
+
+	reasonMu    sync.Mutex
+	reason      string // why it closed (metrics label); the first reason wins
+	reasonAttrs []any  // what the close log line adds to the reason
 }
 
 type inbound struct {
@@ -91,7 +95,7 @@ func newSession(g *Service, conn *websocket.Conn, raw net.Conn, ip netip.Addr) *
 	ctx, cancel := context.WithCancel(context.Background())
 	id := identity.NewUUID().String()
 	s := &session{g: g, conn: conn, raw: raw, ip: ip, id: id, ctx: ctx, cancel: cancel,
-		log:  g.log.With("connection", id),
+		log: g.log.With("connection", id), opened: time.Now(),
 		msgs: make(chan inbound), out: make(chan outItem, g.opts.OutboundQueue), aux: make(chan func(context.Context), 256),
 		delivered: map[string]time.Time{}, closed: make(chan struct{}), budget: newConnBudget(g.opts)}
 	s.seq = newSeqAdvancer(s)
@@ -147,7 +151,8 @@ func (s *session) readLoop() {
 		s.readSince.Store(0)
 		if err != nil {
 			if s.ctx.Err() == nil {
-				s.closeReason(readCloseReason(err))
+				reason, attrs := readCloseReason(err)
+				s.closeReason(reason, attrs...)
 			}
 			return
 		}
@@ -161,16 +166,30 @@ func (s *session) readLoop() {
 	}
 }
 
-func readCloseReason(err error) string {
-	switch websocket.CloseStatus(err) {
-	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
-		return "client"
-	case websocket.StatusMessageTooBig:
-		return "message_too_big"
-	case -1:
-		return "connection_lost"
+// readCloseReason classifies the error that ended the read loop: the peer's close frame (its code and
+// reason go to the close log), a message over the read limit, a write that timed out, or a broken
+// connection (only the error's kind is logged: its text carries addresses).
+func readCloseReason(err error) (string, []any) {
+	var ce websocket.CloseError
+	switch {
+	case errors.As(err, &ce):
+		attrs := []any{"close_code", int(ce.Code), "close_reason", ce.Reason}
+		switch ce.Code {
+		case websocket.StatusNormalClosure, websocket.StatusGoingAway:
+			return "client", attrs
+		case websocket.StatusMessageTooBig:
+			return "message_too_big", attrs
+		default:
+			return "client_error", attrs
+		}
+	case errors.Is(err, websocket.ErrMessageTooBig):
+		return "message_too_big", nil
+	case errors.Is(err, net.ErrClosed):
+		// While the session runs, only a timed-out write closes the socket (the library does), and
+		// the reader may see that before the writer reports it.
+		return "write_failed", []any{"io_error", "timeout"}
 	default:
-		return "client_error"
+		return "connection_lost", []any{"io_error", ioErrorKind(err)}
 	}
 }
 
@@ -242,19 +261,26 @@ func (s *session) fail(e *pb.Error) {
 	s.terminate(authResult(e.Code), e)
 }
 
-// closeReason records why the connection ends (first reason wins).
-func (s *session) closeReason(r string) {
+// closeReason records why the connection ends and what the close log line adds to it (first reason
+// wins).
+func (s *session) closeReason(r string, attrs ...any) {
 	s.reasonMu.Lock()
 	defer s.reasonMu.Unlock()
 	if s.reason == "" {
-		s.reason = r
+		s.reason, s.reasonAttrs = r, attrs
 	}
 }
 
-func (s *session) closedReason() string {
+func (s *session) closedReason() (string, []any) {
 	s.reasonMu.Lock()
 	defer s.reasonMu.Unlock()
-	return s.reason
+	return s.reason, s.reasonAttrs
+}
+
+// writeFailed ends the session after a failed write.
+func (s *session) writeFailed(err error) {
+	s.closeReason("write_failed", "io_error", ioErrorKind(err))
+	s.terminate("write_failed", nil)
 }
 
 // terminate ends the session: optionally sends a fatal Error, then closes the WebSocket with the
@@ -262,12 +288,14 @@ func (s *session) closedReason() string {
 // within CloseTimeout is dropped. Safe to call from any goroutine, any number of times.
 func (s *session) terminate(reason string, e *pb.Error) {
 	s.closeOnce.Do(func() {
-		s.closeReason(reason)
-		s.cancel()
 		code, text := websocket.StatusNormalClosure, reason
 		if e != nil {
 			code, text = closeCode(e.Code), e.Code.String()
+			s.closeReason(reason, "error_code", text, "error_message", e.Message)
+		} else {
+			s.closeReason(reason)
 		}
+		s.cancel()
 		go func() {
 			defer close(s.closed)
 			if e != nil {
@@ -381,11 +409,29 @@ func (s *session) cleanup() {
 	case <-s.closed:
 	case <-time.After(s.g.opts.CloseTimeout + time.Second):
 	}
+	reason, details := s.closedReason()
 	if s.ready.Load() {
-		reason := s.closedReason()
 		s.g.m.ConnectionsClosed.WithLabelValues(reason).Inc()
-		s.log.Debug("connection closed", "tenant", s.tenantID, "server", s.serverID, "reason", reason)
 	}
+	s.logClosed(reason, details)
+}
+
+// logClosed logs how the connection ended, in one line: at info once the Hello's licence was
+// checked, at debug before (anyone can open such connections).
+func (s *session) logClosed(reason string, details []any) {
+	lvl := slog.LevelDebug
+	var attrs []any
+	if h := s.hello; h != nil {
+		lvl = slog.LevelInfo
+		if s.tenantID == "" {
+			attrs = append(attrs, "server", h.ServerId) // the licence was refused: no tenant
+		}
+		attrs = append(attrs, "platform", h.Platform.String())
+	}
+	attrs = append(attrs, "cause", closeCause(reason), "reason", reason)
+	attrs = append(attrs, details...)
+	attrs = append(attrs, "duration", time.Since(s.opened).Round(time.Millisecond).String())
+	s.log.Log(context.Background(), lvl, "connection closed", attrs...)
 }
 
 // settings returns the tenant's current settings.

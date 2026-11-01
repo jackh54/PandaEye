@@ -1,6 +1,12 @@
 package gateway
 
 import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"syscall"
+
 	"github.com/coder/websocket"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
 )
@@ -44,6 +50,51 @@ func authResult(c pb.Error_Code) string {
 		return "shutting_down"
 	default:
 		return "bad_request"
+	}
+}
+
+// closeCause groups close reasons (pandaeye_gateway_connections_closed_total) by what ended the
+// connection, for the close log line.
+func closeCause(reason string) string {
+	switch reason {
+	case "client", "client_error", "goodbye":
+		return "peer_close"
+	case "connection_lost":
+		return "read_error"
+	case "write_failed":
+		return "write_error"
+	case "silent":
+		return "silent_timeout"
+	case "replaced":
+		return "replaced"
+	case "shutdown", "shutting_down":
+		return "shutdown"
+	case "invalid", "limit", "duplicate", "rate_limited":
+		return "refused"
+	case "bad_request", "message_too_big":
+		return "protocol_error"
+	default: // unavailable, internal
+		return "internal_error"
+	}
+}
+
+// ioErrorKind names a read or write error for the close log line without its text, which carries
+// the peer's address.
+func ioErrorKind(err error) string {
+	var ne net.Error
+	switch {
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "eof"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "reset"
+	case errors.Is(err, syscall.EPIPE):
+		return "broken_pipe"
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &ne) && ne.Timeout():
+		return "timeout"
+	case errors.Is(err, net.ErrClosed):
+		return "closed"
+	default:
+		return "other"
 	}
 }
 

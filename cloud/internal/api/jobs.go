@@ -214,7 +214,30 @@ func (s *Service) janitorOnce(ctx context.Context, now time.Time) error {
 		errs = append(errs, err)
 	}
 	s.log.Info("janitor finished", "tenants", len(ids), "deleted", totals, "tombstones_deleted", n)
+	s.logStoreSize(ctx)
 	return errors.Join(errs...)
+}
+
+// sizeReporter is implemented by the SQL store (sqlstore.Store.SizeReport).
+type sizeReporter interface {
+	SizeReport(ctx context.Context) (store.SizeReport, error)
+}
+
+// logStoreSize logs the database size and the rows and bytes of every table after the daily purge,
+// to show what the database grows with. Aggregate numbers only.
+func (s *Service) logStoreSize(ctx context.Context) {
+	sr, ok := s.d.Store.(sizeReporter)
+	if !ok {
+		return
+	}
+	r, err := sr.SizeReport(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.log.Warn("store size report failed", "err", err)
+		}
+		return
+	}
+	s.log.Info("store size", "bytes", r.Bytes, "free_bytes", r.FreeBytes, "wal_bytes", r.WALBytes, "rows", r.Rows, "table_bytes", r.TableBytes)
 }
 
 func (s *Service) ensureTombstone(ctx context.Context, tenantID string, e store.Erasure) error {

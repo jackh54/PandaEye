@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,21 @@ import (
 	"github.com/jackh54/PandaEye/cloud/internal/stream"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
 )
+
+// logLine returns the one JSON log line with message msg.
+func logLine(t *testing.T, logs, msg string) string {
+	t.Helper()
+	var found []string
+	for _, l := range strings.Split(logs, "\n") {
+		if strings.Contains(l, `"msg":"`+msg+`"`) {
+			found = append(found, l)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("want one %q line, got %d: %q", msg, len(found), found)
+	}
+	return found[0]
+}
 
 func srvID(n int) string {
 	return "00000000-0000-4000-8000-" + string([]byte{'0', '0', '0', '0', '0', '0', '0', '0', '0', '0', byte('0' + n/10), byte('0' + n%10)})
@@ -197,6 +213,26 @@ func TestJanitor(t *testing.T) {
 	check(t, st.BeginErasure(ctx, tenantA, player1, now.Add(-day)))
 
 	check(t, e.s.janitorOnce(ctx, now))
+
+	// One line of aggregate sizes after the purge, without player data.
+	line := logLine(t, e.logs.String(), "store size")
+	var size struct {
+		Level      string           `json:"level"`
+		Bytes      int64            `json:"bytes"`
+		WALBytes   *int64           `json:"wal_bytes"`
+		Rows       map[string]int64 `json:"rows"`
+		TableBytes map[string]int64 `json:"table_bytes"`
+	}
+	check(t, json.Unmarshal([]byte(line), &size))
+	if size.Level != "INFO" || size.Bytes <= 0 || size.WALBytes == nil || size.Rows["tenants"] != 3 || size.Rows["verdicts"] != 1 || size.Rows["audit_log"] != 1 ||
+		size.TableBytes["verdicts"] <= 0 {
+		t.Errorf("store size line: %s", line)
+	}
+	for _, personal := range []string{"Steve", "Alex", player1, player2} {
+		if strings.Contains(line, personal) {
+			t.Errorf("%s in the store size line: %s", personal, line)
+		}
+	}
 
 	if _, err := st.GetVerdict(ctx, tenantA, oldV.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Error("180-day-old verdict kept")

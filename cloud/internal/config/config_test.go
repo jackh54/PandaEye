@@ -53,6 +53,9 @@ func TestDefaultsAllMode(t *testing.T) {
 	if c.Partitions != 16 || c.DB.Driver != DriverSQLite || c.DB.DSN.Reveal() != "./data/pandaeye.db" {
 		t.Errorf("partitions/db defaults")
 	}
+	if c.DB.BackupInterval != 6*time.Hour || c.DB.BackupKeep != 4 || c.DB.BackupDir != "" {
+		t.Errorf("backup defaults: %v %d %q", c.DB.BackupInterval, c.DB.BackupKeep, c.DB.BackupDir)
+	}
 	if c.License.Mode != LicenseStatic || c.License.Product != "pandaeye" || c.Region != "local" || c.LogLevel != slog.LevelInfo {
 		t.Errorf("license/region/log defaults")
 	}

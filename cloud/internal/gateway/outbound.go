@@ -26,7 +26,6 @@ func (s *session) onOutbound(m *nats.Msg) {
 	switch k := out.Kind.(type) {
 	case *pb.Outbound_CloseConnectionId:
 		if k.CloseConnectionId == s.id {
-			s.log.Info("closing: replaced by a newer connection on another gateway")
 			s.terminate("replaced", nil)
 		}
 	case *pb.Outbound_Verdict:
@@ -82,7 +81,7 @@ func (s *session) deliver(it outItem) bool {
 		}
 	}
 	if err := s.write(f); err != nil {
-		s.terminate("write_failed", nil)
+		s.writeFailed(err)
 		return false
 	}
 	s.g.m.outbound.WithLabelValues(it.kind).Inc()

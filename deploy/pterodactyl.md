@@ -89,11 +89,18 @@ a model that does not load then logs an error and the node keeps running without
 
 ## Backups
 
-The cloud writes an online copy of the database every 6 h to `data/backups/pandaeye-<UTC>.db` and
-keeps the newest 8 (`PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`). Those copies live on the same disk:
-schedule a Pterodactyl backup (it may run while the server is up; exclude `data/pandaeye.db*` and
-`data/nats/` from it and rely on `data/backups/`) or copy `data/backups/` off the node. To restore, stop
-the server, replace `data/pandaeye.db` with a backup copy (delete `pandaeye.db-wal` and `-shm`) and start. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#83-backups-and-disaster-recovery).
+The cloud writes a gzip-compressed online copy of the database every 6 h to
+`data/backups/pandaeye-<UTC>.db.gz` and keeps the newest 4 (`PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`;
+uncompressed `.db` copies of earlier releases count towards the 4 and are deleted first). While the disk
+has less than twice the database size free (at least 1 GiB) it skips the copy and logs `online backup
+skipped: low disk space`. That check sees the node's file system, not the server's disk limit (the panel
+sets no file-system quota), so it does not keep the server under its limit: leave room in the limit for
+the database, its copies and `PE_EVENTS_MAX_BYTES`. Those copies live on the same disk: schedule a
+Pterodactyl backup (it may run while the server is up; exclude `data/pandaeye.db*` and `data/nats/` from
+it and rely on `data/backups/`) or copy `data/backups/` off the node. To restore, stop the server,
+download the chosen `.db.gz` over SFTP and decompress it (`gunzip`, or 7-Zip on Windows), delete
+`data/pandaeye.db-wal` and `-shm`, upload the decompressed file over SFTP as `data/pandaeye.db` (the file
+manager's upload limit can be smaller than the database) and start. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#83-backups-and-disaster-recovery).
 
 `data/ml/` (when `PE_FEATURES_DIR` is set) holds player UUIDs. A Pterodactyl backup copies it unless it is
 excluded, and erasures do not reach backups: exclude `data/ml/` (it is training data, not needed to
@@ -111,8 +118,8 @@ for the dashboard). Each item says how to check it.
 | Secrets generated once, kept off the repo | the start script generates `PE_OUTBOUND_KEY`, `PE_LICENSE_PEPPER`, `PE_SERVICE_TOKEN`, `PE_ASSERTION_KEY` into `pandaeye.env` (mode 600) when missing | `pandaeye.env` exists, never committed; values only ever pasted into the dashboard's Worker secrets |
 | Rotation | service token without downtime through `PE_SERVICE_TOKEN_NEXT`; assertion and outbound keys in a quiet period; **never** the pepper ([OPERATIONS 8.6](../docs/OPERATIONS.md#86-rotating-keys)). Rotate any value that was ever shown in a chat, log or ticket | dashboard still signs in after the switch |
 | Licensing | `PE_LICENSE_MODE=pandascript`, `PE_LICENSE_URL=<licence worker>`, `PE_LICENSE_PRODUCT=pandaeye` (the product must exist in the licence system). Keys in `PE_STATIC_LICENSES` stay valid and are checked first | a new key connects; a revoked one is refused within 10 minutes (valid answers are cached that long) |
-| Backups | built in: `data/backups/` every 6 h, 8 kept (see Backups above); a Pterodactyl backup schedule copies them off the node | `online backup written` in the console every 6 h |
+| Backups | built in: `data/backups/` every 6 h, gzip, 4 kept (see Backups above); a Pterodactyl backup schedule copies them off the node | `online backup written` in the console every 6 h, never `online backup skipped` |
 | Monitoring | an external uptime check on `https://<api host>/status` every 1-5 min: alert on non-200, `connected_servers` dropping to 0, or `slo.met` false | the check is green |
-| Memory and disk | `GOMEMLIMIT` and `PE_WORKER_MAX_MEMORY` below the container limit; disk for `PE_EVENTS_MAX_BYTES` plus backups (plus `PE_FEATURES_MAX_BYTES` when `PE_FEATURES_DIR` is set) | container stays below its limits for a week |
+| Memory and disk | `GOMEMLIMIT` and `PE_WORKER_MAX_MEMORY` below the container limit; disk for `PE_EVENTS_MAX_BYTES` plus backups (plus `PE_FEATURES_MAX_BYTES` when `PE_FEATURES_DIR` is set) | container stays below its limits for a week; the daily `store size` line shows which table the database grows with ([OPERATIONS 9.3](../docs/OPERATIONS.md#93-diagnostic-log-lines)) |
 | Capacity | measured: one Folia server with 100-250 players used about 25% of 2 CPUs. Extrapolated, not measured: about 3 servers of that size per 2-CPU node with headroom; beyond that add CPU or move to the split deployment | `/status` `probe_rtt.p95_us` far below the SLO |
 | Updates | push to the deploy branch, restart the server (it rebuilds and restarts in about 10 s; plugins reconnect and replay their spool) | `/status` `version` shows the new revision |
