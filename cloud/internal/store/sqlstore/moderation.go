@@ -55,10 +55,10 @@ func (s *Store) MarkModerationLabelApplied(ctx context.Context, tenantID, networ
 		tenantID, networkID, source, entryID, kind)
 }
 
-// notLifted keeps the cheat bans m that no wrongful unban of the same entry (of the same network)
-// superseded.
+// notLifted keeps the cheat bans m that no wrongful unban of the same entry (of the same network and
+// player) superseded. An unban of another player is not the ban's (the api applies it as unrelated).
 const notLifted = `NOT EXISTS (SELECT 1 FROM moderation_labels l WHERE l.tenant_id = m.tenant_id AND l.network_id = m.network_id
-	AND l.source = m.source AND l.entry_id = m.entry_id AND l.label = ?)`
+	AND l.source = m.source AND l.entry_id = m.entry_id AND l.player_uuid = m.player_uuid AND l.label = ?)`
 
 func (s *Store) ModerationAgreement(ctx context.Context, tenantID string, since, until time.Time, lookback time.Duration) (store.ModerationAgreement, error) {
 	var out store.ModerationAgreement

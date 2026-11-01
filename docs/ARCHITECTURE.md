@@ -842,7 +842,8 @@ endpoints, as decision `litebans` (`verdicts.decided_by`), audit principal `lite
 - cheat ban: every non-corrective verdict of the player created in [ban start - `PE_LABELS_LOOKBACK`, ban
   start] (7 d) is confirmed (`litebans` cheat label over its signal window, reputation contribution if
   eligible); without one, a `litebans_unflagged` cheat label over [ban start - `PE_LABELS_WINDOW`, ban start]
-  (2 h). A cheat ban whose wrongful unban (of the same network's entry) arrived first is not applied.
+  (2 h). A cheat ban whose wrongful unban (of the same network's entry and player) arrived first is not
+  applied.
 - An erased player's bans that started before the erasure (`erasures.requested_at`) are skipped: the plugins
   resend them with every backfill, after the tombstone is gone too (5.13).
 - wrongful unban: the entry's cheat labels are deleted (`litebans_unflagged`, and `litebans` labels whose
@@ -851,6 +852,10 @@ endpoints, as decision `litebans` (`verdicts.decided_by`), audit principal `lite
   unban reached the cloud within 15 min of its removal time: a later one (backfill, outage, unknown removal
   time) must not run the unban command, which would lift any newer ban of the player; the ban record stays
   active until staff overturn the verdict.
+- A ban and a wrongful unban of one entry (same network id) that name different players are not each other's:
+  two LiteBans databases behind one network id (or none). The api logs a warning (tenant, network and entry
+  id), applies the unban to its own player as one whose ban was never seen (only that player's labels and
+  verdicts), keeps the other player's ban (also when it arrives after the unban) and counts it as not lifted.
 - A `litebans_unflagged` label is not written when the player already has the same one (value, source and
   window): networks that share one LiteBans database under different network ids report every ban once per
   network id, and the confirm and overturn are idempotent, but a second window label would count twice in
@@ -859,10 +864,10 @@ endpoints, as decision `litebans` (`verdicts.decided_by`), audit principal `lite
   takes over a LiteBans decision and its label. Overturned verdicts stay overturned (no confirm afterwards).
 - Agreement (`GET /api/v1/stats/litebans`, and a daily `litebans agreement` log line per tenant with data):
   per 7 d and 30 d, the cheat bans that started in the period and were not lifted as wrong (by a wrongful
-  unban of the same network's entry), their players by the highest ALERT..BAN verdict (shadow included) in
-  the lookback before their first ban, the median lead time from that player's first such verdict to the ban,
-  the players with a KICK/BAN verdict in the period and how many of them got a cheat ban within the lookback
-  after one, and the wrongful unbans (by removal time) with the verdicts they overturned.
+  unban of the same network's entry and player), their players by the highest ALERT..BAN verdict (shadow
+  included) in the lookback before their first ban, the median lead time from that player's first such
+  verdict to the ban, the players with a KICK/BAN verdict in the period and how many of them got a cheat ban
+  within the lookback after one, and the wrongful unbans (by removal time) with the verdicts they overturned.
 
 Metering loop (one leased `api` instance, every minute): sums `online_players` from live `PE_CONNECTIONS`
 values per tenant (per network_id: the proxy's count when a proxy is connected, else the sum of backends) and

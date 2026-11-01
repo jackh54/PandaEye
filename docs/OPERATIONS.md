@@ -685,11 +685,11 @@ and wrongful unban once per network, whichever proxy or backend of the network s
 - LiteBans numbers the bans of each database from 1, so the cloud keeps the bans of each `network-id` apart
   (servers without one count as one network). Networks of one tenant that share one LiteBans database should
   use the same `network-id`; networks with their own database and different `network-id`s are kept apart. Two
-  networks with their own databases and the same (or no) `network-id` mix up their bans: give each its own
-  `network-id`, the same on its proxy and every backend (8.8). Networks sharing one database under different
-  `network-id`s report every ban once per `network-id`: verdicts are decided once and the unflagged window
-  label is written once, but the agreement statistics count such a ban (and its wrongful unban) once per
-  `network-id`.
+  networks with their own databases and the same (or no) `network-id` mix up their bans (the api warns when a
+  ban and its wrongful unban name different players, 9.3): give each its own `network-id`, the same on its
+  proxy and every backend (8.8). Networks sharing one database under different `network-id`s report every ban
+  once per `network-id`: verdicts are decided once and the unflagged window label is written once, but the
+  agreement statistics count such a ban (and its wrongful unban) once per `network-id`.
 - A cheat ban confirms the player's verdicts of the `PE_LABELS_LOOKBACK` (7 d) before it, shadow ones
   included, as a staff confirm would (status, `litebans` cheat label, reputation if eligible); a wrongful unban
   overturns them as a staff overturn would, so the open session gets an UNMITIGATE and an executed BAN its
@@ -789,6 +789,10 @@ Logs are JSON lines on stderr. These lines carry diagnostics without personal da
   ... `flagged_ban` (players by PandaEye's highest action in the lookback before their ban), `not_flagged`,
   `median_lead_time_s` (-1 = none), `would_kick_or_ban`, `would_kick_or_ban_banned`, `overturns`,
   `verdicts_overturned`. Aggregate counts and the tenant id only (8.9).
+- `labels: ban and wrongful unban of one entry have different players; applied as unrelated` (api, warn): a
+  LiteBans entry id of one `network-id` named two players, so two LiteBans databases report under that
+  `network-id` (or without one; 8.9). `tenant_id`, `network_id`, `entry_id` and the `kind` being applied; no
+  player ids. The unban only overturns its own player's verdicts, and the other player's ban stays.
 
 ## 10. Security checklist
 

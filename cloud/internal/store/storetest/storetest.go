@@ -819,6 +819,12 @@ func testModerationAgreement(t *testing.T, s store.Store) {
 		_, _, err := s.RecordModerationLabel(ctx, m)
 		check(t, err)
 	}
+	// A removal of entry #5 naming another player (two databases behind one network id) does not lift
+	// early's ban #5.
+	stray := moderation(a, "5", store.ModerationBanRemoved, uuid(), ban2)
+	stray.ReceivedAt = t0.Add(-40 * day)
+	_, _, err = s.RecordModerationLabel(ctx, stray)
+	check(t, err)
 
 	got, err := s.ModerationAgreement(ctx, a, t0.Add(-30*day), t0, lookback)
 	check(t, err)

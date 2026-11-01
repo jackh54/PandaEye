@@ -571,6 +571,64 @@ func TestLiteBansSharedDatabaseLabelsOnce(t *testing.T) {
 	}
 }
 
+// Two LiteBans databases behind one network id give one entry id to bans of different players. A
+// wrongful unban only supersedes its ban when both name the same player: otherwise it is logged and
+// applied to its own player as an unban whose ban was never seen, and the other player's ban stays (and
+// still applies when it arrives after the unban).
+func TestLiteBansUnbanOfAnotherPlayersEntry(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx := context.Background()
+	ban := fixedNow.Add(-time.Hour)
+	e.applyLabel(cheatBan(player1, 57, ban))
+	e.applyLabel(wrongfulUnban(player2, 57, ban))
+	for _, id := range []string{vBan, vAlert} {
+		wantDecision(t, e, id, store.StatusConfirmed, store.DecidedByLiteBans)
+	}
+	if ls := playerLabels(t, e, tenantA, player1); len(ls) != 2 || ls[vBan+"/cheat"].Source != store.SourceLiteBans {
+		t.Fatalf("player1's labels after another player's unban: %v", ls)
+	}
+	if b, _ := e.d.Store.GetBan(ctx, tenantA, vBan); !b.Active {
+		t.Fatal("another player's unban lifted the ban")
+	}
+	for _, id := range []string{vShadow, vMit} {
+		wantDecision(t, e, id, store.StatusOverturned, store.DecidedByLiteBans)
+	}
+	ag, err := e.d.Store.ModerationAgreement(ctx, tenantA, fixedNow.Add(-24*time.Hour), fixedNow, 7*24*time.Hour)
+	check(t, err)
+	if len(ag.Bans) != 1 || ag.Bans[0].PlayerUUID != player1 || ag.Overturns != 1 {
+		t.Fatalf("agreement %+v", ag)
+	}
+
+	// The other order: the unban of entry #58 is recorded first, then a ban #58 of another player.
+	e.applyLabel(wrongfulUnban(playerOther, 58, ban))
+	e.applyLabel(cheatBan(playerMissed, 58, ban))
+	if got := unflaggedLabels(t, e, playerMissed); got[store.LabelCheat] != 1 {
+		t.Fatalf("ban #58 not applied: %v", got)
+	}
+	if got := unflaggedLabels(t, e, playerOther); got[store.LabelLegit] != 1 || got[store.LabelCheat] != 0 {
+		t.Fatalf("unban #58: %v", got)
+	}
+	var warned int
+	for _, l := range strings.Split(e.logs.String(), "\n") {
+		if !strings.Contains(l, "ban and wrongful unban of one entry have different players") {
+			continue
+		}
+		warned++
+		if !strings.Contains(l, `"level":"WARN"`) || !strings.Contains(l, `"tenant_id":"`+tenantA+`"`) {
+			t.Errorf("warning %s", l)
+		}
+		for _, p := range []string{player1, player2, playerMissed, playerOther} {
+			if strings.Contains(l, p) {
+				t.Errorf("player id logged: %s", l)
+			}
+		}
+	}
+	if warned != 2 {
+		t.Fatalf("%d warnings, want 2:\n%s", warned, e.logs.String())
+	}
+}
+
 func TestModerationLabelRecords(t *testing.T) {
 	rec := func(mut func(r *pb.LabelRecord)) *pb.LabelRecord {
 		r := &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA, ServerId: srv1}, Player: uuidBytes(player1),

@@ -164,9 +164,9 @@ func moderationLabel(rec *pb.LabelRecord, subjectTenant string) (*store.Moderati
 // applyModerationLabel records m once per (tenant, network id, source, entry id, kind) and applies it: a
 // cheat ban confirms the player's verdicts created in [ban start - lookback, ban start] (or, without one,
 // labels the window before the ban cheat), a wrongful unban overturns them (or labels that window legit)
-// and supersedes the entry's cheat labels. A cheat ban whose wrongful unban (of the same network) was
-// recorded first is not applied, nor is a ban of an erased player that started before the erasure.
-// Every step is idempotent: a retry after a failure completes it.
+// and supersedes the entry's cheat labels. A cheat ban whose wrongful unban (of the same network and
+// player) was recorded first is not applied, nor is a ban of an erased player that started before the
+// erasure. Every step is idempotent: a retry after a failure completes it.
 func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationLabel, now time.Time) error {
 	if m.ReceivedAt.IsZero() {
 		m.ReceivedAt = now
@@ -192,18 +192,24 @@ func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationL
 	unflagged := false
 	switch stored.Kind {
 	case store.ModerationBanAdded:
-		_, err := s.d.Store.GetModerationLabel(ctx, stored.TenantID, stored.NetworkID, stored.Source, stored.EntryID, store.ModerationBanRemoved)
+		lifted, err := s.pairedEntry(ctx, stored)
 		switch {
-		case err == nil:
-			// Lifted as wrong before we saw the ban (out of order): nothing to confirm.
-		case !errors.Is(err, store.ErrNotFound):
+		case err != nil:
 			return err
+		case lifted:
+			// Lifted as wrong before we saw the ban (out of order): nothing to confirm.
 		default:
 			if decided, unflagged, err = s.applyCheatBan(ctx, stored, now); err != nil {
 				return err
 			}
 		}
 	case store.ModerationBanRemoved:
+		// The unban supersedes its ban's cheat labels, which are its own player's. A ban row of the entry
+		// with another player is not its ban (pairedEntry logs it): the unban then applies to its own
+		// player like one whose ban was never seen, which is all applyWrongfulUnban touches.
+		if _, err := s.pairedEntry(ctx, stored); err != nil {
+			return err
+		}
 		if decided, unflagged, err = s.applyWrongfulUnban(ctx, stored, now); err != nil {
 			return err
 		}
@@ -223,6 +229,29 @@ func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationL
 			"unflagged_label": unflagged, "executor": stored.Executor}, now)
 	s.log.Debug("moderation label applied", "tenant_id", stored.TenantID, "label", stored.Label, "verdicts", len(decided), "unflagged", unflagged)
 	return nil
+}
+
+// pairedEntry reports whether the entry's row of the other kind (the wrongful unban of a ban, the ban of
+// a wrongful unban) is recorded for m's player. One network's entry ids name one ban each, so a row of
+// another player means two LiteBans databases behind one network id (or none): it is logged and m is
+// applied as if that row did not exist.
+func (s *Service) pairedEntry(ctx context.Context, m *store.ModerationLabel) (bool, error) {
+	kind := store.ModerationBanRemoved
+	if m.Kind == store.ModerationBanRemoved {
+		kind = store.ModerationBanAdded
+	}
+	o, err := s.d.Store.GetModerationLabel(ctx, m.TenantID, m.NetworkID, m.Source, m.EntryID, kind)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	case o.PlayerUUID != m.PlayerUUID:
+		s.log.Warn("labels: ban and wrongful unban of one entry have different players; applied as unrelated", "tenant_id", m.TenantID,
+			"network_id", m.NetworkID, "entry_id", m.EntryID, "kind", m.Kind)
+		return false, nil
+	}
+	return true, nil
 }
 
 // lookbackVerdicts returns the player's verdicts (not UNBAN/UNMITIGATE) created in
@@ -276,8 +305,8 @@ func (s *Service) applyCheatBan(ctx context.Context, m *store.ModerationLabel, n
 // that staff did not decide; without any verdict, the player gets an unflagged legit label over the
 // window before the ban.
 func (s *Service) applyWrongfulUnban(ctx context.Context, m *store.ModerationLabel, now time.Time) ([]string, bool, error) {
-	// The cheat labels the ban wrote: the unflagged window, and the verdicts' labels (including those
-	// of verdicts purged since).
+	// The cheat labels the ban wrote, all of them m's player's: the unflagged window, and the verdicts'
+	// labels (including those of verdicts purged since).
 	for _, del := range []struct {
 		source   string
 		from, to time.Time
