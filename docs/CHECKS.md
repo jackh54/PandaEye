@@ -402,10 +402,12 @@ Skip placements with `inside_block` set, cursors outside [0, 1] (for scaffold.cu
   outline shape, relative to the clicked block (`hit - pos`, floats since 1.11): on the top of a slab,
   carpet or snow layer, on a plant's small box, under a ceiling, it lies on that ray at any distance, so
   the 3 degrees do not widen with distance. The eye error the candidates leave is the eye path's sampling
-  (a sixteenth of a tick's step, at most about 0.02 blocks on foot) plus the eye uncertainty, under
-  3 degrees beyond the 0.3 skip at walking speed. Bottom face: it is only seen from below, so when `P.y`
-  lies below every candidate eye (by more than the eye uncertainty) no candidate can have clicked it and
-  the only vanilla eye left is the 0.4 eye of an unflagged crawl (2.1). For such a click, and only for
+  (a sixteenth of a tick's step: about 0.014 blocks walking, 0.018 sprinting, 0.04 in the take-off tick
+  of a sprint-jump, whose step is about 0.49 across and 0.42 up) plus the eye uncertainty: under
+  3 degrees beyond the 0.3 skip walking, and beyond about 0.8 blocks in that tick of a sprint-jump.
+  Bottom face: it is only seen from below, so when `P.y` lies below every candidate eye (by more than the
+  eye uncertainty) no candidate can have clicked it and the only vanilla eye left is the 0.4 eye of an
+  unflagged crawl (2.1). For such a click, and only for
   scaffold.cursor, the 0.4 eyes at the same feet (reported, path, next move) that may lie below `P`
   (`E.y - u < P.y`, `u` the eye uncertainty) are added to the candidates (clients from 1.14, and only
   when 0.4 is not a candidate already): a 0.4 eye above the face cannot have clicked it either. A cursor
