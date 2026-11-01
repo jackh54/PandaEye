@@ -275,11 +275,17 @@ OPEN_WINDOW/CLOSE_WINDOW. Points 3, confidence 0.8.
   from up to one tick of movement behind the reported eye. Candidates: the reported eye, the other heights
   at the same feet, 8 points on the segment from the previous position (when the last position arrived
   within 150 ms and the step is under 4 blocks) and, for placements and digs, the next move's eyes, each at
-  every candidate height. Heights: placements and digs standing and sneaking; attacks the reported height,
-  plus the other of standing/sneaking when the sneaking state changed around the attack. A reduced report
-  (swimming/gliding, eye 0.4) also tests standing and sneaking for attacks, and 0.4 for placements and
-  digs: the plugin reports these flags while a change is unacknowledged, so without PONGs a stale flag can
-  outlast the server's clear, while a real swim or crawl is judged from 0.4. Plain standing and sneaking
+  every candidate height. The previous position needs the movement packets just before the action: out of
+  focus the plugin sends movement at 2 Hz and focus starts with the action itself (ARCHITECTURE 4.6), so
+  before an attack, placement or dig it first sends the up to 4 movement packets it held back since its
+  last sample. Plugins before that sent none: the first action after a pause (3 s without a placement or
+  dig, 5 s without combat) had no previous position, and a walking player's legit click mismatched
+  `scaffold.cursor` about a third of the time by 3 to 10 degrees. Heights: placements and digs standing
+  and sneaking; attacks the reported height, plus the other of standing/sneaking when the sneaking state
+  changed around the attack. A reduced report (swimming/gliding, eye 0.4) also tests standing and sneaking
+  for attacks, and 0.4 for placements and digs: the plugin reports these flags while a change is
+  unacknowledged, so without PONGs a stale flag can outlast the server's clear, while a real swim or crawl
+  is judged from 0.4. Plain standing and sneaking
   reports never get the 0.4 eye, so a crawl the server does not flag (the vanilla pose-only crawl) is
   judged from the standing eye.
 - **Rotation of an attack/placement.** Tick clients pick the target at the start of the tick with the
@@ -658,6 +664,15 @@ cat data/digests/digest-*.jsonl | jq -s 'map(select(.check == "scaffold.cursor" 
   clicks (actions in the same tick share R0 and R1); at `speed` `>=0.4` or `none` at the eye path (the eye
   between two positions, or no previous position); at `face` `up` at pillaring rather than bridging;
   `action` tells the first click (`start`) from the break (`finish`).
+- A rate that rises at `gap` `>=1000` (and `250-1000`) has three usual readings, told apart by the
+  histogram and by how the failures spread over cells. The players who place or dig rarely are not the
+  ones who bridge: automation clients (a block a second or slower, tens of degrees off, `turn` `0`) and
+  modules that place now and then fill the slow buckets, with failures far past the threshold in a few
+  cells. The first action after a pause from plugins before the catch-up of 2.1 lacks its previous
+  position: `scaffold.cursor` 3-10 degrees and `scaffold.ray` under 2, with `speed` `none`, spread thin
+  over many cells. A rise on one protocol only points at that client or its translation. `dig.ray` shares
+  R0, R1, the 100 ms wait, the skips and the eye candidates with the scaffold checks: a rise there too
+  points at that shared machinery, a rise in the scaffold checks alone at what is placed and who places it.
 - `cursor_only / failures` near 1: the look ray met the clicked block, so eye and rotation were right, but
   the click position lies off every look ray: the cursor was not computed on that ray (a client or
   translation layer that rewrites it, a cursor relative to a block other than the clicked one, a made-up

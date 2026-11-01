@@ -16,6 +16,7 @@ import dev.pandascript.pandaeye.protocol.v1.Attack;
 import dev.pandascript.pandaeye.protocol.v1.BlockDig;
 import dev.pandascript.pandaeye.protocol.v1.BlockPlace;
 import dev.pandascript.pandaeye.protocol.v1.EnvFlag;
+import dev.pandascript.pandaeye.protocol.v1.Event;
 import dev.pandascript.pandaeye.protocol.v1.Face;
 import dev.pandascript.pandaeye.protocol.v1.GameMode;
 import dev.pandascript.pandaeye.protocol.v1.Hand;
@@ -42,6 +43,12 @@ public final class SessionTelemetry implements SessionEvents {
     private static final long FLAG_FOCUS_NANOS = 30 * SECOND;
     private static final long TARGET_HISTORY_MICROS = 1_500_000;
     private static final int MAX_TARGET_HISTORY = 64;
+    /**
+     * Movement packets the idle sampling held back that an action sends first (catchUp): the eye of an
+     * attack, placement or dig lies on the path from the position before the last one (CHECKS 2.1), and 4
+     * packets cover the last two positions of a moving player (one movement packet per tick).
+     */
+    static final int HELD_MOVES = 4;
 
     private final Telemetry telemetry;
     private final Session session;
@@ -53,6 +60,14 @@ public final class SessionTelemetry implements SessionEvents {
     private int tickAtLastSent;
     private int packetsSinceSent;
     private StateChange lastState;
+    // The newest held-back moves since the last sent MoveSample, oldest first, with the tick and the
+    // packetsSinceSent count at each.
+    private final Move[] held = new Move[HELD_MOVES];
+    private final int[] heldTick = new int[HELD_MOVES];
+    private final int[] heldPackets = new int[HELD_MOVES];
+    private int heldCount;
+    /** Time of the newest event this class offered: the cloud drops a player's events older than that. */
+    private long lastOffered = Long.MIN_VALUE;
 
     SessionTelemetry(Telemetry telemetry, Session session) {
         this.telemetry = telemetry;
@@ -63,6 +78,7 @@ public final class SessionTelemetry implements SessionEvents {
     public void joined(long nanos) {
         publish();
         telemetry.playerJoin(session, false, nanos);
+        offered(nanos);
         lastState = null;
         stateChanged(nanos);
     }
@@ -77,6 +93,7 @@ public final class SessionTelemetry implements SessionEvents {
         if (!change.equals(lastState)) {
             lastState = change;
             telemetry.sendState(session, change, nanos);
+            offered(nanos);
         }
     }
 
@@ -94,14 +111,56 @@ public final class SessionTelemetry implements SessionEvents {
         boolean focus = inFocus(nanos);
         long idlePeriod = (long) (SECOND / telemetry.config().telemetry().idleSampleHz());
         if (!focus && lastMoveSent != Long.MIN_VALUE && nanos - lastMoveSent < idlePeriod) {
+            hold(move, state.tick());
             return;
         }
         int ticks = lastMoveSent == Long.MIN_VALUE ? 0 : Math.max(0, state.tick() - tickAtLastSent);
-        telemetry.offer(telemetry.event(session, nanos, state.tick())
+        offer(nanos, telemetry.event(session, nanos, state.tick())
                 .setMove(Telemetry.moveSample(move, ticks, packetsSinceSent, focus)).build());
         lastMoveSent = nanos;
         tickAtLastSent = state.tick();
         packetsSinceSent = 0;
+        heldCount = 0;
+    }
+
+    /** Keeps a move the idle sampling did not send (the newest {@link #HELD_MOVES}). */
+    private void hold(Move move, int tick) {
+        if (heldCount == HELD_MOVES) {
+            System.arraycopy(held, 1, held, 0, HELD_MOVES - 1);
+            System.arraycopy(heldTick, 1, heldTick, 0, HELD_MOVES - 1);
+            System.arraycopy(heldPackets, 1, heldPackets, 0, HELD_MOVES - 1);
+            heldCount--;
+        }
+        held[heldCount] = move;
+        heldTick[heldCount] = tick;
+        heldPackets[heldCount] = packetsSinceSent;
+        heldCount++;
+    }
+
+    /**
+     * Before an attack, placement or dig: sends the moves the idle sampling held back, with the tick and
+     * packet counts they would have had, so the cloud judges the first action after a pause from the same
+     * recent movement as an action in focus (without them the cloud's last position is up to 1 / idle-sample-hz
+     * old, the eye path of CHECKS 2.1 is missing, and a moving player's click looks off by up to a tick of
+     * movement). Moves older than an event already offered are left out: the cloud would drop them as stale.
+     */
+    private void catchUp() {
+        int consumed = 0;
+        for (int i = 0; i < heldCount; i++) {
+            Move move = held[i];
+            held[i] = null;
+            if (move.nanos() < lastOffered) {
+                continue;
+            }
+            int ticks = Math.max(0, heldTick[i] - tickAtLastSent);
+            offer(move.nanos(), telemetry.event(session, move.nanos(), heldTick[i])
+                    .setMove(Telemetry.moveSample(move, ticks, heldPackets[i] - consumed, false)).build());
+            lastMoveSent = move.nanos();
+            tickAtLastSent = heldTick[i];
+            consumed = heldPackets[i];
+        }
+        packetsSinceSent -= consumed;
+        heldCount = 0;
     }
 
     @Override
@@ -114,6 +173,7 @@ public final class SessionTelemetry implements SessionEvents {
         if (!telemetry.enabled() || telemetry.limited(session)) {
             return;
         }
+        catchUp();
         PacketState state = session.state();
         double scale = attribute(AttributeTracker.SCALE, 1);
         double eyeHeight = eyeHeight(state) * scale;
@@ -146,13 +206,13 @@ public final class SessionTelemetry implements SessionEvents {
                         .setX(entry.x()).setY(entry.y()).setZ(entry.z()));
             }
         }
-        telemetry.offer(telemetry.event(session, nanos, state.tick()).setAttack(attack).build());
+        offer(nanos, telemetry.event(session, nanos, state.tick()).setAttack(attack).build());
     }
 
     @Override
     public void swing(long nanos, int hand) {
         if (enabled()) {
-            telemetry.offer(telemetry.event(session, nanos, session.state().tick())
+            offer(nanos, telemetry.event(session, nanos, session.state().tick())
                     .setSwing(Swing.newBuilder().setHand(hand(hand))).build());
         }
     }
@@ -164,9 +224,10 @@ public final class SessionTelemetry implements SessionEvents {
         if (!enabled()) {
             return;
         }
+        catchUp();
         PacketState state = session.state();
         double eye = eyeHeight(state) * attribute(AttributeTracker.SCALE, 1);
-        telemetry.offer(telemetry.event(session, nanos, state.tick()).setPlace(BlockPlace.newBuilder()
+        offer(nanos, telemetry.event(session, nanos, state.tick()).setPlace(BlockPlace.newBuilder()
                 .setBlock(Vec3i.newBuilder().setX(x).setY(y).setZ(z))
                 .setFace(face(face))
                 .setCursorX(cursorX).setCursorY(cursorY).setCursorZ(cursorZ)
@@ -193,10 +254,11 @@ public final class SessionTelemetry implements SessionEvents {
         if (!enabled()) {
             return;
         }
+        catchUp();
         PacketState state = session.state();
         double eye = eyeHeight(state) * attribute(AttributeTracker.SCALE, 1);
         int ticks = start == null ? 0 : Math.max(0, state.tick() - start.tick());
-        telemetry.offer(telemetry.event(session, nanos, state.tick()).setDig(BlockDig.newBuilder()
+        offer(nanos, telemetry.event(session, nanos, state.tick()).setDig(BlockDig.newBuilder()
                 .setAction(wire)
                 .setBlock(Vec3i.newBuilder().setX(x).setY(y).setZ(z))
                 .setFace(face(face))
@@ -214,7 +276,7 @@ public final class SessionTelemetry implements SessionEvents {
         }
         PacketState state = session.state();
         boolean open = windowId != 0 && windowId == state.containers().openId();
-        telemetry.offer(telemetry.event(session, nanos, state.tick()).setClick(InventoryClick.newBuilder()
+        offer(nanos, telemetry.event(session, nanos, state.tick()).setClick(InventoryClick.newBuilder()
                 .setWindowId(windowId).setSlot(slot).setButton(button).setMode(mode)
                 .setContainerOpen(open)
                 .setContainerType(open ? state.containers().openType() : "")).build());
@@ -223,7 +285,7 @@ public final class SessionTelemetry implements SessionEvents {
     @Override
     public void useItem(long nanos, int hand) {
         if (enabled()) {
-            telemetry.offer(telemetry.event(session, nanos, session.state().tick())
+            offer(nanos, telemetry.event(session, nanos, session.state().tick())
                     .setUseItem(UseItem.newBuilder().setHand(hand(hand))).build());
         }
     }
@@ -236,7 +298,7 @@ public final class SessionTelemetry implements SessionEvents {
         }
         PacketState state = session.state();
         Move before = state.moves().get(0);
-        telemetry.offer(telemetry.event(session, nanos, state.tick()).setVelocity(VelocityApplied.newBuilder()
+        offer(nanos, telemetry.event(session, nanos, state.tick()).setVelocity(VelocityApplied.newBuilder()
                 .setSource(source == VelocityTracker.Source.EXPLOSION
                         ? VelocityApplied.Source.SOURCE_EXPLOSION : VelocityApplied.Source.SOURCE_VELOCITY_PACKET)
                 .setVx(vx).setVy(vy).setVz(vz)
@@ -249,7 +311,7 @@ public final class SessionTelemetry implements SessionEvents {
         if (!enabled() || (reply.matched() && reply.injected())) {
             return;
         }
-        telemetry.offer(telemetry.event(session, nanos, session.state().tick()).setLatency(LatencySample.newBuilder()
+        offer(nanos, telemetry.event(session, nanos, session.state().tick()).setLatency(LatencySample.newBuilder()
                 .setKind(pong ? LatencySample.Kind.KIND_PONG : LatencySample.Kind.KIND_KEEPALIVE)
                 .setRttUs((int) Math.min(Integer.MAX_VALUE, reply.rttNanos() / 1_000))
                 .setUnmatched(!reply.matched())).build());
@@ -258,7 +320,7 @@ public final class SessionTelemetry implements SessionEvents {
     @Override
     public void teleport(long nanos, TeleportTracker.Pending teleport, boolean confirmed) {
         if (enabled()) {
-            telemetry.offer(telemetry.event(session, nanos, session.state().tick())
+            offer(nanos, telemetry.event(session, nanos, session.state().tick())
                     .setTeleport(TeleportApplied.newBuilder().setTeleportId(teleport.id())
                             .setX(teleport.x()).setY(teleport.y()).setZ(teleport.z())
                             .setConfirmed(confirmed)).build());
@@ -268,10 +330,20 @@ public final class SessionTelemetry implements SessionEvents {
     @Override
     public void brand(long nanos, String brand) {
         telemetry.playerJoin(session, true, nanos);
+        offered(nanos);
     }
 
     private boolean enabled() {
         return telemetry.enabled() && !telemetry.limited(session);
+    }
+
+    private void offer(long nanos, Event event) {
+        offered(nanos);
+        telemetry.offer(event);
+    }
+
+    private void offered(long nanos) {
+        lastOffered = Math.max(lastOffered, nanos);
     }
 
     private boolean inFocus(long now) {

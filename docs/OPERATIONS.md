@@ -482,7 +482,10 @@ From the smallest to the largest blast radius:
    data with `pandaeye replay --tenant <t> --player <uuid> --since <t0> --until <t1>` (events are kept for
    `PE_EVENTS_MAX_AGE`); compare client versions and brands in the sessions telemetry. Without evidence
    access, the check-health digest ([CHECKS.md 5](CHECKS.md#5-check-health-digest)) shows on which servers,
-   clients, poses and pings a check fails.
+   clients, poses and pings a check fails. Compare digest hours of one plugin version: the digest has no
+   plugin-version dimension, and a plugin update can change what the cloud judges from (since the plugin
+   sends the movement it held back before an attack, placement or dig, CHECKS 2.1, the first action after
+   a pause has its previous positions, and `scaffold.cursor` fails less at `gap` `>=1000`).
 4. **Remediate**: overturn every wrongful verdict (`POST /api/v1/verdicts/{id}/overturn`, staff or an API
    key with `verdicts:write`). Overturn labels the player `legit` for the window (which also blocks
    KICK/BAN from that window), removes reputation contributions, sends UNMITIGATE to the open session and,
