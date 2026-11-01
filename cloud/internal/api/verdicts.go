@@ -155,15 +155,23 @@ type decision struct {
 	principal string // the overturned ban's overturned_by: "user:<name>", "apikey:<id>" or "litebans"
 	note      string
 	source    string // the label source; "" = staff (confirmed / overturned)
+	unban     bool   // an overturn lifts an executed BAN (UNBAN to its server, ban record closed)
 }
 
 func staffDecision(principal, note string) decision {
-	return decision{by: store.DecidedByStaff, principal: principal, note: note}
+	return decision{by: store.DecidedByStaff, principal: principal, note: note, unban: true}
 }
+
+// liteBansUnbanMaxAge is how late a wrongful unban may reach the cloud and still lift an executed BAN.
+// A later one (a backfill, a long outage) does not run the unban command, which lifts whatever ban the
+// player has by then; LiteBans already lifted the ban it is about.
+const liteBansUnbanMaxAge = 15 * time.Minute
 
 // liteBansDecision is the decision of a LiteBans label; its note (on an overturned ban) names the ban.
 func liteBansDecision(m *store.ModerationLabel) decision {
-	return decision{by: store.DecidedByLiteBans, principal: liteBansPrincipal, note: "LiteBans ban #" + m.EntryID, source: store.SourceLiteBans}
+	fresh := !m.RemovedAt.IsZero() && m.ReceivedAt.Sub(m.RemovedAt) <= liteBansUnbanMaxAge
+	return decision{by: store.DecidedByLiteBans, principal: liteBansPrincipal, note: "LiteBans ban #" + m.EntryID, source: store.SourceLiteBans,
+		unban: fresh}
 }
 
 // labelSource is the source of the cheat or legit label the decision writes.
@@ -252,8 +260,8 @@ func (o overturnResult) detail(note string) map[string]any {
 
 // overturn marks v overturned by d (idempotent: a retry completes what a failed attempt left), labels
 // the player legit for the signal window, removes v's reputation contribution and its cheat label,
-// sends an UNBAN to the server that executed v's ban (if it was executed) and always an UNMITIGATE
-// to the player's open session. store.ErrConflict when d is a label's and staff decided v.
+// sends an UNBAN to the server that executed v's ban (if it was executed and d.unban) and always an
+// UNMITIGATE to the player's open session. store.ErrConflict when d is a label's and staff decided v.
 func (s *Service) overturn(ctx context.Context, v *store.Verdict, d decision, now time.Time) (overturnResult, error) {
 	var res overturnResult
 	if corrective(v.Action) {
@@ -277,7 +285,7 @@ func (s *Service) overturn(ctx context.Context, v *store.Verdict, d decision, no
 	}
 	res.ReputationRemoved = n
 
-	if v.Action == pb.Action_ACTION_BAN {
+	if v.Action == pb.Action_ACTION_BAN && d.unban {
 		ban, err := s.d.Store.GetBan(ctx, v.TenantID, v.ID)
 		switch {
 		case errors.Is(err, store.ErrNotFound):

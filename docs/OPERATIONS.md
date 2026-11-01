@@ -684,8 +684,9 @@ and wrongful unban once, whichever proxy or backend sent it:
 
 - A cheat ban confirms the player's verdicts of the `PE_LABELS_LOOKBACK` (7 d) before it, shadow ones
   included, as a staff confirm would (status, `litebans` cheat label, reputation if eligible); a wrongful unban
-  overturns them as a staff overturn would, so an executed BAN gets its UNBAN and the open session an
-  UNMITIGATE. Without such a verdict the player is labelled over the `PE_LABELS_WINDOW` (2 h) before the ban
+  overturns them as a staff overturn would, so the open session gets an UNMITIGATE and an executed BAN its
+  UNBAN, the latter only when the unban reached the cloud within 15 min (a backfilled or late one never runs
+  the `unban-command`, which would lift a newer ban; staff overturning the verdict lift it). Without such a verdict the player is labelled over the `PE_LABELS_WINDOW` (2 h) before the ban
   (`litebans_unflagged`, missed cheaters for recall and ML). The wrongful unban replaces the ban's cheat
   labels. A staff decision on the dashboard (or with an API key) always wins: LiteBans never changes a
   verdict staff confirmed or overturned, and staff can take over one LiteBans decided (confirm it again, or

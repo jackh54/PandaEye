@@ -320,6 +320,55 @@ func TestLiteBansOrderAndIntervals(t *testing.T) {
 	}
 }
 
+// A wrongful unban that reaches the cloud late (a backfill after an outage or on first install) still
+// overturns, but runs no unban command: the player may have a newer ban by then, which it would lift.
+func TestLiteBansLateUnbanLiftsNoBan(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx := context.Background()
+	e.connect(tenantA, srv1, stream.ConnectionInfo{Platform: pb.Platform_PLATFORM_PAPER})
+	ban := fixedNow.Add(-time.Hour)
+	e.applyLabel(cheatBan(player1, 4521, ban))
+	late := wrongfulUnban(player1, 4521, ban)
+	late.RemovedAt = fixedNow.Add(-liteBansUnbanMaxAge - time.Minute)
+	e.applyLabel(late)
+
+	for _, id := range []string{vBan, vAlert} {
+		wantDecision(t, e, id, store.StatusOverturned, store.DecidedByLiteBans)
+		if _, err := e.d.Store.GetVerdict(ctx, tenantA, identity.DerivedVerdictID(id, int32(pb.Action_ACTION_UNMITIGATE))); err != nil {
+			t.Fatalf("no UNMITIGATE for %s: %v", id, err)
+		}
+	}
+	if ls := playerLabels(t, e, tenantA, player1); len(ls) != 2 || ls[vBan+"/legit"].Source != store.SourceLiteBans {
+		t.Fatalf("labels %v", ls)
+	}
+	if _, err := e.d.Store.GetVerdict(ctx, tenantA, identity.DerivedVerdictID(vBan, int32(pb.Action_ACTION_UNBAN))); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("late unban issued an UNBAN: %v", err)
+	}
+	if b, err := e.d.Store.GetBan(ctx, tenantA, vBan); err != nil || !b.Active || b.UnbanVerdictID != "" {
+		t.Fatalf("ban %+v %v", b, err)
+	}
+	// A staff overturn still lifts it.
+	e.must(200, "POST", "/api/v1/verdicts/"+vBan+"/overturn", nil, as(tenantA, "staff"))
+	if b, _ := e.d.Store.GetBan(ctx, tenantA, vBan); b.Active || b.UnbanVerdictID == "" {
+		t.Fatalf("ban after the staff overturn %+v", b)
+	}
+
+	for _, c := range []struct {
+		removed time.Duration // before receipt; -1 = unknown
+		unban   bool
+	}{{0, true}, {liteBansUnbanMaxAge, true}, {liteBansUnbanMaxAge + time.Second, false}, {-1, false}, {-time.Minute, true}} {
+		m := wrongfulUnban(player1, 1, ban)
+		m.ReceivedAt, m.RemovedAt = fixedNow, fixedNow.Add(-c.removed)
+		if c.removed == -1 {
+			m.RemovedAt = time.Time{}
+		}
+		if got := liteBansDecision(m).unban; got != c.unban {
+			t.Errorf("removed %v before receipt: unban %v, want %v", c.removed, got, c.unban)
+		}
+	}
+}
+
 // The wrongful unban also removes the cheat labels the ban wrote for verdicts purged since.
 func TestLiteBansUnbanSupersedesLabelsOfPurgedVerdicts(t *testing.T) {
 	e := newEnv(t)

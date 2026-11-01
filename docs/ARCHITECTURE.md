@@ -843,7 +843,10 @@ decision `litebans` (`verdicts.decided_by`), audit principal `litebans`:
   resend them with every backfill, after the tombstone is gone too (5.13).
 - wrongful unban: the entry's cheat labels are deleted (`litebans_unflagged`, and `litebans` labels whose
   window ends in the lookback), then those verdicts are overturned (legit label, UNBAN of an executed BAN,
-  UNMITIGATE); without one, a `litebans_unflagged` legit label over the same window.
+  UNMITIGATE); without one, a `litebans_unflagged` legit label over the same window. The UNBAN only when the
+  unban reached the cloud within 15 min of its removal time: a later one (backfill, outage, unknown removal
+  time) must not run the unban command, which would lift any newer ban of the player; the ban record stays
+  active until staff overturn the verdict.
 - A label never changes a verdict staff decided (`DecideVerdict` refuses it); a staff confirm or overturn
   takes over a LiteBans decision and its label. Overturned verdicts stay overturned (no confirm afterwards).
 - Agreement (`GET /api/v1/stats/litebans`, and a daily `litebans agreement` log line per tenant with data):
