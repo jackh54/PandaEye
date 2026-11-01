@@ -38,6 +38,9 @@ func TestSizeReport(t *testing.T) {
 			if r.Bytes <= 0 || r.FreeBytes < 0 || r.FreeBytes > r.Bytes {
 				t.Fatalf("bytes %d, free %d", r.Bytes, r.FreeBytes)
 			}
+			if (name == "sqlite") != (r.WALBytes > 0) {
+				t.Fatalf("wal bytes %d", r.WALBytes)
+			}
 			if r.Rows["tenants"] != 1 || r.Rows["players"] != 3 || r.Rows["verdicts"] != 0 || r.Rows["schema_migrations"] < 1 {
 				t.Fatalf("rows %v", r.Rows)
 			}
@@ -61,7 +64,8 @@ func TestSizeReport(t *testing.T) {
 	}
 }
 
-// Deleted rows show up as free pages in a sqlite file, which keeps its size.
+// Deleted rows show up as free pages in a sqlite file, which keeps its size; a checkpoint empties
+// the -wal file.
 func TestSizeReportFreePages(t *testing.T) {
 	ctx := context.Background()
 	s := openSQLiteTest(t)
@@ -80,20 +84,22 @@ func TestSizeReportFreePages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.Rows["audit_log"] != 32 || before.TableBytes["audit_log"] < 32*64<<10 {
-		t.Fatalf("audit_log: %d rows, %d bytes", before.Rows["audit_log"], before.TableBytes["audit_log"])
+	if before.Rows["audit_log"] != 32 || before.TableBytes["audit_log"] < 32*64<<10 || before.WALBytes <= 0 {
+		t.Fatalf("audit_log: %d rows, %d bytes, wal %d", before.Rows["audit_log"], before.TableBytes["audit_log"], before.WALBytes)
 	}
 	if _, err := s.PurgeAudit(ctx, tenant, t0.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.w.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-		t.Fatal(err)
+	var busy, frames, done int
+	if err := s.w.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &done); err != nil || busy != 0 {
+		t.Fatalf("checkpoint: busy %d, %v", busy, err)
 	}
 	after, err := s.SizeReport(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Rows["audit_log"] != 0 || after.Bytes != before.Bytes || after.FreeBytes < 32*64<<10 {
-		t.Fatalf("after purge: %d rows, %d bytes, %d free (before %d bytes)", after.Rows["audit_log"], after.Bytes, after.FreeBytes, before.Bytes)
+	if after.Rows["audit_log"] != 0 || after.Bytes != before.Bytes || after.FreeBytes < 32*64<<10 || after.WALBytes != 0 {
+		t.Fatalf("after purge: %d rows, %d bytes, %d free, wal %d (before %d bytes)", after.Rows["audit_log"], after.Bytes, after.FreeBytes,
+			after.WALBytes, before.Bytes)
 	}
 }

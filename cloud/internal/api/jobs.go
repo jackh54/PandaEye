@@ -237,7 +237,7 @@ func (s *Service) logStoreSize(ctx context.Context) {
 		}
 		return
 	}
-	s.log.Info("store size", "bytes", r.Bytes, "free_bytes", r.FreeBytes, "rows", r.Rows, "table_bytes", r.TableBytes)
+	s.log.Info("store size", "bytes", r.Bytes, "free_bytes", r.FreeBytes, "wal_bytes", r.WALBytes, "rows", r.Rows, "table_bytes", r.TableBytes)
 }
 
 func (s *Service) ensureTombstone(ctx context.Context, tenantID string, e store.Erasure) error {

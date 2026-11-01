@@ -705,8 +705,9 @@ Logs are JSON lines on stdout. These lines carry diagnostics without personal da
   `error_message` are the ones sent. `reason` is the `reason` label of
   `pandaeye_gateway_connections_closed_total`.
 - `store size` (api, info, once a day after the janitor): the database `bytes`, `free_bytes` (sqlite:
-  pages freed by deletions, reused before the file grows) and per table `rows` and `table_bytes` (with its
-  indexes). Two days' lines show which table grows.
+  pages freed by deletions, reused before the file grows), `wal_bytes` (sqlite: the `-wal` file, reused but
+  not shrunk after a checkpoint) and per table `rows` and `table_bytes` (with its indexes). Two days'
+  lines show which table grows.
 
 ## 10. Security checklist
 

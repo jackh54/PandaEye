@@ -2,6 +2,7 @@ package sqlstore
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	"github.com/jackh54/PandaEye/cloud/internal/store"
@@ -19,9 +20,9 @@ func (s *Store) Size(ctx context.Context) (int64, error) {
 	return n, mapErr(err)
 }
 
-// SizeReport returns the database size and the rows and bytes of every table (the janitor logs it
-// daily). Table bytes include the indexes (sqlite: the dbstat table, left out if the library lacks
-// it; postgres: pg_total_relation_size).
+// SizeReport returns the database size (sqlite: with its free pages and -wal file) and the rows and
+// bytes of every table (the janitor logs it daily). Table bytes include the indexes (sqlite: the
+// dbstat table, left out if the library lacks it; postgres: pg_total_relation_size).
 func (s *Store) SizeReport(ctx context.Context) (store.SizeReport, error) {
 	var r store.SizeReport
 	var err error
@@ -49,6 +50,14 @@ func (s *Store) SizeReport(ctx context.Context) (store.SizeReport, error) {
 	}
 	if err := s.r.QueryRowContext(ctx, `SELECT freelist_count * page_size FROM pragma_freelist_count(), pragma_page_size()`).Scan(&r.FreeBytes); err != nil {
 		return r, mapErr(err)
+	}
+	// The -wal file is on the disk too, outside page_count.
+	var file string
+	if err := s.r.QueryRowContext(ctx, `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&file); err != nil {
+		return r, mapErr(err)
+	}
+	if fi, err := os.Stat(file + "-wal"); err == nil {
+		r.WALBytes = fi.Size()
 	}
 	r.TableBytes, _ = s.named(ctx, `SELECT m.tbl_name, sum(d.pgsize) FROM dbstat d JOIN sqlite_master m ON m.name = d.name GROUP BY m.tbl_name`)
 	return r, nil

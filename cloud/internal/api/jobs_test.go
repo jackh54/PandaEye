@@ -219,11 +219,12 @@ func TestJanitor(t *testing.T) {
 	var size struct {
 		Level      string           `json:"level"`
 		Bytes      int64            `json:"bytes"`
+		WALBytes   *int64           `json:"wal_bytes"`
 		Rows       map[string]int64 `json:"rows"`
 		TableBytes map[string]int64 `json:"table_bytes"`
 	}
 	check(t, json.Unmarshal([]byte(line), &size))
-	if size.Level != "INFO" || size.Bytes <= 0 || size.Rows["tenants"] != 3 || size.Rows["verdicts"] != 1 || size.Rows["audit_log"] != 1 ||
+	if size.Level != "INFO" || size.Bytes <= 0 || size.WALBytes == nil || size.Rows["tenants"] != 3 || size.Rows["verdicts"] != 1 || size.Rows["audit_log"] != 1 ||
 		size.TableBytes["verdicts"] <= 0 {
 		t.Errorf("store size line: %s", line)
 	}
