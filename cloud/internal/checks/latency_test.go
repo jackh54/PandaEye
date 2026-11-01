@@ -82,6 +82,8 @@ func TestPingspoofCheatDelayedKeepAlives(t *testing.T) {
 type netPath struct {
 	oneWayS   float64
 	loss, rto float64      // per packet and direction; a lost packet is retransmitted after rto seconds
+	lossy     [][2]float64 // spans with burstLoss instead of loss (Wi-Fi interference)
+	burstLoss float64
 	stalls    [][2]float64 // delivery stopped (proxy event loop, network): the backlog arrives at the end
 	freezes   [][2]float64 // the client's main thread is frozen in pollEvents
 	kaHold    func(sendS float64) float64
@@ -114,15 +116,19 @@ func netPlay(r *rig, seconds, kaEvery, pingEvery float64, path netPath) {
 		trips = append(trips, &trip{kind: pb.LatencySample_KIND_PONG, sent: at})
 	}
 	sort.SliceStable(trips, func(i, j int) bool { return trips[i].sent < trips[j].sent })
-	lost := func() float64 {
-		if rng.Float64() < path.loss {
+	lost := func(at float64) float64 {
+		p := path.loss
+		if _, ok := inSpan(path.lossy, at); ok {
+			p = path.burstLoss
+		}
+		if rng.Float64() < p {
 			return path.rto
 		}
 		return 0
 	}
 	var down, mainThread float64
 	for _, tr := range trips {
-		at := tr.sent + path.oneWayS + lost()
+		at := tr.sent + path.oneWayS + lost(tr.sent)
 		if s, ok := inSpan(path.stalls, at); ok {
 			at = s[1]
 		}
@@ -148,7 +154,7 @@ func netPlay(r *rig, seconds, kaEvery, pingEvery float64, path netPath) {
 	sort.SliceStable(trips, func(i, j int) bool { return trips[i].answer < trips[j].answer })
 	var up float64
 	for _, tr := range trips {
-		up = max(up, tr.answer+path.oneWayS+lost())
+		up = max(up, tr.answer+path.oneWayS+lost(tr.answer))
 		tr.back = up
 	}
 	sort.SliceStable(trips, func(i, j int) bool { return trips[i].back < trips[j].back })
@@ -270,6 +276,78 @@ func TestPingspoofCheatHeldKeepAlives(t *testing.T) {
 	})
 }
 
+// everyTwoMinutes returns one span of d seconds every 2 minutes, starting at second 20.
+func everyTwoMinutes(seconds, d float64) [][2]float64 {
+	var out [][2]float64
+	for s := 20.0; s < seconds; s += 120 {
+		out = append(out, [2]float64{s, s + d})
+	}
+	return out
+}
+
+func TestPingspoofLegitLossyLink(t *testing.T) {
+	// A lost packet is retransmitted after 200+ ms and holds back the packets behind it: the keep-alive
+	// replies it hits are in excess of the pongs sent around them. At Paper's cadence "3 of the last 4"
+	// judged 3 s of play, so three hits in a row were a violation (5% loss: 5-26 per hour).
+	cases := []struct {
+		name      string
+		pingEvery float64
+		path      netPath
+	}{
+		{"5% loss, 20 pings per second", 0.05, netPath{oneWayS: 0.03, loss: 0.05, rto: 0.25}},
+		{"5% loss, a ping per second", 1, netPath{oneWayS: 0.03, loss: 0.05, rto: 0.25}},
+		{"10% loss, a ping per second", 1, netPath{oneWayS: 0.03, loss: 0.1, rto: 0.25}},
+		{"30 s of 30% loss every 2 minutes", 1, netPath{oneWayS: 0.03, loss: 0.01, rto: 0.25, lossy: everyTwoMinutes(3600, 30), burstLoss: 0.3}},
+	}
+	seconds := 3600.0
+	if testing.Short() {
+		seconds = 1200
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for seed := range uint64(2) {
+				c.path.seed = seed
+				if n := pingspoofCount(t, seconds, paperKeepAlive, c.pingEvery, c.path); n != 0 {
+					t.Fatalf("seed %d: %d emissions in %.0f min", seed, n, seconds/60)
+				}
+			}
+		})
+	}
+}
+
+func TestPingspoofCheatHeldOnBadLinks(t *testing.T) {
+	hold400 := func(float64) float64 { return 0.4 }
+	bursts := func(d float64) func(float64) float64 {
+		spans := everyTwoMinutes(600, d)
+		return func(sent float64) float64 {
+			if _, ok := inSpan(spans, sent); ok {
+				return 0.4
+			}
+			return 0
+		}
+	}
+	cases := []struct {
+		name      string
+		pingEvery float64
+		path      netPath
+		want      int
+	}{
+		{"held 400 ms on a 5% lossy link", 0.05, netPath{oneWayS: 0.03, loss: 0.05, rto: 0.25, kaHold: hold400}, 10},
+		{"held 400 ms on a 5% lossy link, a ping per second", 1, netPath{oneWayS: 0.03, loss: 0.05, rto: 0.25, kaHold: hold400}, 10},
+		{"held 200 ms", 0.05, netPath{oneWayS: 0.03, kaHold: func(float64) float64 { return 0.2 }}, 10},
+		{"held 400 ms for 20 s every 2 minutes", 0.05, netPath{oneWayS: 0.03, kaHold: bursts(20)}, 5},
+		{"held 400 ms for 20 s every 2 minutes, a ping per second", 1, netPath{oneWayS: 0.03, kaHold: bursts(20)}, 5},
+		{"held 400 ms for 30 s every 2 minutes on a 5% lossy link", 0.05, netPath{oneWayS: 0.03, loss: 0.05, rto: 0.25, kaHold: bursts(30)}, 5},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if n := pingspoofCount(t, 600, paperKeepAlive, c.pingEvery, c.path); n != c.want {
+				t.Fatalf("%d emissions in 10 min, want %d", n, c.want)
+			}
+		})
+	}
+}
+
 func TestPingspoofNotJudged(t *testing.T) {
 	t.Run("unmatched", func(t *testing.T) {
 		r := newRig(t, rigProtocol)
@@ -303,6 +381,20 @@ func TestPingspoofNotJudged(t *testing.T) {
 		latencyTimeline(r, 50, constRTT(450), constRTT(50))
 		if es := r.run("latency"); len(es) != 0 {
 			t.Fatalf("%+v", es)
+		}
+	})
+	t.Run("keep-alives held for less than 20 s", func(t *testing.T) {
+		// The evidence must span 20 s of keep-alives (at Paper's cadence 16 of the last 21): a 10 s hold is
+		// too short, as a single held keep-alive is at the vanilla cadence.
+		spans := everyTwoMinutes(600, 10)
+		hold := func(sent float64) float64 {
+			if _, ok := inSpan(spans, sent); ok {
+				return 0.4
+			}
+			return 0
+		}
+		if n := pingspoofCount(t, 600, paperKeepAlive, 0.05, netPath{oneWayS: 0.03, kaHold: hold}); n != 0 {
+			t.Fatalf("%d emissions", n)
 		}
 	})
 }
