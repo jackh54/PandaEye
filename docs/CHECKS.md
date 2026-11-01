@@ -640,10 +640,14 @@ cat data/digests/digest-*.jsonl | jq -s 'map(select(.check == "scaffold.cursor" 
   | map(.share = (if .failures > 0 then .cursor_only / .failures else null end))'
 ```
 
-- A rate that depends on `brand` or `protocol` points at the client (a mod that changes the pick, a
-  ViaVersion translation); one that depends on `server_id` at the server (Folia, a plugin that rewrites
-  rotations or teleports); one that grows with `ping` at timing (R1 or the next move not found); one tied to
-  a `pose` at the eye heights.
+- A rate that depends on `brand` or `protocol` points at the client (a mod that changes the pick, the
+  translation: ViaVersion for clients newer than the server, ViaBackwards for older ones); one that depends
+  on `server_id` at the server (Folia, a plugin that rewrites rotations or teleports); one that grows with
+  `ping` at timing (R1 or the next move not found); one tied to a `pose` at the eye heights. Cells are not
+  players: a few players can supply most of a protocol's or a brand's failures. Before blaming a client
+  version or the translation, check that the difference holds within each brand family and in every hour;
+  an effect of the version or the translation does, the effect of a few players (or a rare mod) usually
+  does not.
 - `eye_path / evaluations` low where failures are high: moving players are judged without their
   interpolated eye. `rotations / evaluations` near 1 for tick clients: the same tick's movement packet (R1)
   is rarely found, or the players do not turn while they place.
