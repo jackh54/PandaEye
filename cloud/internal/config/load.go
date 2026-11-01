@@ -81,7 +81,7 @@ var fields = []field{
 	{"db.driver", DriverSQLite, str(func(c *Config) *string { return &c.DB.Driver })},
 	{"db.dsn", "./data/pandaeye.db", secret(func(c *Config) *identity.Secret { return &c.DB.DSN })},
 	{"db.backup.interval", "6h", func(c *Config, v string) (err error) { c.DB.BackupInterval, err = ParseDuration(v); return err }},
-	{"db.backup.keep", "8", integer(func(c *Config) *int { return &c.DB.BackupKeep })},
+	{"db.backup.keep", "4", integer(func(c *Config) *int { return &c.DB.BackupKeep })},
 	{"db.backup.dir", "", str(func(c *Config) *string { return &c.DB.BackupDir })},
 	{"clickhouse.dsn", "", secret(func(c *Config) *identity.Secret { return &c.ClickHouseDSN })},
 	{"features.dir", "", str(func(c *Config) *string { return &c.Features.Dir })},

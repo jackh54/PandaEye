@@ -127,7 +127,7 @@ it does not use.
 | `PE_PARTITIONS` | `16` | gateway, worker, verdict | partition count (1..1024), fixed at first start (KV `PE_META`); a mismatch refuses to start. Choose it for the largest worker count you expect (section 8.2) |
 | `PE_DB_DRIVER` | `sqlite` | all roles | `postgres` outside `all` (sqlite is accepted only for `all`, `migrate` and `replay`) |
 | `PE_DB_DSN` | `./data/pandaeye.db` | all roles | sqlite path or `postgres://...`; treated as a secret (may carry a password) |
-| `PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`, `PE_DB_BACKUP_DIR` | `6h`, `8`, `backups/` next to the database | all (sqlite only) | online sqlite backups (`VACUUM INTO`, a consistent copy while running) as `pandaeye-<UTC>.db`, the newest `KEEP` kept; interval `0` disables. Ignored for postgres |
+| `PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`, `PE_DB_BACKUP_DIR` | `6h`, `4`, `backups/` next to the database | all (sqlite only) | online sqlite backups (`VACUUM INTO`, a consistent copy while running), gzip-compressed as `pandaeye-<UTC>.db.gz`; the newest `KEEP` are kept (uncompressed `pandaeye-<UTC>.db` copies of earlier releases count towards it and are deleted first). A backup is skipped with a warning while the directory's file system has less than twice the database size free (at least 1 GiB); interval `0` disables. Ignored for postgres |
 | `PE_CLICKHOUSE_DSN` | empty | worker, verdict, api | `clickhouse://user:pass@host:9000/pandaeye`; empty disables telemetry. The user needs SELECT, INSERT and ALTER DELETE (erasure) |
 | `PE_FEATURES_DIR` | empty | all | records ML feature windows as hourly CSV files in this directory, for training without ClickHouse ([ml/README.md](../ml/README.md#feature-window-files-no-clickhouse)); empty disables it. Only in `all` (erasure reaches the files only when the api shares the worker's process) and not together with `PE_CLICKHOUSE_DSN`. Use a directory of its own outside the repository clone, e.g. `data/ml`. Unsetting it also stops retention and erasure for the files already there: delete the directory. Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_FEATURES_RETENTION`, `PE_FEATURES_MAX_BYTES` | `90d`, `20GiB` | all | files whose hour ended longer ago are deleted (at most `180d`), then the oldest files beyond the byte cap (checked hourly and after each hour's compression). Disk: about 170 B per window compressed (measured on synthetic data), at most 2 880 windows a day per concurrently tracked player, so at most about 0.5 MB per tracked player and day (73 MB a day for 150 concurrent players), plus the current hour uncompressed (about 700 B per window). Not in ARCHITECTURE 5.1 (implementation) |
@@ -395,7 +395,7 @@ What happens on a graceful stop (SIGTERM, completes within 10 s; give the runtim
 
 | Data | Where | Back up how | If lost |
 |---|---|---|---|
-| SQL store | Postgres (split) / sqlite (`all`) | Postgres PITR (WAL archiving) plus regular base backups; sqlite: built-in online backups every 6 h to `data/backups/` (`PE_DB_BACKUP_*`); copy that directory off the host, since a copy on the same disk does not survive losing it. Never copy the live `pandaeye.db` file itself | Tenants, servers (secret hashes), verdicts, bans, appeals, labels, clips, licence mappings, API keys, audit log. This is the source of truth |
+| SQL store | Postgres (split) / sqlite (`all`) | Postgres PITR (WAL archiving) plus regular base backups; sqlite: built-in online backups every 6 h to `data/backups/` (`PE_DB_BACKUP_*`, gzip, newest 4); copy that directory off the host, since a copy on the same disk does not survive losing it. Never copy the live `pandaeye.db` file itself | Tenants, servers (secret hashes), verdicts, bans, appeals, labels, clips, licence mappings, API keys, audit log. This is the source of truth |
 | Secrets | env files / secret manager | escrow outside the cluster | `PE_LICENSE_PEPPER`: every licence-to-tenant mapping is orphaned (tenants must be rebuilt by hand). `PE_OUTBOUND_KEY`: stored Discord webhooks become unreadable. In `all` both live in the database |
 | `PE_META` | NATS KV | record `partitions` and `partition_key` (`nats kv get PE_META partition_key`) after the first start | a new key re-partitions every player: same effects as 8.2 |
 | `PE_VERDICTS` | NATS | R3 replication; optionally `nats stream backup` | records not yet consumed by the store writer never reach the database |
@@ -407,7 +407,14 @@ What happens on a graceful stop (SIGTERM, completes within 10 s; give the runtim
 | NATS auth | `deploy/nats/auth/keys` | offline copy | re-issue every creds file (8.6) |
 
 Backups contain personal data and keep erased players' data until they expire: set a backup retention
-and state it in your privacy notice ([PRIVACY.md](PRIVACY.md) has a placeholder for it).
+and state it in your privacy notice ([PRIVACY.md](PRIVACY.md) has a placeholder for it). The built-in
+sqlite copies expire after about `PE_DB_BACKUP_INTERVAL` x `PE_DB_BACKUP_KEEP` (24 h by default);
+copies taken off the host need their own retention.
+
+Restore a single node (`all`, sqlite) from an online backup: stop the process, delete
+`data/pandaeye.db-wal` and `data/pandaeye.db-shm`, decompress the chosen copy over the database
+(`gunzip -c data/backups/pandaeye-<UTC>.db.gz > data/pandaeye.db`; a `.db` copy of an earlier release is
+copied as it is) and start. Everything written after the copy's time is lost.
 
 Restore after losing the region (or the NATS cluster):
 

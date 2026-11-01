@@ -116,7 +116,7 @@ type DB struct {
 
 	// Online sqlite backups (ignored for postgres, which has its own tooling).
 	BackupInterval time.Duration // PE_DB_BACKUP_INTERVAL (6h; 0 disables)
-	BackupKeep     int           // PE_DB_BACKUP_KEEP: newest copies kept (8)
+	BackupKeep     int           // PE_DB_BACKUP_KEEP: newest copies kept (4)
 	BackupDir      string        // PE_DB_BACKUP_DIR (default: "backups" next to the database file)
 }
 

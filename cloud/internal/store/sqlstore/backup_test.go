@@ -2,6 +2,7 @@ package sqlstore
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,6 +20,11 @@ func TestSQLiteOnlineBackupIsAReadableCopy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "copy.db")
 	if err := s.Backup(ctx, path); err != nil {
 		t.Fatal(err)
+	}
+	// The disk guard's estimate: a copy is no larger than Size.
+	size, err := s.Size(ctx)
+	if fi, serr := os.Stat(path); err != nil || serr != nil || size <= 0 || fi.Size() > size {
+		t.Fatalf("database size %d (%v), copy %v (%v)", size, err, fi, serr)
 	}
 	if err := s.Backup(ctx, path); err == nil {
 		t.Fatal("VACUUM INTO must refuse an existing file")
