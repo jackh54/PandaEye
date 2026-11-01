@@ -186,7 +186,7 @@ Column "events" names the wire events used. Units: `count` = number of items, `s
 | 87 | `inv_rotate_ticks` | count | tick: ticks in W counted by inventory.rotate | InventoryClick, MoveSample | - | 0 | [0, 600] |
 | 88 | `ping_median_ms` | ms | median `rtt_us / 1000` of LatencySample PONG with `unmatched == false` in W; if none, of KEEPALIVE samples in W | LatencySample | 1 | -1 | [0, 5000] |
 | 89 | `ping_jitter_ms` | ms | sd of the sample set used for ping_median_ms | LatencySample | 3 | -1 | [0, 5000] |
-| 90 | `ka_pong_delta_ms` | ms | median over keep-alive samples in W paired as in latency.pingspoof (CHECKS 2.14) of (keep-alive RTT - paired pong median) | LatencySample | 1 pair | 0 | [-1000, 5000] |
+| 90 | `ka_pong_delta_ms` | ms | median over keep-alive samples in W of (keep-alive RTT - median RTT of the pongs whose replies arrived within +-2 s of its reply). This is pairing by arrival, as latency.pingspoof paired before November 2026; the check now pairs by send time (CHECKS 2.14), the feature is unchanged | LatencySample | 1 pair | 0 | [-1000, 5000] |
 | 91 | `ka_paired_count` | count | keep-alive samples in W with a pong pairing | LatencySample | - | 0 | [0, 100] |
 | 92 | `gap_count` | count | tick: consecutive session events a, b (tick > 0) with `t_b` in W, `t_b - t_a > 500 ms`, `tick_b - tick_a <= 2` (the client tick counter stood still: the connection was silent), not overlapping a ServerStall | any with tick | - | 0 | [0, 60] |
 | 93 | `gap_burst_count` | count | tick: gaps as above where the last event c with `t_c <= t_b + 100 ms` has `tick_c - tick_b >= 10` (blink burst, latency.blink without its attack condition) | any with tick | - | 0 | [0, 60] |
