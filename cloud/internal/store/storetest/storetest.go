@@ -665,6 +665,29 @@ func testVerdictDecisions(t *testing.T, s store.Store) {
 	if ex, _, _ := s.ExportLabels(ctx, a, time.Time{}, store.Page{}); len(ex) != 4 {
 		t.Fatalf("labels left %d", len(ex))
 	}
+	// HasPlayerLabel: the player's label of that value and source over exactly that window.
+	unlabelled := uuid()
+	w0, w1 := t0.Add(-2*time.Hour), t0
+	check(t, s.InsertLabel(ctx, &store.Label{TenantID: a, PlayerUUID: player, Label: store.LabelCheat, Source: store.SourceLiteBansUnflagged,
+		WindowStart: w0, WindowEnd: w1}))
+	for _, c := range []struct {
+		name                          string
+		tenant, player, label, source string
+		from, to                      time.Time
+		want                          bool
+	}{
+		{"identical", a, player, store.LabelCheat, store.SourceLiteBansUnflagged, w0, w1, true},
+		{"other tenant", b, player, store.LabelCheat, store.SourceLiteBansUnflagged, w0, w1, false},
+		{"other player", a, unlabelled, store.LabelCheat, store.SourceLiteBansUnflagged, w0, w1, false},
+		{"other value", a, player, store.LabelLegit, store.SourceLiteBansUnflagged, w0, w1, false},
+		{"other source", a, player, store.LabelCheat, store.SourceLiteBans, w0, w1, false},
+		{"later start", a, player, store.LabelCheat, store.SourceLiteBansUnflagged, w0.Add(time.Microsecond), w1, false},
+		{"earlier end", a, player, store.LabelCheat, store.SourceLiteBansUnflagged, w0, w1.Add(-time.Microsecond), false},
+	} {
+		if got, err := s.HasPlayerLabel(ctx, c.tenant, c.player, c.label, c.source, c.from, c.to); err != nil || got != c.want {
+			t.Errorf("HasPlayerLabel %s: %v %v", c.name, got, err)
+		}
+	}
 }
 
 func moderation(tenant, entry, kind, player string, start time.Time) *store.ModerationLabel {

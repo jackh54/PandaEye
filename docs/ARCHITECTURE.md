@@ -851,6 +851,10 @@ endpoints, as decision `litebans` (`verdicts.decided_by`), audit principal `lite
   unban reached the cloud within 15 min of its removal time: a later one (backfill, outage, unknown removal
   time) must not run the unban command, which would lift any newer ban of the player; the ban record stays
   active until staff overturn the verdict.
+- A `litebans_unflagged` label is not written when the player already has the same one (value, source and
+  window): networks that share one LiteBans database under different network ids report every ban once per
+  network id, and the confirm and overturn are idempotent, but a second window label would count twice in
+  training.
 - A label never changes a verdict staff decided (`DecideVerdict` refuses it); a staff confirm or overturn
   takes over a LiteBans decision and its label. Overturned verdicts stay overturned (no confirm afterwards).
 - Agreement (`GET /api/v1/stats/litebans`, and a daily `litebans agreement` log line per tenant with data):

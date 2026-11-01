@@ -314,12 +314,20 @@ func (s *Service) applyWrongfulUnban(ctx context.Context, m *store.ModerationLab
 }
 
 // insertUnflaggedLabel labels the player over [ban start - window, ban start]: cheat for a ban, legit
-// for a wrongful unban (one label per network's entry and value).
+// for a wrongful unban (one label per network's entry and value). Networks that share one LiteBans
+// database under different network ids report each ban once per network id: an identical label of the
+// player (value, source and window) is not written again, as it would count twice in training.
 func (s *Service) insertUnflaggedLabel(ctx context.Context, m *store.ModerationLabel, now time.Time) error {
 	l := &store.Label{
 		ID:       uuid.NewSHA1(labelNamespace, []byte(m.TenantID+"|"+m.NetworkID+"|"+m.Source+":"+m.EntryID+"|"+m.Label)).String(),
 		TenantID: m.TenantID, PlayerUUID: m.PlayerUUID, Label: m.Label, Source: store.SourceLiteBansUnflagged,
 		WindowStart: m.BanStart.Add(-s.d.Config.Labels.Window), WindowEnd: m.BanStart, CreatedAt: now,
+	}
+	switch dup, err := s.d.Store.HasPlayerLabel(ctx, l.TenantID, l.PlayerUUID, l.Label, l.Source, l.WindowStart, l.WindowEnd); {
+	case err != nil:
+		return err
+	case dup:
+		return nil
 	}
 	err := s.d.Store.InsertLabel(ctx, l)
 	if errors.Is(err, store.ErrConflict) {

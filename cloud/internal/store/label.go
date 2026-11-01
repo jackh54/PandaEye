@@ -15,6 +15,9 @@ type LabelStore interface {
 	// DeletePlayerLabels deletes the player's labels of the given value and source whose window ends
 	// in [endFrom, endTo] (a wrongful unban superseding its ban's labels) and returns how many.
 	DeletePlayerLabels(ctx context.Context, tenantID, player, label, source string, endFrom, endTo time.Time) (int64, error)
+	// HasPlayerLabel reports whether the player has a label of the given value and source over exactly
+	// [windowStart, windowEnd] (a LiteBans ban reported under two network ids labels its window once).
+	HasPlayerLabel(ctx context.Context, tenantID, player, label, source string, windowStart, windowEnd time.Time) (bool, error)
 	// HasLegitCover reports whether the player has a legit label whose window overlaps [from, to] or
 	// an overturned verdict created within [from, to] (KICK/BAN guard, 5.6).
 	HasLegitCover(ctx context.Context, tenantID, player string, from, to time.Time) (bool, error)

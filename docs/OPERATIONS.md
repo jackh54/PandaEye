@@ -686,7 +686,10 @@ and wrongful unban once per network, whichever proxy or backend of the network s
   (servers without one count as one network). Networks of one tenant that share one LiteBans database should
   use the same `network-id`; networks with their own database and different `network-id`s are kept apart. Two
   networks with their own databases and the same (or no) `network-id` mix up their bans: give each its own
-  `network-id`, the same on its proxy and every backend (8.8).
+  `network-id`, the same on its proxy and every backend (8.8). Networks sharing one database under different
+  `network-id`s report every ban once per `network-id`: verdicts are decided once and the unflagged window
+  label is written once, but the agreement statistics count such a ban (and its wrongful unban) once per
+  `network-id`.
 - A cheat ban confirms the player's verdicts of the `PE_LABELS_LOOKBACK` (7 d) before it, shadow ones
   included, as a staff confirm would (status, `litebans` cheat label, reputation if eligible); a wrongful unban
   overturns them as a staff overturn would, so the open session gets an UNMITIGATE and an executed BAN its

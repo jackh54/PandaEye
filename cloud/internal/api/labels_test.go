@@ -514,6 +514,63 @@ func TestLiteBansNetworksKeepEntriesApart(t *testing.T) {
 	}
 }
 
+// unflaggedLabels counts the tenant's litebans_unflagged labels of player by value.
+func unflaggedLabels(t *testing.T, e *env, player string) map[string]int {
+	t.Helper()
+	ls, _, err := e.d.Store.ExportLabels(context.Background(), tenantA, time.Time{}, store.Page{Limit: 200})
+	check(t, err)
+	out := map[string]int{}
+	for _, l := range ls {
+		if l.PlayerUUID == player && l.Source == store.SourceLiteBansUnflagged {
+			out[l.Label.Label]++
+		}
+	}
+	return out
+}
+
+// Networks that share one LiteBans database under different network ids (a misconfiguration) report
+// every ban once per network id: the decisions are idempotent, and the unflagged window label of a ban
+// or wrongful unban is written once, so training does not count it twice.
+func TestLiteBansSharedDatabaseLabelsOnce(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx := context.Background()
+	ban := fixedNow.Add(-time.Hour)
+	networks := []string{"net-a", "net-b"}
+	for _, n := range networks {
+		e.applyLabel(inNetwork(cheatBan(playerMissed, 7, ban), n))
+		e.applyLabel(inNetwork(cheatBan(player1, 8, ban), n))
+	}
+	if got := unflaggedLabels(t, e, playerMissed); got[store.LabelCheat] != 1 || got[store.LabelLegit] != 0 {
+		t.Fatalf("unflagged labels after the ban from two network ids: %v", got)
+	}
+	for _, n := range networks {
+		row, err := e.d.Store.GetModerationLabel(ctx, tenantA, n, sourceLiteBans, "7", store.ModerationBanAdded)
+		if err != nil || row.AppliedAt.IsZero() {
+			t.Fatalf("%s: %+v %v", n, row, err)
+		}
+	}
+	// Confirming twice changes nothing (playerLabels fails on a duplicate).
+	if ls := playerLabels(t, e, tenantA, player1); len(ls) != 2 {
+		t.Fatalf("labels %v", ls)
+	}
+	wantDecision(t, e, vBan, store.StatusConfirmed, store.DecidedByLiteBans)
+	for _, n := range networks {
+		e.applyLabel(inNetwork(wrongfulUnban(playerMissed, 7, ban), n))
+	}
+	if got := unflaggedLabels(t, e, playerMissed); got[store.LabelCheat] != 0 || got[store.LabelLegit] != 1 {
+		t.Fatalf("unflagged labels after the unban from two network ids: %v", got)
+	}
+	// Interleaved: network B's ban arrives after network A's unban, then B's unban.
+	e.applyLabel(inNetwork(cheatBan(playerOther, 9, ban), "net-a"))
+	e.applyLabel(inNetwork(wrongfulUnban(playerOther, 9, ban), "net-a"))
+	e.applyLabel(inNetwork(cheatBan(playerOther, 9, ban), "net-b"))
+	e.applyLabel(inNetwork(wrongfulUnban(playerOther, 9, ban), "net-b"))
+	if got := unflaggedLabels(t, e, playerOther); got[store.LabelCheat] != 0 || got[store.LabelLegit] != 1 {
+		t.Fatalf("unflagged labels after the interleaved ban and unban: %v", got)
+	}
+}
+
 func TestModerationLabelRecords(t *testing.T) {
 	rec := func(mut func(r *pb.LabelRecord)) *pb.LabelRecord {
 		r := &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA, ServerId: srv1}, Player: uuidBytes(player1),
