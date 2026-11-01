@@ -236,6 +236,85 @@ func TestDigestCountsEngineCells(t *testing.T) {
 	}
 }
 
+// Forwarded local flags count in emissions-only cells, also for a session beyond the player cap (its
+// protocol from the join, its brand from the update), and so do the ML signals that are sent; a silent
+// batch (warm start) counts none of them.
+func TestDigestLocalFlagsAndModelSignals(t *testing.T) {
+	clock := &testClock{t: digestT0}
+	h := newHarness(t, nil)
+	h.env.now = clock.now
+	h.env.scorer = fixedScorer{p: 0.95, points: 2}
+	w := newTestDigest(t, clock)
+	h.env.digest = w
+	h.eng = newEngine(3, h.env, nil)
+	srv := testkit.NewServerID()
+	o := origin(srv, pb.Platform_PLATFORM_PAPER)
+	var sigs []*pb.Signal
+	send := func(silent bool, evs ...*pb.Event) {
+		t.Helper()
+		sigs = append(sigs, signals(h.send(o, h.seq+1, silent, evs...))...)
+	}
+	tracked := testkit.NewPlayer("tracked")
+	send(false, tracked.Join(), tracked.State())
+	for range 59 { // a free tenant tracks 60 players
+		p := testkit.NewPlayer("filler")
+		send(false, p.Join(), p.State())
+	}
+	capped := testkit.NewPlayer("capped")
+	capped.Protocol = 47
+	brand := capped.Join()
+	brand.GetJoin().Update, brand.GetJoin().Brand = true, "Badlion Client"
+	send(false, capped.Join(), capped.State(), brand)
+	if s := h.eng.sessions[sessKey{testTenant, identity.UUID(capped.UUID), srv}]; s == nil || s.view != nil {
+		t.Fatal("fixture: the 61st player is not tracked")
+	}
+	send(false, flag(tracked, "movement.fly", 1), flag(capped, "movement.fly", 1), flag(capped, "movement.fly", 1))
+	send(true, flag(tracked, "movement.fly", 1), flag(capped, "movement.fly", 1)) // a warm start replays them silently
+	var moves []*pb.Event
+	for i := 0; i < 700; i++ { // a window finalised, another by the quit
+		moves = append(moves, tracked.Move(geom.V(0.05, 0, 0), geom.Rotation{Yaw: float64(i % 30)}))
+	}
+	send(false, moves...)
+	send(false, tracked.Quit())
+
+	h.eng.housekeep(clock.t)
+	w.merge(<-w.in)
+	w.writeDue(true)
+	lines := readDigest(t, w, digestT0.Truncate(time.Hour))
+	cell := func(check, brand string) digestLine {
+		t.Helper()
+		var found []digestLine
+		for _, l := range lines {
+			if l.Check == check && l.Brand == brand {
+				found = append(found, l)
+			}
+		}
+		if len(found) != 1 {
+			t.Fatalf("%s %s: %d lines in %+v", check, brand, len(found), lines)
+		}
+		return found[0]
+	}
+	sent := 0
+	for _, s := range sigs {
+		if s.CheckId == "ml.test" {
+			sent++
+		}
+	}
+	for _, c := range []struct {
+		check, brand string
+		protocol     int32
+		emissions    uint64
+	}{{"movement.fly", "vanilla", 769, 1}, {"movement.fly", "badlion", 47, 2}, {"ml.test", "vanilla", 769, uint64(sent)}} {
+		l := cell(c.check, c.brand)
+		if l.Emissions != c.emissions || l.ServerID != srv || l.Protocol == nil || *l.Protocol != c.protocol || l.Evaluations != nil || l.Hist != nil {
+			t.Errorf("%s %s: %+v, want %d emissions", c.check, c.brand, l, c.emissions)
+		}
+	}
+	if sent == 0 {
+		t.Fatal("fixture: no ML signal sent")
+	}
+}
+
 func TestDigestHistogramBuckets(t *testing.T) {
 	clock := &testClock{t: digestT0}
 	w := newTestDigest(t, clock)

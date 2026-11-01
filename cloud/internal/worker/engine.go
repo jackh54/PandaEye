@@ -787,12 +787,8 @@ func (e *engine) localSignal(m *batchMeta, i int, s *session, ev *pb.Event, t in
 		e.env.m.Drops.WithLabelValues("unknown_local_check").Inc()
 		return
 	}
-	if e.digest != nil && !m.silent {
-		if s.view != nil {
-			e.digest.emitted(spec.ID, s.key.server, s.view.Protocol, s.view.BrandFamily)
-		} else { // a session beyond the player cap
-			e.digest.emitted(spec.ID, s.key.server, s.join.GetProtocolVersion(), checks.BrandFamilyOf(s.join.GetBrand()))
-		}
+	if !m.silent {
+		e.digestEmitted(s, spec.ID)
 	}
 	data := make(map[string]float64, len(f.GetData())+2)
 	for k, v := range f.GetData() {
@@ -808,6 +804,18 @@ func (e *engine) localSignal(m *batchMeta, i int, s *session, ev *pb.Event, t in
 		GatewayRecvUnixUs: m.recvUs, WorkerUnixUs: uint64(e.env.now().UnixMicro()), Info: info, Data: data, Local: true,
 		Replayed: m.replayed, HotLoaded: s.hotLoaded, SessionId: s.id}
 	e.emitSignal(m, i, s, t, sig)
+}
+
+// digestEmitted counts a signal the engine emits itself (a forwarded local flag, an ML signal) in the
+// check-health digest.
+func (e *engine) digestEmitted(s *session, check string) {
+	switch {
+	case e.digest == nil:
+	case s.view != nil:
+		e.digest.emitted(check, s.key.server, s.view.Protocol, s.view.BrandFamily)
+	default: // a session beyond the player cap
+		e.digest.emitted(check, s.key.server, s.join.GetProtocolVersion(), checks.BrandFamilyOf(s.join.GetBrand()))
+	}
 }
 
 func (e *engine) emitSignal(m *batchMeta, i int, s *session, t int64, sig *pb.Signal) {
@@ -940,6 +948,7 @@ func (e *engine) windows(m *batchMeta, i int, s *session, ws []*ml.Window) {
 		}
 		if m == nil || !m.silent {
 			e.env.m.Signals.WithLabelValues(check).Inc()
+			e.digestEmitted(s, check)
 			e.push(outMsg{msgID: id, env: &pb.SignalEnvelope{Kind: &pb.SignalEnvelope_Signal{Signal: sig}}})
 		}
 	}

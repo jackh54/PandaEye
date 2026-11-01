@@ -194,7 +194,7 @@ func (s *digestShard) Emitted(v *checks.View, check string) {
 	s.emitted(check, v.ServerID, v.Protocol, v.BrandFamily)
 }
 
-// emitted counts an emission of a check without observations (also a forwarded local flag).
+// emitted counts an emission of a check without observations (also a forwarded local flag or an ML signal).
 func (s *digestShard) emitted(check, server string, protocol int32, brand checks.BrandFamily) {
 	if s != nil {
 		s.cell(digestKey{check: check, server: server, protocol: protocol, brand: brand}).emissions++

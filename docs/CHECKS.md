@@ -522,8 +522,8 @@ histogram edges) and `cloud/internal/worker/digest.go` (cells, files).
 
 **Cells.** The world-interaction checks (`scaffold.face`, `scaffold.ray`, `scaffold.cursor`,
 `scaffold.reach`, `dig.ray`) report every judged placement or dig, one cell per (check, server, protocol,
-brand, tick client, pose, ping). Every other cloud check and every forwarded local flag counts emissions
-only, one cell per (check, server, protocol, brand).
+brand, tick client, pose, ping). Every other cloud check (`ml.<model>` when its signals are sent, 2.16) and
+every forwarded local flag counts emissions only, one cell per (check, server, protocol, brand).
 
 | Field | Meaning |
 |---|---|
@@ -539,7 +539,7 @@ only, one cell per (check, server, protocol, brand).
 | `emissions` | signals actually emitted (a check the tenant disabled emits none; a worker's warm start counts nothing) |
 | `eye_path` | evaluations whose eye candidates included the path from the previous position (2.1: the last position arrived within 150 ms, the step was under 4 blocks) |
 | `eyes`, `rotations` | distinct eye and rotation candidates, summed (divide by `evaluations`); candidates within 1e-6 count once, so a still standing player has 2 eyes, and the rotations are 1 without an R1 and 5 with one. `scaffold.face` and `scaffold.reach` use the eyes only |
-| `le`, `hist` | histogram of the decisive value: `hist[i]` counts values in (`le[i-1]`, `le[i]`], the last element the values above the last edge |
+| `le`, `hist` | histogram of the decisive value: `hist[0]` counts values <= `le[0]`, `hist[i]` values in (`le[i-1]`, `le[i]`], the last element the values above the last edge |
 | `overflow` | `true` on the line that sums a check's cells beyond 2 048 cells in the hour (it has no dimensions) |
 
 Brand families: the brand is trimmed and lower-cased; empty is `unknown`; otherwise the first rule whose
@@ -558,7 +558,9 @@ Decisive values, with the tenant's thresholds applied:
 
 The cloud has no dig reach check (`dig.speed` is local). Lines with the same hour and dimensions add up: a
 restart writes the hour so far and the next process the rest, and counts a partition reported late are
-appended. An hour is written a minute after it ends; a crash loses the counts of the hour in progress.
+appended. Events handled but not yet acknowledged before a restart (usually seconds) are counted again by
+the next process. An hour is written a minute after it ends; a crash loses the counts of the hour in
+progress.
 
 **Reading it for tuning.** Failure rates per check, server and brand family over all files:
 
@@ -575,7 +577,7 @@ cat data/digests/digest-*.jsonl | jq -s 'map(select(.evaluations)) | group_by([.
   a `pose` at the eye heights.
 - `eye_path / evaluations` low where failures are high: moving players are judged without their
   interpolated eye. `rotations / evaluations` near 1 for tick clients: the same tick's movement packet (R1)
-  is rarely found.
+  is rarely found, or the players do not turn while they place.
 - The histogram tells a threshold problem from a candidate problem: failures just past the threshold
   (cursor 3-5 degrees, ray up to a degree or two, face margin -0.1..0) are precision or tolerance; failures
   far past it (tens of degrees, whole blocks) mean a wrong eye or rotation, or cheating.
