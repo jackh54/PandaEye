@@ -431,8 +431,10 @@ reply arrived. Pairing by send time compares round trips that crossed the same q
 same moment: when delivery stops after the server sent its packets (a stalled proxy event loop, a network
 outage, a client frozen by a window drag), the replies of seconds of keep-alives and pings arrive
 together, and pairing by arrival (before November 2026) compared the oldest keep-alives of that backlog
-with the median of the whole backlog. Pongs are kept at most one per 20 ms of send time (256 kept, over
-5 s); a keep-alive whose window lost pongs to that limit is not judged. Excess when the
+with the median of the whole backlog. Pongs are kept at most one per 125 ms of send time (320 kept, over
+40 s at any ping rate: a keep-alive is judged its RTT plus 2 s after it was sent, and the plugin matches
+replies up to 30 s late, so its window must still be held then); a keep-alive whose window lost pongs to
+that limit is not judged. Excess when the
 keep-alive RTT > paired pong + 150 ms and > 1.6x paired pong. Violation when a keep-alive is in excess
 and >= 3/4 of the newest paired keep-alives up to it are, taking at least 4 of them and as many as span
 >= 20 s of send time; at most once per 60 s. Unmatched responses: 0 points in v1. Points 3, confidence

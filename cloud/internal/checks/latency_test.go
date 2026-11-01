@@ -276,6 +276,32 @@ func TestPingspoofCheatHeldKeepAlives(t *testing.T) {
 	})
 }
 
+func TestPingspoofCheatLongHolds(t *testing.T) {
+	// A keep-alive held for H seconds is judged H s after the pongs of its window arrived, so the pong
+	// ring must still hold them then, at any ping rate, for any RTT the plugin still matches (its sends
+	// expire after 30 s). A ring that spans 5 s at 50 or more pings per second lost them for holds over
+	// about 1 s, and the keep-alive was not judged.
+	cases := []struct {
+		kaEvery, pingEvery, hold float64
+		want                     int
+	}{
+		{paperKeepAlive, 0.005, 1.5, 5},
+		{paperKeepAlive, 0.02, 3, 5},
+		{paperKeepAlive, 0.005, 10, 5},
+		{paperKeepAlive, 0.05, 12, 5},
+		{paperKeepAlive, 0.005, 25, 5},
+		{vanillaKeepAlive, 0.005, 10, 4},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("keep-alive every %.0f s, held %.1f s, %.0f pings per second", c.kaEvery, c.hold, 1/c.pingEvery), func(t *testing.T) {
+			hold := func(float64) float64 { return c.hold }
+			if n := pingspoofCount(t, 300, c.kaEvery, c.pingEvery, netPath{oneWayS: 0.03, kaHold: hold}); n != c.want {
+				t.Fatalf("%d emissions in 5 min, want %d", n, c.want)
+			}
+		})
+	}
+}
+
 // everyTwoMinutes returns one span of d seconds every 2 minutes, starting at second 20.
 func everyTwoMinutes(seconds, d float64) [][2]float64 {
 	var out [][2]float64

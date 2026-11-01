@@ -38,11 +38,15 @@ func init() {
 	})
 }
 
+// The pong ring must still hold the pongs of a keep-alive's window when that keep-alive is judged: 2 s
+// after its reply arrived, which is its RTT after it was sent. The plugin matches replies up to 30 s after
+// the send (AckTracker expiry; Paper also disconnects then), so the ring spans >= 36 s of send time: the
+// longest RTT, the 2 s window before the send and the 2 s wait, plus the gap to the next event.
 const (
-	latPongsKept     = 256    // with latPongGapUs: >= 5 s of pings, a pairing window plus the RTT
-	latPongGapUs     = 20_000 // a pong is kept only if its ping was sent >= 20 ms after the last kept one
-	latKeepAliveKept = 16     // a backlog released after a stall arrives at once
-	latPairedKept    = 256    // judged keep-alives: span_s at up to 25 keep-alives per second
+	latPongsKept     = 320     // with latPongGapUs: >= 40 s of pings at any ping rate
+	latPongGapUs     = 125_000 // a pong is kept only if its ping was sent >= 125 ms after the last kept one
+	latKeepAliveKept = 16      // a backlog released after a stall arrives at once
+	latPairedKept    = 256     // judged keep-alives: span_s (20 s) at up to 12 keep-alives per second
 )
 
 // latOutcome is a judged keep-alive: when the server sent it and whether its RTT was in excess.
@@ -125,8 +129,9 @@ func (d *latencyDetector) pingspoof(c *Ctx, ev *pb.Event) {
 	}
 }
 
-// pushPong keeps a pong unless its ping was sent within 20 ms of the last kept one (at most 50 per second,
-// so the ring spans a pairing window), and remembers the newest send time it drops from the ring.
+// pushPong keeps a pong unless its ping was sent within 125 ms of the last kept one (at most 8 per second,
+// so the ring spans the longest matched RTT plus a pairing window), and remembers the newest send time it
+// drops from the ring.
 func (d *latencyDetector) pushPong(s latSample) {
 	if last, ok := d.pongs.Last(); ok && s.sentUs-last.sentUs < latPongGapUs {
 		return
