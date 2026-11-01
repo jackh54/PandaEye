@@ -690,6 +690,14 @@ dashboard (server online, probe RTT).
 | NATS storage | JetStream storage > 80% of its limit | `PE_EVENTS` discards old data at its byte limit; other streams fail to accept |
 | ML model not loaded | `pandaeye_worker_ml_model_loaded == 0` on a worker with `PE_ML_MODEL` set | in shadow a load failure only logs an error; the console says why |
 
+### 9.3 Diagnostic log lines
+
+Logs are JSON lines on stdout. These lines carry diagnostics without personal data:
+
+- `store size` (api, info, once a day after the janitor): the database `bytes`, `free_bytes` (sqlite:
+  pages freed by deletions, reused before the file grows) and per table `rows` and `table_bytes` (with its
+  indexes). Two days' lines show which table grows.
+
 ## 10. Security checklist
 
 - TLS everywhere on public paths; `PE_METRICS_LISTEN` and NATS monitoring private.
