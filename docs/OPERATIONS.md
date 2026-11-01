@@ -660,6 +660,22 @@ Keep the circuit-breaker defaults.
    last is refused (`CODE_LICENSE_LIMIT`, retried every 10 min), which can be a backend, so check
    `maxServers` (0 = unlimited) before adding proxies.
 
+### 8.9 LiteBans labels
+
+With LiteBans on a backend or the proxy, PandaEye sends its cheating bans and their wrongful unbans as labels
+(ARCHITECTURE 4.12, PROTOCOL 5); nothing to install. Check after the restart:
+
+- Console: `LiteBans labels on: ...`, then `LiteBans backfill: N bans of the last 30 days read, C cheat and L
+  legit labels sent`. `LiteBans' API was still not ready ...` or `... not the expected one` mean labels are off
+  until the next restart (report the LiteBans version). Without LiteBans PandaEye logs nothing about it.
+- `/pandaeye status` (proxy: `/pandaeyeproxy status`): `LiteBans labels: on, C cheat and L legit labels sent;
+  backfill ...`, or why it is off.
+- Tuning: compare the reasons your staff actually use with `cheat-reasons`, `ignore-reasons` and
+  `legit-unban-reasons` (substrings: `esp` also matches "respect", `alt` "halt", `test` "fastest"). Keep
+  `count-console: false`: console bans come from other anticheats and from PandaEye's own `ban-command`, whose
+  default reason contains the appeal URL, so they would label PandaEye's own verdicts. A backfill on every
+  restart is harmless (the cloud de-duplicates); `backfill-days: 0` turns it off.
+
 ## 9. Monitoring
 
 ### 9.1 Metrics

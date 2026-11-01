@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.paper.config;
 
+import dev.pandascript.pandaeye.common.litebans.LiteBansSettings;
 import dev.pandascript.pandaeye.paper.check.CheckCatalog;
 import dev.pandascript.pandaeye.paper.check.CheckDescriptor;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -41,6 +43,7 @@ class ConfigLoaderTest {
         assertEquals("pardon %player%", config.punishments().unbanCommand());
         assertEquals(3, config.punishments().maxBansPerHour());
         assertEquals(5, config.punishments().maxKicksPer10Min());
+        assertEquals(LiteBansSettings.DEFAULT, config.litebans());
         for (CheckDescriptor check : CheckCatalog.all()) {
             assertTrue(yaml.isConfigurationSection("checks." + check.id()), check.id() + " listed in config.yml");
             assertTrue(config.check(check.id()).enabled());
@@ -105,6 +108,41 @@ class ConfigLoaderTest {
         assertTrue(config.alerts().logFile());
         assertEquals(java.util.List.of(), loader.warnings());
         assertFalse(new ConfigLoader().load(new YamlConfiguration()).alerts().logAllPeaks());
+    }
+
+    @Test
+    void liteBansLabelsAreConfigurable() throws Exception {
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.loadFromString("""
+                labels:
+                  litebans:
+                    enabled: false
+                    cheat-reasons: [Ghost Client, triggerbot]
+                    ignore-reasons: []
+                    count-console: true
+                    backfill-days: 7
+                """);
+        ConfigLoader loader = new ConfigLoader();
+        LiteBansSettings settings = loader.load(yaml).litebans();
+        assertEquals(List.of(), loader.warnings());
+        assertFalse(settings.enabled());
+        assertEquals(List.of("ghost client", "triggerbot"), settings.cheatReasons());
+        assertEquals(List.of(), settings.ignoreReasons(), "an empty list stays empty");
+        assertEquals(LiteBansSettings.DEFAULT_LEGIT_UNBAN_REASONS, settings.legitUnbanReasons());
+        assertTrue(settings.countConsole());
+        assertEquals(7, settings.backfillDays());
+
+        YamlConfiguration invalid = new YamlConfiguration();
+        invalid.loadFromString("""
+                labels:
+                  litebans:
+                    cheat-reasons: hack
+                    backfill-days: 1000
+                """);
+        ConfigLoader checked = new ConfigLoader();
+        assertEquals(LiteBansSettings.DEFAULT, checked.load(invalid).litebans());
+        assertEquals(2, checked.warnings().size(), checked.warnings().toString());
+        assertEquals(LiteBansSettings.DEFAULT, new ConfigLoader().load(new YamlConfiguration()).litebans());
     }
 
     @Test

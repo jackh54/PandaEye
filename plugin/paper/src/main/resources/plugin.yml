@@ -5,7 +5,7 @@ api-version: '1.21'
 folia-supported: true
 description: Cloud anticheat (packet capture and local checks; detection runs in the PandaEye cloud).
 depend: [packetevents]
-softdepend: [floodgate, ViaVersion]
+softdepend: [floodgate, ViaVersion, LiteBans]
 commands:
   pandaeye:
     description: PandaEye status, alerts and administration.

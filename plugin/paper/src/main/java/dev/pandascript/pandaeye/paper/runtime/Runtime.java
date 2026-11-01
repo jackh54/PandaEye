@@ -5,6 +5,7 @@ import com.github.retrooper.packetevents.event.PacketListenerCommon;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
 import com.github.retrooper.packetevents.protocol.player.User;
 import dev.pandascript.pandaeye.common.Log;
+import dev.pandascript.pandaeye.common.litebans.LiteBansLabels;
 import dev.pandascript.pandaeye.common.time.EventClock;
 import dev.pandascript.pandaeye.common.transport.CloudClient;
 import dev.pandascript.pandaeye.common.transport.CloudConfig;
@@ -97,6 +98,7 @@ public final class Runtime {
     private MitigationController mitigations;
     private VerdictHandler verdicts;
     private PacketListenerCommon packetListener;
+    private LiteBansLabels labels;
     private String cloudDetail = "disabled";
 
     public Runtime(JavaPlugin plugin) {
@@ -144,6 +146,8 @@ public final class Runtime {
         if (cloud != null) {
             relay.target(new CloudBridge(sessions, watches, alerts, verdicts));
         }
+        labels = LiteBansLabels.create(config.litebans(), Runtime.class.getClassLoader(),
+                cloud == null ? null : cloud.sink()::offer, clock, schedulers::runAsync, log);
 
         gate.open();
         packetListener = PacketEvents.getAPI().getEventManager().registerListener(
@@ -163,6 +167,7 @@ public final class Runtime {
         if (cloud != null) {
             cloud.start();
         }
+        labels.start();
         mitigations.refresh();
         schedulers.runGlobal(() -> {
             if (gate.active()) {
@@ -206,6 +211,11 @@ public final class Runtime {
         teardown.step("cancel scheduled tasks", () -> {
             if (schedulers != null) {
                 schedulers.cancelAll();
+            }
+        });
+        teardown.step("stop the LiteBans labels", () -> {
+            if (labels != null) {
+                labels.stop();
             }
         });
         teardown.step("stop the stall detector", () -> {
@@ -319,6 +329,10 @@ public final class Runtime {
         return errors;
     }
 
+    public LiteBansLabels labels() {
+        return labels;
+    }
+
     /** Reloads check thresholds and alert settings only (mode, cloud and the rest need a restart). */
     public List<String> reload() {
         plugin.reloadConfig();
@@ -327,7 +341,7 @@ public final class Runtime {
         PluginConfig current = config;
         config = new PluginConfig(current.mode(), current.serverName(), current.networkId(), current.cloud(),
                 current.telemetry(), fresh.checks(), fresh.alerts(), current.exempt(), current.proxy(),
-                current.setbacks(), current.punishments(), current.mitigations(), current.debug());
+                current.setbacks(), current.punishments(), current.mitigations(), current.litebans(), current.debug());
         return loader.warnings();
     }
 

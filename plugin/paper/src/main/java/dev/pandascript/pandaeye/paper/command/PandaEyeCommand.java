@@ -138,6 +138,7 @@ public final class PandaEyeCommand implements TabExecutor {
                 runtime.sessions().size(), unseeded, runtime.watches().active(), runtime.alerts().recipients().size()));
         lines.add("proxy session messages: " + (runtime.config().proxy().sessionChannel()
                 ? counts(runtime.proxySessions()) : "off (proxy.session-channel: false)"));
+        lines.add("LiteBans labels: " + runtime.labels().status());
         PacketCost.Summary cost = runtime.cost().summary();
         lines.add(String.format(Locale.ROOT, "packet handler: %d packets, avg %.2f us, p99 %.2f us; env sampler avg %.1f us",
                 cost.packets(), cost.averageMicros(), cost.p99Micros(), runtime.sampler().averageCostNanos() / 1e3));
@@ -187,8 +188,8 @@ public final class PandaEyeCommand implements TabExecutor {
             return;
         }
         List<String> warnings = runtime.reload();
-        reply(sender, "Reloaded check thresholds and alert settings (mode, cloud, punishment and mitigation settings"
-                + " need a restart).", NamedTextColor.GREEN);
+        reply(sender, "Reloaded check thresholds and alert settings (mode, cloud, punishment, mitigation and label"
+                + " settings need a restart).", NamedTextColor.GREEN);
         for (String warning : warnings) {
             reply(sender, "config.yml: " + warning, NamedTextColor.YELLOW);
         }

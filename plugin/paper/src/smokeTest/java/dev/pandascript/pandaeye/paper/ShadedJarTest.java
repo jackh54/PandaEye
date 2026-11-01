@@ -2,6 +2,9 @@ package dev.pandascript.pandaeye.paper;
 
 import dev.pandascript.pandaeye.common.Log;
 import dev.pandascript.pandaeye.common.codec.FrameCodec;
+import dev.pandascript.pandaeye.common.litebans.LiteBansLabels;
+import dev.pandascript.pandaeye.common.litebans.LiteBansSettings;
+import dev.pandascript.pandaeye.common.time.EventClock;
 import dev.pandascript.pandaeye.protocol.v1.Batch;
 import dev.pandascript.pandaeye.protocol.v1.ClientFrame;
 import dev.pandascript.pandaeye.protocol.v1.Event;
@@ -16,6 +19,7 @@ import java.util.jar.JarFile;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Runs on the shaded plugin jar only: protobuf-lite and zstd must work after relocation and minimisation. */
@@ -76,6 +80,45 @@ class ShadedJarTest {
             assertTrue(!descriptor.contains("${version}"), "version expanded");
             assertTrue(jar.getEntry("dev/pandascript/pandaeye/paper/PandaEyePlugin.class") != null);
             assertTrue(jar.getEntry("config.yml") != null);
+            assertTrue(descriptor.contains("softdepend: [floodgate, ViaVersion, LiteBans]"), "LiteBans loads first");
+            assertTrue(jar.getEntry("dev/pandascript/pandaeye/common/litebans/LiteBansHook.class") != null);
+            assertTrue(jar.stream().noneMatch(e -> e.getName().startsWith("litebans/")),
+                    "the LiteBans API stub is compile-only: the server's LiteBans provides it");
         }
+    }
+
+    /** A server without LiteBans: the jar's labels stay off without loading, scheduling, sending or logging. */
+    @Test
+    void withoutLiteBansTheLabelsStayOffQuietly() {
+        List<String> calls = new ArrayList<>();
+        LiteBansLabels labels = LiteBansLabels.create(LiteBansSettings.DEFAULT, ShadedJarTest.class.getClassLoader(),
+                event -> calls.add("event"), EventClock.system(), (task, delay) -> calls.add("scheduled"), new Log() {
+                    @Override
+                    public void info(String text) {
+                        calls.add(text);
+                    }
+
+                    @Override
+                    public void warn(String text) {
+                        calls.add(text);
+                    }
+
+                    @Override
+                    public void warn(String text, Throwable error) {
+                        calls.add(text);
+                    }
+
+                    @Override
+                    public void debug(String text) {
+                        calls.add(text);
+                    }
+                });
+        labels.start();
+        labels.stop();
+        assertEquals("off (LiteBans not installed)", labels.status());
+        assertTrue(calls.isEmpty(), calls.toString());
+        assertThrows(NoClassDefFoundError.class,
+                () -> Class.forName("dev.pandascript.pandaeye.common.litebans.LiteBansHook"),
+                "the hook needs LiteBans, which is why the preloader skips it");
     }
 }

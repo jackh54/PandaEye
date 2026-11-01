@@ -11,6 +11,7 @@ import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import dev.pandascript.pandaeye.common.Log;
+import dev.pandascript.pandaeye.common.litebans.LiteBansLabels;
 import dev.pandascript.pandaeye.common.time.EventClock;
 import dev.pandascript.pandaeye.common.transport.CloudClient;
 import dev.pandascript.pandaeye.common.transport.CloudConfig;
@@ -37,6 +38,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -60,8 +62,9 @@ public final class PandaEyeVelocity {
     private CloudClient cloud;
     private ProxyEnforcement enforcement;
     private ProxyTracker tracker;
+    private LiteBansLabels labels;
     private CommandMeta commandMeta;
-    private final List<ScheduledTask> tasks = new ArrayList<>();
+    private final List<ScheduledTask> tasks = new CopyOnWriteArrayList<>();
     private volatile List<String> commandWarnings = List.of();
     private String cloudDetail = "disabled";
 
@@ -115,6 +118,8 @@ public final class PandaEyeVelocity {
                 store, client == null ? (id, executed, note) -> { } : client::ackVerdict, log);
         tracker = new ProxyTracker(client == null ? null : client.sink()::offer, clock, () -> config, bedrock, names,
                 () -> active, () -> System.currentTimeMillis() / 1_000, errors);
+        labels = LiteBansLabels.create(config.litebans(), PandaEyeVelocity.class.getClassLoader(),
+                client == null ? null : client.sink()::offer, clock, this::runAsync, log);
 
         active = true;
         server.getChannelRegistrar().register(ProxyTracker.SESSION_CHANNEL);
@@ -130,6 +135,7 @@ public final class PandaEyeVelocity {
         if (cloud != null) {
             cloud.start();
         }
+        labels.start();
         log.info(String.format(Locale.ROOT, "PandaEye for Velocity enabled in %d ms: mode %s, cloud %s, %d online"
                         + " players, session messages %s, Floodgate %s",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started), config.live() ? "live" : "shadow",
@@ -151,6 +157,9 @@ public final class PandaEyeVelocity {
             }
         }
         tasks.clear();
+        if (labels != null) {
+            labels.stop();
+        }
         try {
             if (tracker != null) {
                 server.getEventManager().unregisterListener(this, tracker);
@@ -204,6 +213,9 @@ public final class PandaEyeVelocity {
             lines.add(String.format(Locale.ROOT, "verdicts: circuit breaker %s, executed (7 d) %d, bans executed here %d",
                     breaker.open() ? "OPEN" : "closed", processor.store().executedCount(), processor.store().banCount()));
         }
+        if (labels != null) {
+            lines.add("LiteBans labels: " + labels.status());
+        }
         if (enforcement != null) {
             lines.add(String.format(Locale.ROOT, "enforcer calls attempted in shadow %d, executed live %d",
                     enforcement.shadow().calls(), enforcement.live().calls()));
@@ -212,6 +224,11 @@ public final class PandaEyeVelocity {
             lines.add("punishments: " + warning);
         }
         return lines;
+    }
+
+    /** Once on Velocity's scheduler (its own threads, not an event thread) after {@code delayMillis}. */
+    private void runAsync(Runnable task, long delayMillis) {
+        tasks.add(server.getScheduler().buildTask(this, task).delay(delayMillis, TimeUnit.MILLISECONDS).schedule());
     }
 
     private void checkCommands() {

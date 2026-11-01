@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.paper.config;
 
+import dev.pandascript.pandaeye.common.litebans.LiteBansSettings;
 import dev.pandascript.pandaeye.paper.check.CheckCatalog;
 import dev.pandascript.pandaeye.paper.check.CheckDescriptor;
 import dev.pandascript.pandaeye.paper.check.CheckSettings;
@@ -64,7 +65,19 @@ public final class ConfigLoader {
                         clamp(root, "punishments.max-bans-per-hour", 3, 0, 1_000),
                         clamp(root, "punishments.max-kicks-per-10min", 5, 0, 1_000)),
                 root.getBoolean("mitigations.enabled", true),
+                litebans(root),
                 root.getBoolean("debug", false));
+    }
+
+    private LiteBansSettings litebans(ConfigurationSection root) {
+        return new LiteBansSettings(
+                root.getBoolean("labels.litebans.enabled", true),
+                strings(root, "labels.litebans.cheat-reasons", LiteBansSettings.DEFAULT_CHEAT_REASONS),
+                strings(root, "labels.litebans.ignore-reasons", LiteBansSettings.DEFAULT_IGNORE_REASONS),
+                strings(root, "labels.litebans.legit-unban-reasons", LiteBansSettings.DEFAULT_LEGIT_UNBAN_REASONS),
+                root.getBoolean("labels.litebans.count-console", false),
+                clamp(root, "labels.litebans.backfill-days", LiteBansSettings.DEFAULT_BACKFILL_DAYS, 0,
+                        LiteBansSettings.MAX_BACKFILL_DAYS));
     }
 
     private PluginConfig.Mode mode(String value) {
@@ -125,6 +138,19 @@ public final class ConfigLoader {
             }
         }
         return checks;
+    }
+
+    /** A list of strings; a missing key is the default, an explicitly empty list stays empty. */
+    private List<String> strings(ConfigurationSection root, String path, List<String> fallback) {
+        Object value = root.get(path);
+        if (value == null) {
+            return fallback;
+        }
+        if (!(value instanceof List<?>)) {
+            warnings.add(path + " is not a list; using the default");
+            return fallback;
+        }
+        return root.getStringList(path);
     }
 
     private int clamp(ConfigurationSection root, String path, int fallback, int min, int max) {

@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.velocity;
 
+import dev.pandascript.pandaeye.common.litebans.LiteBansSettings;
 import dev.pandascript.pandaeye.common.verdict.PunishmentSettings;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -27,6 +28,7 @@ public record VelocityConfig(
         int maxBufferMb,
         int maxBufferAgeMinutes,
         PunishmentSettings punishments,
+        LiteBansSettings litebans,
         boolean debug) {
 
     public static final VelocityConfig DEFAULT = load("", new ArrayList<>());
@@ -71,6 +73,14 @@ public record VelocityConfig(
                         r.string("punishments.appeal-url", ""),
                         r.integer("punishments.max-bans-per-hour", 3, 0, 1_000),
                         r.integer("punishments.max-kicks-per-10min", 5, 0, 1_000)),
+                new LiteBansSettings(
+                        r.bool("labels.litebans.enabled", true),
+                        r.strings("labels.litebans.cheat-reasons", LiteBansSettings.DEFAULT_CHEAT_REASONS),
+                        r.strings("labels.litebans.ignore-reasons", LiteBansSettings.DEFAULT_IGNORE_REASONS),
+                        r.strings("labels.litebans.legit-unban-reasons", LiteBansSettings.DEFAULT_LEGIT_UNBAN_REASONS),
+                        r.bool("labels.litebans.count-console", false),
+                        r.integer("labels.litebans.backfill-days", LiteBansSettings.DEFAULT_BACKFILL_DAYS, 0,
+                                LiteBansSettings.MAX_BACKFILL_DAYS)),
                 r.bool("debug", false));
     }
 
@@ -109,6 +119,27 @@ public record VelocityConfig(
             }
             warnings.add(path + " is not true or false; using " + fallback);
             return fallback;
+        }
+
+        /** A list of strings; a missing key is the default, an explicitly empty list stays empty. */
+        List<String> strings(String path, List<String> fallback) {
+            Object value = get(path);
+            if (value == null) {
+                return fallback;
+            }
+            if (!(value instanceof List<?> list)) {
+                warnings.add(path + " is not a list; using the default");
+                return fallback;
+            }
+            List<String> out = new ArrayList<>();
+            for (Object item : list) {
+                if (item instanceof String || item instanceof Number || item instanceof Boolean) {
+                    out.add(item.toString());
+                } else if (item != null) {
+                    warnings.add(path + " contains an entry that is not a string; ignored");
+                }
+            }
+            return out;
         }
 
         int integer(String path, int fallback, int min, int max) {

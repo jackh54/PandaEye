@@ -28,5 +28,8 @@ class PluginDescriptionTest {
         assertEquals(List.of("PandaScript"), description.getAuthors(), "Velocity logs 'by <authors>'");
         assertEquals(PandaEyeVelocity.class.getName(), description.getMain());
         assertFalse(description.getVersion().contains("${"), "version expanded by processResources");
+        assertTrue(description.getDependencies().stream()
+                        .anyMatch(d -> d.getId().equals("litebans") && d.isOptional()),
+                "LiteBans is an optional dependency: loaded first when installed, never required");
     }
 }

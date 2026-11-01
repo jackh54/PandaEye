@@ -2,11 +2,14 @@ plugins {
     `java-library`
 }
 
-description = "Platform-independent PandaEye plugin code: transport, codecs, batching, spool, clocks"
+description = "Platform-independent PandaEye plugin code: transport, codecs, batching, spool, clocks, labels"
 
 dependencies {
     api(project(":protocol"))
     implementation(libs.aircompressor)
+    // LiteBans is optional at run time (labels.litebans): compiled against a stub, provided by the server.
+    compileOnly(project(":litebans-stub"))
+    testImplementation(project(":litebans-stub"))
 }
 
 val fixturesDir = rootProject.layout.projectDirectory.dir("../test/fixtures")

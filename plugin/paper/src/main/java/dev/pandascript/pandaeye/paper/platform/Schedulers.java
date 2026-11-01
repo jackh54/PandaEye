@@ -136,6 +136,16 @@ public final class Schedulers {
                 initialDelayTicks, periodTicks);
     }
 
+    /** Runs once on Paper's async scheduler (never a region or the global thread), after {@code delayMillis}. */
+    public void runAsync(Runnable task, long delayMillis) {
+        Consumer<ScheduledTask> body = guard("async", handle -> task.run());
+        if (delayMillis <= 0) {
+            Bukkit.getAsyncScheduler().runNow(plugin, body);
+        } else {
+            Bukkit.getAsyncScheduler().runDelayed(plugin, body, delayMillis, TimeUnit.MILLISECONDS);
+        }
+    }
+
     public ScheduledTask repeatAsync(Consumer<ScheduledTask> task, long initialDelay, long period, TimeUnit unit) {
         return Bukkit.getAsyncScheduler().runAtFixedRate(plugin, guard("async repeat", task), initialDelay, period,
                 unit);

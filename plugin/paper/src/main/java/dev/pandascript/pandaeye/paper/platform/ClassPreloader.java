@@ -4,15 +4,20 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.util.Enumeration;
+import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 /**
  * Loads and initialises every class of the plugin jar during enable, so netty and region threads never
  * trigger class loading (which fails once a hot unload has closed the class loader). Returns counts for the
- * enable log.
+ * enable log. Classes built on an optional plugin's API are skipped: they cannot load without that plugin, and
+ * with it they are loaded during enable when the integration starts.
  */
 public final class ClassPreloader {
+
+    /** Jar entry prefixes of the classes that extend an optional plugin's API (LiteBans). */
+    static final List<String> OPTIONAL = List.of("dev/pandascript/pandaeye/common/litebans/LiteBansHook");
 
     public record Result(int loaded, int failed) {
     }
@@ -37,7 +42,7 @@ public final class ClassPreloader {
             Enumeration<JarEntry> entries = file.entries();
             while (entries.hasMoreElements()) {
                 String name = entries.nextElement().getName();
-                if (!name.endsWith(".class") || name.contains("-") || name.startsWith("META-INF")) {
+                if (!preloadable(name)) {
                     continue;
                 }
                 try {
@@ -51,5 +56,17 @@ public final class ClassPreloader {
             return new Result(loaded, failed + 1);
         }
         return new Result(loaded, failed);
+    }
+
+    static boolean preloadable(String entry) {
+        if (!entry.endsWith(".class") || entry.contains("-") || entry.startsWith("META-INF")) {
+            return false;
+        }
+        for (String prefix : OPTIONAL) {
+            if (entry.startsWith(prefix)) {
+                return false;
+            }
+        }
+        return true;
     }
 }

@@ -38,7 +38,7 @@ always contact us as well ([A14](#a14-contact)).
 | Client information | Minecraft version and protocol number, client brand string (first value, at most 64 characters), whether the player joined through Geyser/Floodgate (Bedrock), whether the server grants the player an anti-cheat bypass |
 | Gameplay telemetry | movement (position, rotation, on-ground state, sprinting, sneaking, flying, gliding and similar states), attacks (target, positions of the target over the last moments, distance), arm swings, block placements and digs (coordinates, face, click position), inventory clicks (window, slot, click type, container type), item use, knockback received, teleports, game mode, potion effects and movement attributes, held hotbar slot, the environment around the player (for example water, ice, cobweb), connection round-trip times, results of the plugin's local checks |
 | Derived data | detection signals, suspicion scores, verdicts (alert, mitigate, kick, ban and their reversals) with evidence (contributing checks, confidence, top signals), replay clips (the player's last 25 seconds of telemetry; a clip also contains the positions of other players the player attacked), 30-second statistical feature windows used for model training |
-| Enforcement and appeals | bans executed on a server, appeals (the verdict, the appeal code, your message of up to 2 000 characters, a contact detail of up to 200 characters you choose to give), decisions and decision notes, labels ("cheat" or "legit") set by staff |
+| Enforcement and appeals | bans executed on a server, appeals (the verdict, the appeal code, your message of up to 2 000 characters, a contact detail of up to 200 characters you choose to give), decisions and decision notes, labels ("cheat" or "legit") set by staff; on servers that use LiteBans, which of its bans were for cheating and which of those were lifted as wrong (the ban's LiteBans id, start and removal time, whether it was permanent and whether staff or the console issued it; never the ban reason, staff names or IP addresses) |
 | Reputation network | only on servers that opted in: records that a player received a staff-confirmed ban there (see A6) |
 
 How much telemetry is sent depends on what the player does: every movement packet is sent while the
@@ -148,7 +148,8 @@ the current session and end when the player leaves.
 
 PandaEye trains detection models on 30-second feature windows (numerical summaries of gameplay, keyed by
 UUID; no names) together with labels from staff decisions (confirmed cheating, overturned verdicts,
-manual labels). Only data from established customers is used, and erased players are excluded. A new
+manual labels, cheating bans and wrongful unbans recorded in LiteBans). Only data from established customers
+is used, and erased players are excluded. A new
 model is used only after it passed a test showing it does not produce more false positives than the
 existing checks on players it was not trained on, and it starts with no effect on scores.
 [Customer opt-out from model training: describe your policy here.]

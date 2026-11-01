@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.paper.config;
 
+import dev.pandascript.pandaeye.common.litebans.LiteBansSettings;
 import dev.pandascript.pandaeye.paper.check.CheckSettings;
 
 import java.util.Map;
@@ -18,6 +19,7 @@ public record PluginConfig(
         boolean setbacks,
         Punishments punishments,
         boolean mitigations,
+        LiteBansSettings litebans,
         boolean debug) {
 
     public PluginConfig {

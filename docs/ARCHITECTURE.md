@@ -58,6 +58,7 @@ plugin/                   Gradle multi-project (Kotlin DSL), Java 21
   common/                 platform-independent: transport, codecs, batching, spool, clocks, util
   paper/                  Paper + Folia plugin "PandaEye"
   velocity/               Velocity plugin "pandaeye"
+  litebans-stub/          compile-only stand-in for the LiteBans API (never shipped; 4.12)
 cloud/                    Go module github.com/jackh54/PandaEye/cloud
   cmd/pandaeye/           single binary, subcommands (5.1)
   internal/...            see 5.2
@@ -370,9 +371,9 @@ player name cannot be resolved locally, or the circuit breaker is open. Otherwis
 `/pandaeye status | alerts [on|off] | player <name> | debug <name> | breaker [reset] | forget <uuid> | reload`
 (alias `/peye`). `status` shows mode, enforcement, cloud state, connection RTT, probe RTT p50/p95, pending
 batches, dropped events/logs, tracked players, unseeded sessions, `pandaeye:session` messages accepted and
-rejected by reason, packet-handler cost (avg and p99 us/packet), confirmations dropped. `reload` reloads
-thresholds and alert settings only. Permissions: `pandaeye.command`, `pandaeye.alerts`, `pandaeye.admin`
-(op), `pandaeye.bypass` (default false).
+rejected by reason, LiteBans labels (4.12), packet-handler cost (avg and p99 us/packet), confirmations
+dropped. `reload` reloads thresholds and alert settings only. Permissions: `pandaeye.command`,
+`pandaeye.alerts`, `pandaeye.admin` (op), `pandaeye.bypass` (default false).
 
 ### 4.11 `config.yml` (defaults)
 
@@ -433,8 +434,47 @@ punishments:
   max-kicks-per-10min: 5
 mitigations:
   enabled: true
+labels:                    # 4.12; without LiteBans this does nothing
+  litebans:
+    enabled: true
+    cheat-reasons: [hack, cheat, blacklisted mod, modification, aura, reach, fly, speed, scaffold, autoclick,
+      auto click, auto totem, autototem, easy place, easyplace, macro, script, nuker, bhop, velocity, timer, client]
+    ignore-reasons: [x-ray, xray, esp, bot account, evad, alt, test]   # checked first; ignore wins
+    legit-unban-reasons: [false ban, falsely, wrongful, mistake, appeal accepted]
+    count-console: false
+    backfill-days: 30
 debug: false
 ```
+
+### 4.12 LiteBans labels (`plugin/common`, optional)
+
+Staff who punish in LiteBans instead of the dashboard still label PandaEye's data. Both plugins do this when
+LiteBans runs on the same server or proxy (`softdepend: [LiteBans]`, an optional Velocity dependency). Without
+LiteBans, with `labels.litebans.enabled: false` or with the cloud off, nothing is registered, scheduled, sent or
+loaded.
+
+- `LiteBansHook`, the only class built on `litebans.api` (compiled against `plugin/litebans-stub`; the class
+  preloader skips it), listens to `Events.entryAdded` / `entryRemoved`. `BanClassifier` labels entries of type
+  `ban`; a cheat reason contains a `cheat-reasons` entry and no `ignore-reasons` entry (case-insensitive
+  substrings, ignore wins):
+  - CHEAT: a ban added with a cheat reason by staff (by the console only with `count-console`: console bans are
+    other anticheats' and PandaEye's own `ban-command`);
+  - LEGIT: a ban with a cheat reason removed with a `legit-unban-reasons` reason, whoever issued it;
+  - anything else is not sent (bot, alt and x-ray bans, mutes and kicks, unbans without a legit reason such as
+    "ban has been lifted." or an unban wave).
+- A label is an `Event{player, label: ModerationLabel}` in the normal event sink, so it is batched, buffered and
+  spooled like any event (the player may be offline or a Bedrock player): source `litebans`, entry id, kind (ban
+  added / removed), classification, ban start, removal time (the callback's time for a live unban), permanent,
+  executor kind (staff / console). Never the reason texts, names or UUIDs of the staff involved, or IPs.
+- Backfill: once per enable, on the platform's async scheduler (never the main or a region thread), the bans of
+  the last `backfill-days` through `Database.prepareStatement` (`SELECT ... FROM {bans} WHERE time >= ?`, at most
+  50 000 rows), labelled the same way; a lifted ban may give a CHEAT and a LEGIT. It stops at the next row on
+  disable.
+- One network can run LiteBans on the proxy and every backend, LiteBans may fire on more than one of them, and
+  every enable resends the backfill: receivers de-duplicate by (tenant, source, entry id, kind).
+- LiteBans' API not up at enable: one retry 10 s later. An incompatible API turns labels off with one warning;
+  callbacks never throw into LiteBans. `/pandaeye status` and `/pandaeyeproxy status` show the state, the labels
+  sent and the backfill result. Changes need a restart.
 
 ## 5. Cloud (`cloud/`)
 
@@ -871,6 +911,7 @@ until unbanned (documented in PRIVACY.md). JetStream expiry bounds residual data
   dropped; registering it also announces the channel to backends, nothing is sent to clients.
 - Command `/pandaeyeproxy` (alias `/peyeproxy`; `status`, `breaker [reset]`), so `/pandaeye` still reaches the
   backends.
+- LiteBans labels as on the backends (4.12), configured under `labels.litebans` in its `config.yml`.
 
 ## 7. Dashboard (`dashboard/`, Cloudflare Worker)
 

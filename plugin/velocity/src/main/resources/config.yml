@@ -26,4 +26,19 @@ punishments:
   appeal-url: ""
   max-bans-per-hour: 3
   max-kicks-per-10min: 5
+# LiteBans (optional, on this proxy): its bans become labels for the cloud, so verdict accuracy can be measured
+# from what staff already do. Only "ban" entries count; reasons match as case-insensitive substrings. A ban is
+# CHEAT when its reason has a cheat-reason and no ignore-reason (ignore wins) and staff issued it (the console
+# too with count-console: console bans come from other anticheats or PandaEye's own ban-command). The removal
+# of such a ban with a legit-unban-reason is LEGIT. Nothing else is sent; reasons, staff names and IPs never are.
+# Without LiteBans this section does nothing. Changes need a restart.
+labels:
+  litebans:
+    enabled: true
+    cheat-reasons: [hack, cheat, blacklisted mod, modification, aura, reach, fly, speed, scaffold, autoclick,
+      auto click, auto totem, autototem, easy place, easyplace, macro, script, nuker, bhop, velocity, timer, client]
+    ignore-reasons: [x-ray, xray, esp, bot account, evad, alt, test]
+    legit-unban-reasons: [false ban, falsely, wrongful, mistake, appeal accepted]
+    count-console: false
+    backfill-days: 30        # on enable, label the bans of the last N days once (0 = off)
 debug: false

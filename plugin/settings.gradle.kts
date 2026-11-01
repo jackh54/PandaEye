@@ -27,4 +27,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "pandaeye"
 
-include("protocol", "common", "paper", "velocity")
+include("protocol", "common", "paper", "velocity", "litebans-stub")

@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.velocity;
 
+import dev.pandascript.pandaeye.common.litebans.LiteBansSettings;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
@@ -30,6 +31,7 @@ class VelocityConfigTest {
         assertEquals("", config.punishments().kickCommand());
         assertEquals(3, config.punishments().maxBansPerHour());
         assertEquals(5, config.punishments().maxKicksPer10Min());
+        assertEquals(LiteBansSettings.DEFAULT, config.litebans());
         assertEquals(config, VelocityConfig.DEFAULT);
     }
 
@@ -54,5 +56,36 @@ class VelocityConfigTest {
         assertEquals(1, broken.size());
         assertTrue(VelocityConfig.load("!!javax.script.ScriptEngineManager [!!java.net.URLClassLoader [[]]]", broken)
                 .shadow(), "no arbitrary types");
+    }
+
+    @Test
+    void liteBansLabelsAreConfigurable() {
+        List<String> warnings = new ArrayList<>();
+        LiteBansSettings settings = VelocityConfig.load("""
+                labels:
+                  litebans:
+                    enabled: false
+                    cheat-reasons: [Ghost Client, triggerbot]
+                    ignore-reasons: []
+                    count-console: true
+                    backfill-days: 7
+                """, warnings).litebans();
+        assertEquals(List.of(), warnings);
+        assertFalse(settings.enabled());
+        assertEquals(List.of("ghost client", "triggerbot"), settings.cheatReasons());
+        assertEquals(List.of(), settings.ignoreReasons(), "an empty list stays empty");
+        assertEquals(LiteBansSettings.DEFAULT_LEGIT_UNBAN_REASONS, settings.legitUnbanReasons());
+        assertTrue(settings.countConsole());
+        assertEquals(7, settings.backfillDays());
+
+        List<String> invalid = new ArrayList<>();
+        assertEquals(LiteBansSettings.DEFAULT, VelocityConfig.load("""
+                labels:
+                  litebans:
+                    cheat-reasons: hack
+                    legit-unban-reasons: [false ban, {nested: map}, falsely, wrongful, mistake, appeal accepted]
+                    backfill-days: 1000
+                """, invalid).litebans());
+        assertEquals(3, invalid.size(), invalid.toString());
     }
 }

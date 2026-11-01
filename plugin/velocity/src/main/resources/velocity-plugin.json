@@ -6,6 +6,7 @@
   "authors": ["PandaScript"],
   "main": "dev.pandascript.pandaeye.velocity.PandaEyeVelocity",
   "dependencies": [
-    {"id": "floodgate", "optional": true}
+    {"id": "floodgate", "optional": true},
+    {"id": "litebans", "optional": true}
   ]
 }
