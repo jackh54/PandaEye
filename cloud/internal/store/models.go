@@ -342,9 +342,12 @@ const (
 
 // ModerationLabel is a ban of a punishment plugin (LiteBans) that the plugin classified as for cheating
 // (ModerationBanAdded, LabelCheat) or found lifted as wrong (ModerationBanRemoved, LabelLegit). Its key is
-// (tenant, source, entry id, kind): the proxy and every backend of a network may report the same entry.
+// (tenant, network id, source, entry id, kind): the proxy and every backend of a network may report the
+// same entry, and entry ids are those of the network's punishment database (another network of the
+// tenant may run its own, with the same ids).
 type ModerationLabel struct {
 	TenantID   string
+	NetworkID  string // the sending server's network id ("" = none)
 	Source     string // "litebans"
 	EntryID    string // the source's id of the ban
 	Kind       string // ModerationBanAdded or ModerationBanRemoved

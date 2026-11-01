@@ -11,15 +11,15 @@ import (
 
 // Queries of store.ModerationStore (moderation labels).
 
-const moderationCols = `tenant_id, source, entry_id, kind, label, player_uuid, ban_start, removed_at, permanent, executor,
-	received_at, applied_at, verdicts`
+const moderationCols = `tenant_id, network_id, source, entry_id, kind, label, player_uuid, ban_start, removed_at, permanent,
+	executor, received_at, applied_at, verdicts`
 
 func scanModeration(sc interface{ Scan(...any) error }) (*store.ModerationLabel, error) {
 	var m store.ModerationLabel
 	var start, received int64
 	var removed, applied sql.NullInt64
-	if err := sc.Scan(&m.TenantID, &m.Source, &m.EntryID, &m.Kind, &m.Label, &m.PlayerUUID, &start, &removed, &m.Permanent,
-		&m.Executor, &received, &applied, &m.Verdicts); err != nil {
+	if err := sc.Scan(&m.TenantID, &m.NetworkID, &m.Source, &m.EntryID, &m.Kind, &m.Label, &m.PlayerUUID, &start, &removed,
+		&m.Permanent, &m.Executor, &received, &applied, &m.Verdicts); err != nil {
 		return nil, mapErr(err)
 	}
 	m.BanStart, m.ReceivedAt = time.UnixMicro(start).UTC(), time.UnixMicro(received).UTC()
@@ -29,10 +29,10 @@ func scanModeration(sc interface{ Scan(...any) error }) (*store.ModerationLabel,
 
 func (s *Store) RecordModerationLabel(ctx context.Context, m *store.ModerationLabel) (*store.ModerationLabel, bool, error) {
 	m.ReceivedAt = orNow(m.ReceivedAt)
-	res, err := s.exec(ctx, s.w, `INSERT INTO moderation_labels (`+moderationCols+`) VALUES (`+placeholders(13)+`)
-		ON CONFLICT (tenant_id, source, entry_id, kind) DO NOTHING`,
-		m.TenantID, m.Source, m.EntryID, m.Kind, m.Label, m.PlayerUUID, m.BanStart.UnixMicro(), us(m.RemovedAt), m.Permanent,
-		m.Executor, m.ReceivedAt.UnixMicro(), us(m.AppliedAt), m.Verdicts)
+	res, err := s.exec(ctx, s.w, `INSERT INTO moderation_labels (`+moderationCols+`) VALUES (`+placeholders(14)+`)
+		ON CONFLICT (tenant_id, network_id, source, entry_id, kind) DO NOTHING`,
+		m.TenantID, m.NetworkID, m.Source, m.EntryID, m.Kind, m.Label, m.PlayerUUID, m.BanStart.UnixMicro(), us(m.RemovedAt),
+		m.Permanent, m.Executor, m.ReceivedAt.UnixMicro(), us(m.AppliedAt), m.Verdicts)
 	if err != nil {
 		return nil, false, err
 	}
@@ -40,23 +40,25 @@ func (s *Store) RecordModerationLabel(ctx context.Context, m *store.ModerationLa
 	if n, _ := res.RowsAffected(); n > 0 {
 		created = true
 	}
-	stored, err := s.GetModerationLabel(ctx, m.TenantID, m.Source, m.EntryID, m.Kind)
+	stored, err := s.GetModerationLabel(ctx, m.TenantID, m.NetworkID, m.Source, m.EntryID, m.Kind)
 	return stored, created, err
 }
 
-func (s *Store) GetModerationLabel(ctx context.Context, tenantID, source, entryID, kind string) (*store.ModerationLabel, error) {
+func (s *Store) GetModerationLabel(ctx context.Context, tenantID, networkID, source, entryID, kind string) (*store.ModerationLabel, error) {
 	return scanModeration(s.queryRow(ctx, s.r, `SELECT `+moderationCols+` FROM moderation_labels
-		WHERE tenant_id = ? AND source = ? AND entry_id = ? AND kind = ?`, tenantID, source, entryID, kind))
+		WHERE tenant_id = ? AND network_id = ? AND source = ? AND entry_id = ? AND kind = ?`, tenantID, networkID, source, entryID, kind))
 }
 
-func (s *Store) MarkModerationLabelApplied(ctx context.Context, tenantID, source, entryID, kind string, verdicts int, at time.Time) error {
+func (s *Store) MarkModerationLabelApplied(ctx context.Context, tenantID, networkID, source, entryID, kind string, verdicts int, at time.Time) error {
 	return s.updateOne(ctx, `UPDATE moderation_labels SET applied_at = ?, verdicts = ?
-		WHERE tenant_id = ? AND source = ? AND entry_id = ? AND kind = ?`, orNow(at).UnixMicro(), verdicts, tenantID, source, entryID, kind)
+		WHERE tenant_id = ? AND network_id = ? AND source = ? AND entry_id = ? AND kind = ?`, orNow(at).UnixMicro(), verdicts,
+		tenantID, networkID, source, entryID, kind)
 }
 
-// notLifted keeps the cheat bans m that no wrongful unban of the same entry superseded.
-const notLifted = `NOT EXISTS (SELECT 1 FROM moderation_labels l WHERE l.tenant_id = m.tenant_id AND l.source = m.source
-	AND l.entry_id = m.entry_id AND l.label = ?)`
+// notLifted keeps the cheat bans m that no wrongful unban of the same entry (of the same network)
+// superseded.
+const notLifted = `NOT EXISTS (SELECT 1 FROM moderation_labels l WHERE l.tenant_id = m.tenant_id AND l.network_id = m.network_id
+	AND l.source = m.source AND l.entry_id = m.entry_id AND l.label = ?)`
 
 func (s *Store) ModerationAgreement(ctx context.Context, tenantID string, since, until time.Time, lookback time.Duration) (store.ModerationAgreement, error) {
 	var out store.ModerationAgreement
@@ -67,8 +69,8 @@ func (s *Store) ModerationAgreement(ctx context.Context, tenantID string, since,
 		AND v.created_at >= m.ban_start - ? AND v.created_at <= m.ban_start`
 	rows, err := s.query(ctx, s.r, `SELECT m.player_uuid, m.ban_start, (SELECT MAX(v.action) `+before+`), (SELECT MIN(v.created_at) `+before+`)
 		FROM moderation_labels m WHERE m.tenant_id = ? AND m.label = ? AND m.ban_start >= ? AND m.ban_start < ? AND `+notLifted+`
-		ORDER BY m.ban_start, m.entry_id`, alert, ban, lb, alert, ban, lb, tenantID, store.LabelCheat, since.UnixMicro(), until.UnixMicro(),
-		store.LabelLegit)
+		ORDER BY m.ban_start, m.network_id, m.entry_id`, alert, ban, lb, alert, ban, lb, tenantID, store.LabelCheat, since.UnixMicro(),
+		until.UnixMicro(), store.LabelLegit)
 	if err != nil {
 		return out, err
 	}

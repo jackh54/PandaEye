@@ -16,7 +16,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const playerMissed = "aaaaaaaa-0000-4000-8000-000000000009" // no verdicts
+const (
+	playerMissed = "aaaaaaaa-0000-4000-8000-000000000009" // no verdicts
+	playerOther  = "aaaaaaaa-0000-4000-8000-000000000010" // no verdicts
+)
 
 func cheatBan(player string, entry int, start time.Time) *store.ModerationLabel {
 	return &store.ModerationLabel{TenantID: tenantA, Source: sourceLiteBans, EntryID: strconv.Itoa(entry), Kind: store.ModerationBanAdded,
@@ -26,6 +29,12 @@ func cheatBan(player string, entry int, start time.Time) *store.ModerationLabel 
 func wrongfulUnban(player string, entry int, start time.Time) *store.ModerationLabel {
 	m := cheatBan(player, entry, start)
 	m.Kind, m.Label, m.RemovedAt = store.ModerationBanRemoved, store.LabelLegit, fixedNow.Add(-time.Minute)
+	return m
+}
+
+// inNetwork sets the network id of m's sending server.
+func inNetwork(m *store.ModerationLabel, networkID string) *store.ModerationLabel {
+	m.NetworkID = networkID
 	return m
 }
 
@@ -120,7 +129,7 @@ func TestLiteBansCheatBanConfirms(t *testing.T) {
 	if l := ls[vBan+"/cheat"]; !l.WindowStart.Equal(from) || !l.WindowEnd.Equal(to) {
 		t.Fatalf("window %v..%v, want %v..%v", l.WindowStart, l.WindowEnd, from, to)
 	}
-	row, err := e.d.Store.GetModerationLabel(ctx, tenantA, sourceLiteBans, "4521", store.ModerationBanAdded)
+	row, err := e.d.Store.GetModerationLabel(ctx, tenantA, "", sourceLiteBans, "4521", store.ModerationBanAdded)
 	check(t, err)
 	if row.AppliedAt.IsZero() || row.Verdicts != 3 {
 		t.Fatalf("row %+v", row)
@@ -200,7 +209,7 @@ func TestLiteBansWrongfulUnbanOverturns(t *testing.T) {
 	if cover, _ := e.d.Store.HasLegitCover(ctx, tenantA, player1, fixedNow.Add(-2*time.Hour-time.Minute), fixedNow.Add(-2*time.Hour)); !cover {
 		t.Fatal("no legit cover after the wrongful unban")
 	}
-	row, _ := e.d.Store.GetModerationLabel(ctx, tenantA, sourceLiteBans, "4521", store.ModerationBanRemoved)
+	row, _ := e.d.Store.GetModerationLabel(ctx, tenantA, "", sourceLiteBans, "4521", store.ModerationBanRemoved)
 	if row.Verdicts != 2 || !row.RemovedAt.Equal(fixedNow.Add(-time.Minute)) {
 		t.Fatalf("row %+v", row)
 	}
@@ -222,7 +231,7 @@ func TestLiteBansUnflaggedWindow(t *testing.T) {
 	if len(ls) != 1 || !ok || l.VerdictID != "" || !l.WindowStart.Equal(ban.Add(-2*time.Hour)) || !l.WindowEnd.Equal(ban) {
 		t.Fatalf("unflagged cheat label %v", ls)
 	}
-	if row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, sourceLiteBans, "7", store.ModerationBanAdded); row.Verdicts != 0 || row.AppliedAt.IsZero() {
+	if row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, "", sourceLiteBans, "7", store.ModerationBanAdded); row.Verdicts != 0 || row.AppliedAt.IsZero() {
 		t.Fatalf("row %+v", row)
 	}
 	e.applyLabel(wrongfulUnban(playerMissed, 7, ban))
@@ -257,7 +266,7 @@ func TestLiteBansNeverReplaceStaffDecisions(t *testing.T) {
 		len(before) != len(after) {
 		t.Fatalf("staff labels changed: %v -> %v", before, after)
 	}
-	if row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, sourceLiteBans, "1", store.ModerationBanRemoved); row.Verdicts != 0 {
+	if row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, "", sourceLiteBans, "1", store.ModerationBanRemoved); row.Verdicts != 0 {
 		t.Fatalf("decided %d staff verdicts", row.Verdicts)
 	}
 
@@ -310,7 +319,7 @@ func TestLiteBansOrderAndIntervals(t *testing.T) {
 	if len(ls) != 1 || ls[vShadow+"/legit"].Source != store.SourceLiteBans {
 		t.Fatalf("labels %v", ls)
 	}
-	row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, sourceLiteBans, "3", store.ModerationBanAdded)
+	row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, "", sourceLiteBans, "3", store.ModerationBanAdded)
 	if row.AppliedAt.IsZero() || row.Verdicts != 0 {
 		t.Fatalf("superseded ban row %+v", row)
 	}
@@ -409,7 +418,7 @@ func TestLiteBansLabelsOfErasedPlayers(t *testing.T) {
 	for _, m := range []*store.ModerationLabel{cheatBan(player1, 4521, ban), cheatBan(playerMissed, 7, ban),
 		wrongfulUnban(playerMissed, 7, ban), cheatBan(player1, 4522, fixedNow)} {
 		e.applyLabel(m)
-		if _, err := e.d.Store.GetModerationLabel(ctx, tenantA, sourceLiteBans, m.EntryID, m.Kind); !errors.Is(err, store.ErrNotFound) {
+		if _, err := e.d.Store.GetModerationLabel(ctx, tenantA, "", sourceLiteBans, m.EntryID, m.Kind); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("ban #%s %s of an erased player recorded again: %v", m.EntryID, m.Kind, err)
 		}
 	}
@@ -426,8 +435,82 @@ func TestLiteBansLabelsOfErasedPlayers(t *testing.T) {
 
 	// A ban after the erasure is applied (the label export still leaves the erased player out).
 	e.applyLabel(cheatBan(playerMissed, 8, fixedNow.Add(time.Minute)))
-	if row, err := e.d.Store.GetModerationLabel(ctx, tenantA, sourceLiteBans, "8", store.ModerationBanAdded); err != nil || row.AppliedAt.IsZero() {
+	if row, err := e.d.Store.GetModerationLabel(ctx, tenantA, "", sourceLiteBans, "8", store.ModerationBanAdded); err != nil || row.AppliedAt.IsZero() {
 		t.Fatalf("ban after the erasure: %+v %v", row, err)
+	}
+}
+
+// Two networks of a tenant with their own LiteBans database have the same entry ids. The sending
+// server's network id keeps them apart: ban #57 of each network applies to its own player, and a
+// wrongful unban in one network neither supersedes the other's labels nor stops the other's ban.
+func TestLiteBansNetworksKeepEntriesApart(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx := context.Background()
+	ban := fixedNow.Add(-time.Hour)
+	e.applyLabel(inNetwork(cheatBan(player1, 57, ban), "net-a"))
+	e.applyLabel(inNetwork(cheatBan(player2, 57, ban), "net-b"))
+	for _, id := range []string{vBan, vAlert, vShadow, vMit} {
+		wantDecision(t, e, id, store.StatusConfirmed, store.DecidedByLiteBans)
+	}
+	for network, player := range map[string]string{"net-a": player1, "net-b": player2} {
+		row, err := e.d.Store.GetModerationLabel(ctx, tenantA, network, sourceLiteBans, "57", store.ModerationBanAdded)
+		if err != nil || row.PlayerUUID != player || row.AppliedAt.IsZero() || row.Verdicts != 2 {
+			t.Fatalf("%s: %+v %v", network, row, err)
+		}
+	}
+	if n := len(auditActions(t, e, "litebans.cheat")); n != 2 {
+		t.Fatalf("cheat audit entries %d", n)
+	}
+
+	// Network B lifts its #57 as wrong: player2's verdicts are overturned, player1's stay confirmed with
+	// their cheat labels, and network A's ban still counts as a cheat ban.
+	e.applyLabel(inNetwork(wrongfulUnban(player2, 57, ban), "net-b"))
+	for _, id := range []string{vShadow, vMit} {
+		wantDecision(t, e, id, store.StatusOverturned, store.DecidedByLiteBans)
+	}
+	for _, id := range []string{vBan, vAlert} {
+		wantDecision(t, e, id, store.StatusConfirmed, store.DecidedByLiteBans)
+	}
+	if ls := playerLabels(t, e, tenantA, player1); len(ls) != 2 || ls[vBan+"/cheat"].Source != store.SourceLiteBans ||
+		ls[vAlert+"/cheat"].Source != store.SourceLiteBans {
+		t.Fatalf("network A's labels after network B's unban: %v", ls)
+	}
+	if b, _ := e.d.Store.GetBan(ctx, tenantA, vBan); !b.Active {
+		t.Fatal("network B's unban lifted network A's ban")
+	}
+	ag, err := e.d.Store.ModerationAgreement(ctx, tenantA, fixedNow.Add(-24*time.Hour), fixedNow, 7*24*time.Hour)
+	check(t, err)
+	if len(ag.Bans) != 1 || ag.Bans[0].PlayerUUID != player1 || ag.Overturns != 1 || ag.VerdictsOverturned != 2 {
+		t.Fatalf("agreement %+v", ag)
+	}
+
+	// Network B's unban of #58 arrives before network A's ban #58: A's ban is not lifted by it.
+	e.applyLabel(inNetwork(wrongfulUnban(playerOther, 58, ban), "net-b"))
+	e.applyLabel(inNetwork(cheatBan(playerMissed, 58, ban), "net-a"))
+	e.applyLabel(inNetwork(cheatBan(playerOther, 58, ban), "net-b")) // lifted in its own network first
+	if l, ok := playerLabels(t, e, tenantA, playerMissed)[store.SourceLiteBansUnflagged+"/cheat"]; !ok || !l.WindowEnd.Equal(ban) {
+		t.Fatalf("network A's ban #58 not applied: %v", playerLabels(t, e, tenantA, playerMissed))
+	}
+	if ls := playerLabels(t, e, tenantA, playerOther); len(ls) != 1 || !ls[store.SourceLiteBansUnflagged+"/legit"].WindowEnd.Equal(ban) {
+		t.Fatalf("network B's unban #58: %v", ls)
+	}
+	// Unflagged cheat bans #59 of both networks: one label per network's entry.
+	ban59 := fixedNow.Add(-5 * time.Hour)
+	e.applyLabel(inNetwork(cheatBan(playerMissed, 59, ban59), "net-a"))
+	e.applyLabel(inNetwork(cheatBan(playerOther, 59, ban59), "net-b"))
+	for _, p := range []string{playerMissed, playerOther} {
+		n := 0
+		ls, _, err := e.d.Store.ExportLabels(ctx, tenantA, time.Time{}, store.Page{Limit: 200})
+		check(t, err)
+		for _, l := range ls {
+			if l.PlayerUUID == p && l.Source == store.SourceLiteBansUnflagged && l.Label.Label == store.LabelCheat && l.WindowEnd.Equal(ban59) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("%s: %d unflagged cheat labels of ban #59", p, n)
+		}
 	}
 }
 
@@ -445,8 +528,13 @@ func TestModerationLabelRecords(t *testing.T) {
 	m, err := moderationLabel(rec(nil), tenantA)
 	check(t, err)
 	if m.EntryID != "12" || m.Kind != store.ModerationBanRemoved || m.Label != store.LabelLegit || m.PlayerUUID != player1 ||
-		!m.BanStart.Equal(fixedNow) || !m.RemovedAt.Equal(fixedNow.Add(time.Hour)) || m.Executor != store.ExecutorConsole || m.Permanent {
+		!m.BanStart.Equal(fixedNow) || !m.RemovedAt.Equal(fixedNow.Add(time.Hour)) || m.Executor != store.ExecutorConsole || m.Permanent ||
+		m.NetworkID != "" {
 		t.Fatalf("label %+v", m)
+	}
+	// The entry belongs to the sending server's network.
+	if m, err := moderationLabel(rec(func(r *pb.LabelRecord) { r.Origin.NetworkId = "net-a" }), tenantA); err != nil || m.NetworkID != "net-a" {
+		t.Fatalf("network id: %+v %v", m, err)
 	}
 	for name, mut := range map[string]func(r *pb.LabelRecord){
 		"other subject":   nil,
@@ -504,7 +592,7 @@ func TestLabelConsumer(t *testing.T) {
 	publish(tenantA, &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA, ServerId: srv1}, Player: uuidBytes(player1), Label: label}, "c")
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		row, err := e.d.Store.GetModerationLabel(context.Background(), tenantA, sourceLiteBans, "4521", store.ModerationBanAdded)
+		row, err := e.d.Store.GetModerationLabel(context.Background(), tenantA, "", sourceLiteBans, "4521", store.ModerationBanAdded)
 		if err == nil && !row.AppliedAt.IsZero() {
 			break
 		}
@@ -517,7 +605,7 @@ func TestLabelConsumer(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	wantDecision(t, e, vBan, store.StatusConfirmed, store.DecidedByLiteBans)
-	if _, err := e.d.Store.GetModerationLabel(context.Background(), tenantB, sourceLiteBans, "4521", store.ModerationBanAdded); !errors.Is(err, store.ErrNotFound) {
+	if _, err := e.d.Store.GetModerationLabel(context.Background(), tenantB, "", sourceLiteBans, "4521", store.ModerationBanAdded); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("a record on another tenant's subject was applied: %v", err)
 	}
 	if !strings.Contains(e.logs.String(), `unknown label source`) {

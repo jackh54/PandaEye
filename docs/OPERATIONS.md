@@ -680,8 +680,13 @@ With LiteBans on a backend or the proxy, PandaEye sends its cheating bans and th
   restart is harmless (the cloud de-duplicates); `backfill-days: 0` turns it off.
 
 In the cloud (ARCHITECTURE 5.8 "LiteBans labels"), the api's label consumer (lease `labels`) applies each ban
-and wrongful unban once, whichever proxy or backend sent it:
+and wrongful unban once per network, whichever proxy or backend of the network sent it:
 
+- LiteBans numbers the bans of each database from 1, so the cloud keeps the bans of each `network-id` apart
+  (servers without one count as one network). Networks of one tenant that share one LiteBans database should
+  use the same `network-id`; networks with their own database and different `network-id`s are kept apart. Two
+  networks with their own databases and the same (or no) `network-id` mix up their bans: give each its own
+  `network-id`, the same on its proxy and every backend (8.8).
 - A cheat ban confirms the player's verdicts of the `PE_LABELS_LOOKBACK` (7 d) before it, shadow ones
   included, as a staff confirm would (status, `litebans` cheat label, reputation if eligible); a wrongful unban
   overturns them as a staff overturn would, so the open session gets an UNMITIGATE and an executed BAN its

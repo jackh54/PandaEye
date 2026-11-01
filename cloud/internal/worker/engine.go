@@ -762,8 +762,8 @@ func (e *engine) push(o outMsg) {
 }
 
 // label forwards a ModerationLabel (a punishment plugin's ban classified by the plugin, PROTOCOL 5) as a
-// LabelRecord to pe.labels.<tenant>, where the api de-duplicates and applies it. The player may be offline,
-// unknown to the worker or on another partition owner's server: the label needs no session.
+// LabelRecord to pe.labels.<tenant>, where the api de-duplicates (per network) and applies it. The player
+// may be offline, unknown to the worker or on another partition owner's server: the label needs no session.
 func (e *engine) label(m *batchMeta, ev *pb.Event, l *pb.ModerationLabel) {
 	player, err := identity.UUIDFromBytes(ev.GetPlayer())
 	if err != nil || player.IsZero() || !validLabel(l) {
@@ -779,7 +779,8 @@ func (e *engine) label(m *batchMeta, ev *pb.Event, l *pb.ModerationLabel) {
 		return
 	}
 	e.env.wm.Labels.Inc()
-	e.out = append(e.out, outMsg{subject: subj, msgID: stream.LabelRecordMsgID(m.tenant, l.GetSource(), l.GetEntryId(), int32(l.GetKind())),
+	id := stream.LabelRecordMsgID(m.tenant, m.origin.GetNetworkId(), l.GetSource(), l.GetEntryId(), int32(l.GetKind()))
+	e.out = append(e.out, outMsg{subject: subj, msgID: id,
 		label: &pb.LabelRecord{Origin: m.origin, Player: ev.GetPlayer(), Label: l, GatewayRecvUnixUs: m.recvUs}})
 }
 

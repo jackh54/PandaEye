@@ -132,8 +132,14 @@ func TestSubjects(t *testing.T) {
 	if SessionMarkerMsgID(tenant, server, 42, 3, 5) != tenant+":"+server+":42:03:5:session" || VerdictRecordMsgID("v") != "v" || AckRecordMsgID("v") != "ack:v" {
 		t.Error("marker/record msg ids")
 	}
-	if LabelRecordMsgID(tenant, "litebans", 4521, 2) != "label:"+tenant+":litebans:4521:2" {
+	if LabelRecordMsgID(tenant, "net-a", "litebans", 4521, 2) != "label:"+tenant+":net-a:litebans:4521:2" ||
+		LabelRecordMsgID(tenant, "", "litebans", 4521, 2) != "label:"+tenant+"::litebans:4521:2" {
 		t.Error("label msg id")
+	}
+	// Two networks with their own LiteBans database have the same entry ids: JetStream must not drop one.
+	if LabelRecordMsgID(tenant, "net-a", "litebans", 4521, 2) == LabelRecordMsgID(tenant, "net-b", "litebans", 4521, 2) ||
+		LabelRecordMsgID(tenant, "", "litebans", 4521, 2) == LabelRecordMsgID(tenant, "net-a", "litebans", 4521, 2) {
+		t.Error("label msg ids of two networks collide")
 	}
 	if p, err := PartitionOf("pe.signals.11"); err != nil || p != 11 {
 		t.Error("PartitionOf")

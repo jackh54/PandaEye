@@ -124,8 +124,9 @@ func VerdictRecordMsgID(verdictID string) string { return verdictID }
 // AckRecordMsgID returns the msg id of an AckRecord: ack:<verdict id>.
 func AckRecordMsgID(verdictID string) string { return "ack:" + verdictID }
 
-// LabelRecordMsgID returns the msg id of a LabelRecord: label:<tenant>:<source>:<entry id>:<kind>, the
-// key the api de-duplicates labels by (the proxy and every backend may send the same entry).
-func LabelRecordMsgID(tenantID, source string, entryID uint64, kind int32) string {
-	return "label:" + tenantID + ":" + source + ":" + strconv.FormatUint(entryID, 10) + ":" + strconv.Itoa(int(kind))
+// LabelRecordMsgID returns the msg id of a LabelRecord: label:<tenant>:<network>:<source>:<entry id>:<kind>
+// (network = the origin's network id, empty when it has none), the key the api de-duplicates labels by
+// (the proxy and every backend of a network may send the same entry).
+func LabelRecordMsgID(tenantID, networkID, source string, entryID uint64, kind int32) string {
+	return "label:" + tenantID + ":" + networkID + ":" + source + ":" + strconv.FormatUint(entryID, 10) + ":" + strconv.Itoa(int(kind))
 }

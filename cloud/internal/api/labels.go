@@ -18,9 +18,10 @@ import (
 
 // Moderation labels (ARCHITECTURE 5.8): the LiteBans bans for cheating and their wrongful unbans that
 // the plugins classify and the worker forwards as LabelRecords on pe.labels.<tenant>. The label consumer
-// (one leased instance, lease "labels") records each (tenant, source, entry id, kind) once and decides
-// the player's verdicts of the lookback before the ban, as staff would on the dashboard, except that a
-// label never replaces a staff decision.
+// (one leased instance, lease "labels") records each (tenant, network id, source, entry id, kind) once and
+// decides the player's verdicts of the lookback before the ban, as staff would on the dashboard, except
+// that a label never replaces a staff decision. Entry ids are those of one LiteBans database: the
+// origin's network id keeps the entries of networks with their own database apart.
 
 const (
 	labelsConsumer     = "labels"
@@ -104,7 +105,8 @@ func (s *Service) applyLabelMsg(ctx context.Context, m *stream.Msg) error {
 		case ctx.Err() != nil:
 			return context.Cause(ctx)
 		case errors.Is(err, store.ErrInvalid), errors.Is(err, store.ErrNotFound):
-			s.log.Warn("labels: label skipped", "seq", m.Seq, "tenant_id", ml.TenantID, "entry_id", ml.EntryID, "err", err)
+			s.log.Warn("labels: label skipped", "seq", m.Seq, "tenant_id", ml.TenantID, "network_id", ml.NetworkID, "entry_id", ml.EntryID,
+				"err", err)
 			return nil
 		case attempt >= labelAttempts:
 			return err
@@ -118,7 +120,8 @@ func (s *Service) applyLabelMsg(ctx context.Context, m *stream.Msg) error {
 	}
 }
 
-// moderationLabel converts a LabelRecord of the subject's tenant into its stored row.
+// moderationLabel converts a LabelRecord of the subject's tenant into its stored row; the entry belongs to
+// the network of the server that sent it (Origin.network_id, "" without one).
 func moderationLabel(rec *pb.LabelRecord, subjectTenant string) (*store.ModerationLabel, error) {
 	tenant := rec.GetOrigin().GetTenantId()
 	if !identity.ValidTenantID(tenant) || tenant != subjectTenant {
@@ -135,8 +138,9 @@ func moderationLabel(rec *pb.LabelRecord, subjectTenant string) (*store.Moderati
 	if l.GetEntryId() == 0 || l.GetBanStartUnixMs() == 0 {
 		return nil, errors.New("no entry id or ban start")
 	}
-	m := &store.ModerationLabel{TenantID: tenant, Source: l.GetSource(), EntryID: strconv.FormatUint(l.GetEntryId(), 10),
-		PlayerUUID: player.String(), BanStart: time.UnixMilli(int64(l.GetBanStartUnixMs())).UTC(), Permanent: l.GetPermanent()}
+	m := &store.ModerationLabel{TenantID: tenant, NetworkID: rec.GetOrigin().GetNetworkId(), Source: l.GetSource(),
+		EntryID: strconv.FormatUint(l.GetEntryId(), 10), PlayerUUID: player.String(), BanStart: time.UnixMilli(int64(l.GetBanStartUnixMs())).UTC(),
+		Permanent: l.GetPermanent()}
 	switch {
 	case l.GetKind() == pb.ModerationLabel_KIND_BAN_ADDED && l.GetClassification() == pb.ModerationLabel_CLASSIFICATION_CHEAT:
 		m.Kind, m.Label = store.ModerationBanAdded, store.LabelCheat
@@ -157,11 +161,12 @@ func moderationLabel(rec *pb.LabelRecord, subjectTenant string) (*store.Moderati
 	return m, nil
 }
 
-// applyModerationLabel records m once and applies it: a cheat ban confirms the player's verdicts created
-// in [ban start - lookback, ban start] (or, without one, labels the window before the ban cheat), a
-// wrongful unban overturns them (or labels that window legit) and supersedes the entry's cheat labels.
-// A cheat ban whose wrongful unban was recorded first is not applied, nor is a ban of an erased player
-// that started before the erasure. Every step is idempotent: a retry after a failure completes it.
+// applyModerationLabel records m once per (tenant, network id, source, entry id, kind) and applies it: a
+// cheat ban confirms the player's verdicts created in [ban start - lookback, ban start] (or, without one,
+// labels the window before the ban cheat), a wrongful unban overturns them (or labels that window legit)
+// and supersedes the entry's cheat labels. A cheat ban whose wrongful unban (of the same network) was
+// recorded first is not applied, nor is a ban of an erased player that started before the erasure.
+// Every step is idempotent: a retry after a failure completes it.
 func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationLabel, now time.Time) error {
 	if m.ReceivedAt.IsZero() {
 		m.ReceivedAt = now
@@ -171,7 +176,7 @@ func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationL
 	// (5.13), a ban issued after the erasure is new data.
 	switch er, err := s.d.Store.GetErasure(ctx, m.TenantID, m.PlayerUUID); {
 	case err == nil && !m.BanStart.After(er.RequestedAt):
-		s.log.Debug("moderation label of an erased player skipped", "tenant_id", m.TenantID, "entry_id", m.EntryID)
+		s.log.Debug("moderation label of an erased player skipped", "tenant_id", m.TenantID, "network_id", m.NetworkID, "entry_id", m.EntryID)
 		return nil
 	case err != nil && !errors.Is(err, store.ErrNotFound):
 		return err
@@ -181,13 +186,13 @@ func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationL
 		return err
 	}
 	if !stored.AppliedAt.IsZero() {
-		return nil // the same entry from another server, or a backfill on a plugin restart
+		return nil // the same entry from another server of the network, or a backfill on a plugin restart
 	}
 	var decided []string
 	unflagged := false
 	switch stored.Kind {
 	case store.ModerationBanAdded:
-		_, err := s.d.Store.GetModerationLabel(ctx, stored.TenantID, stored.Source, stored.EntryID, store.ModerationBanRemoved)
+		_, err := s.d.Store.GetModerationLabel(ctx, stored.TenantID, stored.NetworkID, stored.Source, stored.EntryID, store.ModerationBanRemoved)
 		switch {
 		case err == nil:
 			// Lifted as wrong before we saw the ban (out of order): nothing to confirm.
@@ -205,7 +210,8 @@ func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationL
 	default:
 		return fmt.Errorf("%w: moderation label kind %q", store.ErrInvalid, stored.Kind)
 	}
-	if err := s.d.Store.MarkModerationLabelApplied(ctx, stored.TenantID, stored.Source, stored.EntryID, stored.Kind, len(decided), now); err != nil {
+	err = s.d.Store.MarkModerationLabelApplied(ctx, stored.TenantID, stored.NetworkID, stored.Source, stored.EntryID, stored.Kind, len(decided), now)
+	if err != nil {
 		return err
 	}
 	ids := decided
@@ -213,8 +219,8 @@ func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationL
 		ids = ids[:maxAuditVerdictIDs]
 	}
 	s.audit(ctx, stored.TenantID, liteBansPrincipal, "litebans."+stored.Label, stored.Source+":"+stored.EntryID,
-		map[string]any{"player_uuid": stored.PlayerUUID, "verdicts": len(decided), "verdict_ids": ids, "unflagged_label": unflagged,
-			"executor": stored.Executor}, now)
+		map[string]any{"network_id": stored.NetworkID, "player_uuid": stored.PlayerUUID, "verdicts": len(decided), "verdict_ids": ids,
+			"unflagged_label": unflagged, "executor": stored.Executor}, now)
 	s.log.Debug("moderation label applied", "tenant_id", stored.TenantID, "label", stored.Label, "verdicts", len(decided), "unflagged", unflagged)
 	return nil
 }
@@ -308,10 +314,10 @@ func (s *Service) applyWrongfulUnban(ctx context.Context, m *store.ModerationLab
 }
 
 // insertUnflaggedLabel labels the player over [ban start - window, ban start]: cheat for a ban, legit
-// for a wrongful unban (one label per entry and value).
+// for a wrongful unban (one label per network's entry and value).
 func (s *Service) insertUnflaggedLabel(ctx context.Context, m *store.ModerationLabel, now time.Time) error {
 	l := &store.Label{
-		ID:       uuid.NewSHA1(labelNamespace, []byte(m.TenantID+"|"+m.Source+":"+m.EntryID+"|"+m.Label)).String(),
+		ID:       uuid.NewSHA1(labelNamespace, []byte(m.TenantID+"|"+m.NetworkID+"|"+m.Source+":"+m.EntryID+"|"+m.Label)).String(),
 		TenantID: m.TenantID, PlayerUUID: m.PlayerUUID, Label: m.Label, Source: store.SourceLiteBansUnflagged,
 		WindowStart: m.BanStart.Add(-s.d.Config.Labels.Window), WindowEnd: m.BanStart, CreatedAt: now,
 	}

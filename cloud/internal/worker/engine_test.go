@@ -793,7 +793,7 @@ func TestModerationLabelsForwarded(t *testing.T) {
 	if len(ls) != 1 || len(out) != 1 {
 		t.Fatalf("label out %+v", out)
 	}
-	if ls[0].subject != "pe.labels."+testTenant || ls[0].msgID != stream.LabelRecordMsgID(testTenant, "litebans", 4521, int32(pb.ModerationLabel_KIND_BAN_ADDED)) {
+	if ls[0].subject != "pe.labels."+testTenant || ls[0].msgID != stream.LabelRecordMsgID(testTenant, "", "litebans", 4521, int32(pb.ModerationLabel_KIND_BAN_ADDED)) {
 		t.Fatalf("subject %s msg id %s", ls[0].subject, ls[0].msgID)
 	}
 	rec := ls[0].label
@@ -802,6 +802,16 @@ func TestModerationLabelsForwarded(t *testing.T) {
 	}
 	if len(h.eng.proxies) != 0 || len(h.eng.sessions) != 0 || len(h.eng.buffers) != 0 {
 		t.Fatal("a label must not create, touch or wait for sessions")
+	}
+	// The same entry id from a network with its own LiteBans database is another entry: its msg id
+	// carries the origin's network id, so JetStream de-duplication keeps both.
+	other := origin(testkit.NewServerID(), pb.Platform_PLATFORM_PAPER)
+	other.NetworkId = "net-b"
+	ls = labels(h.send(other, 1, false, labelEvent(testkit.NewPlayer("other"), 4521, pb.ModerationLabel_KIND_BAN_ADDED,
+		pb.ModerationLabel_CLASSIFICATION_CHEAT)))
+	if len(ls) != 1 || ls[0].msgID != stream.LabelRecordMsgID(testTenant, "net-b", "litebans", 4521, int32(pb.ModerationLabel_KIND_BAN_ADDED)) ||
+		ls[0].label.Origin.GetNetworkId() != "net-b" {
+		t.Fatalf("label of network net-b: %+v", ls)
 	}
 
 	// A backend without the player's session forwards it at once (nothing buffered or dropped).

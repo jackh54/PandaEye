@@ -28,13 +28,13 @@ type LabelStore interface {
 // ModerationStore stores moderation labels (LiteBans bans and wrongful unbans) and compares them with
 // the verdicts (ARCHITECTURE 5.8).
 type ModerationStore interface {
-	// RecordModerationLabel inserts m unless a row with its key (tenant, source, entry id, kind) exists
-	// and returns the stored row; created reports whether m was inserted.
+	// RecordModerationLabel inserts m unless a row with its key (tenant, network id, source, entry id,
+	// kind) exists and returns the stored row; created reports whether m was inserted.
 	RecordModerationLabel(ctx context.Context, m *ModerationLabel) (stored *ModerationLabel, created bool, err error)
-	// GetModerationLabel returns the row of (tenant, source, entry id, kind) or ErrNotFound.
-	GetModerationLabel(ctx context.Context, tenantID, source, entryID, kind string) (*ModerationLabel, error)
+	// GetModerationLabel returns the row of (tenant, network id, source, entry id, kind) or ErrNotFound.
+	GetModerationLabel(ctx context.Context, tenantID, networkID, source, entryID, kind string) (*ModerationLabel, error)
 	// MarkModerationLabelApplied sets applied_at and the number of verdicts the label decided.
-	MarkModerationLabelApplied(ctx context.Context, tenantID, source, entryID, kind string, verdicts int, at time.Time) error
+	MarkModerationLabelApplied(ctx context.Context, tenantID, networkID, source, entryID, kind string, verdicts int, at time.Time) error
 	// ModerationAgreement compares the moderation labels of [since, until) with the tenant's ALERT..BAN
 	// verdicts (shadow included) within lookback of each ban (see ModerationAgreement).
 	ModerationAgreement(ctx context.Context, tenantID string, since, until time.Time, lookback time.Duration) (ModerationAgreement, error)

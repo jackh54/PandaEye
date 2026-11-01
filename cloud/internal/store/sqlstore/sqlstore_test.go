@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
@@ -153,6 +154,14 @@ func TestMigrationMarksStaffDecisions(t *testing.T) {
 		v, err := s.GetVerdict(ctx, "t_aaaaaaaaaaaaaaaaaaaa", id)
 		if err != nil || v.DecidedBy != by {
 			t.Errorf("%s: decided by %q, want %q (%v)", id, v.DecidedBy, by, err)
+		}
+	}
+	// A LiteBans entry is keyed by network: the same entry id of two networks is two rows.
+	for _, network := range []string{"", "net-b"} {
+		m := &store.ModerationLabel{TenantID: "t_aaaaaaaaaaaaaaaaaaaa", NetworkID: network, Source: "litebans", EntryID: "57",
+			Kind: store.ModerationBanAdded, Label: store.LabelCheat, PlayerUUID: "p", BanStart: time.UnixMicro(1)}
+		if _, created, err := s.RecordModerationLabel(ctx, m); err != nil || !created {
+			t.Fatalf("entry of network %q: %v %v", network, created, err)
 		}
 	}
 }

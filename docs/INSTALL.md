@@ -77,7 +77,9 @@ Only the outcome is sent: never the ban reason, staff names or IP addresses. The
 as a cheating ban are under `labels.litebans` in `config.yml` (backend and proxy, restart to apply);
 `labels.litebans.enabled: false` turns it off. `/pandaeye status` shows the labels sent. In the dashboard, verdicts
 decided this way are marked "LiteBans" and the overview's "Accuracy (LiteBans)" card compares PandaEye with your
-staff's bans; a decision staff make in the dashboard always wins over LiteBans.
+staff's bans; a decision staff make in the dashboard always wins over LiteBans. With several networks under one
+licence that each run their own LiteBans database, set a different `network-id` in `config.yml` for each network
+(the same on its proxy and all its backends); networks that share one LiteBans database use the same `network-id`.
 
 ## Updating and removing
 
