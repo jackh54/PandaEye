@@ -278,9 +278,14 @@ OPEN_WINDOW/CLOSE_WINDOW. Points 3, confidence 0.8.
   every candidate height. The previous position needs the movement packets just before the action: out of
   focus the plugin sends movement at 2 Hz and focus starts with the action itself (ARCHITECTURE 4.6), so
   before an attack, placement or dig it first sends the up to 4 movement packets it held back since its
-  last sample. Plugins before that sent none: the first action after a pause (3 s without a placement or
-  dig, 5 s without combat) had no previous position, and a walking player's legit click mismatched
-  `scaffold.cursor` about a third of the time by 3 to 10 degrees. Heights: placements and digs standing
+  last sample. That covers about 9 in 10 first actions after a pause (3 s without a placement or dig, 5 s
+  without combat). In the others the last sample is the packet of the tick before the action: nothing was
+  held back, the packet before that sample cannot follow it (the cloud would drop it as stale), and the
+  previous position is the sample before, 10 ticks earlier, a coarse path over those ticks. Plugins before
+  the catch-up sent none: the first action had no previous position, or that coarse one when a sample
+  arrived within 150 ms. In a simulation of legit walking first placements `scaffold.cursor` mismatched
+  about a third of them by 3 to 10 degrees without the catch-up, none with a held packet, and about a fifth
+  of those with the coarse path. Heights: placements and digs standing
   and sneaking; attacks the reported height, plus the other of standing/sneaking when the sneaking state
   changed around the attack. A reduced report (swimming/gliding, eye 0.4) also tests standing and sneaking
   for attacks, and 0.4 for placements and digs: the plugin reports these flags while a change is
@@ -669,8 +674,9 @@ cat data/digests/digest-*.jsonl | jq -s 'map(select(.check == "scaffold.cursor" 
   ones who bridge: automation clients (a block a second or slower, tens of degrees off, `turn` `0`) and
   modules that place now and then fill the slow buckets, with failures far past the threshold in a few
   cells. The first action after a pause from plugins before the catch-up of 2.1 lacks its previous
-  position: `scaffold.cursor` 3-10 degrees and `scaffold.ray` under 2, with `speed` `none`, spread thin
-  over many cells. A rise on one protocol only points at that client or its translation. `dig.ray` shares
+  position, or has the coarse one of a sample 10 ticks back: `scaffold.cursor` 3-10 degrees and
+  `scaffold.ray` under 2, with `speed` `none` (`>=0.4` for the coarse one), spread thin over many cells;
+  with the catch-up about 1 in 10 of them remains (the coarse case). A rise on one protocol only points at that client or its translation. `dig.ray` shares
   R0, R1, the 100 ms wait, the skips and the eye candidates with the scaffold checks: a rise there too
   points at that shared machinery, a rise in the scaffold checks alone at what is placed and who places it.
 - `cursor_only / failures` near 1: the look ray met the clicked block, so eye and rotation were right, but

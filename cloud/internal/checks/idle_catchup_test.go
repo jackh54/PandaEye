@@ -180,6 +180,89 @@ func randomFirstPlacements(t *testing.T, seed uint64, speed float64, caughtUp bo
 	return rates
 }
 
+// idleWalkPhase is idleWalk with the 2 Hz samples placed by phase: the last sample is the packet phase
+// packets before the click's tick (phase 0: the packet of the tick before the click). With caughtUp, the
+// packets after that sample, at most 4, are sent before the action as the plugin's catch-up does.
+func idleWalkPhase(r *rig, ticks int, step geom.Vec3, rot geom.Rotation, phase int, caughtUp bool) {
+	for i := range ticks {
+		pos := r.p.Pos.Add(step)
+		back := ticks - 1 - i // 0 = the packet of the tick before the click
+		if back%10 == phase || caughtUp && back < phase && back < 4 {
+			r.tick(pos, rot)
+		} else {
+			r.p.Pos = pos
+			r.idle()
+		}
+	}
+}
+
+// phaseFirstPlacements is randomFirstPlacements at one sample phase; it returns the scaffold.cursor
+// failure rate and the share of the placements judged with an eye path.
+func phaseFirstPlacements(t *testing.T, seed uint64, speed float64, phase int, caughtUp bool) (cursor, eyePath float64) {
+	rng := rand.New(rand.NewPCG(seed, 43))
+	r := newRig(t, rigProtocol)
+	r.tick(geom.V(0.5, 64, 0.5), geom.Rotation{})
+	const n = 200
+	for i := 0; i < n; {
+		step := geom.LookVector(rng.Float64()*360-180, 0).Scale(speed)
+		idleWalkPhase(r, 70, step, r.p.Rot, phase, caughtUp)
+		cur := r.p.Pos
+		pick := geom.Eye(cur.Sub(step).Add(step.Scale(rng.Float64())), geom.PoseStanding, r.p.Protocol, 1)
+		rot := geom.Rotation{Yaw: rng.Float64()*360 - 180, Pitch: 20 + rng.Float64()*70}
+		p := pick.Add(rot.Look().Scale(1 + rng.Float64()*3))
+		b := [3]int32{int32(math.Floor(p.X)), int32(math.Floor(p.Y)), int32(math.Floor(p.Z))}
+		face, c, ok := rayClick(pick, rot, b)
+		if !ok {
+			continue
+		}
+		r.p.Rot = rot
+		r.place(blockClick{block: b, face: face, cursor: c, eye: geom.Eye(cur, geom.PoseStanding, r.p.Protocol, 1), rot: rot})
+		r.tick(cur.Add(step), rot)
+		r.tick(r.p.Pos, rot)
+		i++
+	}
+	_, d := r.runDigest("scaffold")
+	cur, ray := d.of("scaffold.cursor"), d.of("scaffold.ray")
+	if len(ray) != n || len(cur) < n*9/10 {
+		t.Fatalf("%d placements judged by scaffold.ray, %d by scaffold.cursor, want %d", len(ray), len(cur), n)
+	}
+	failed, withPath := 0, 0
+	for _, o := range cur {
+		if o.Failed {
+			failed++
+		}
+	}
+	for _, o := range ray {
+		if o.EyePath {
+			withPath++
+		}
+	}
+	return float64(failed) / float64(len(cur)), float64(withPath) / float64(len(ray))
+}
+
+// The 2 Hz sample falls on any packet; the catch-up restores the eye path whenever a packet was held back
+// after it. When the sample is the packet of the tick before the click (1 in 10 at 2 Hz) nothing is held,
+// the catch-up sends nothing, and the cloud's previous position is the sample before, 10 ticks earlier: a
+// coarse eye path over those ticks, with which a walking player's legit first placement still mismatches
+// often. The plugin cannot send the packet before that sample afterwards (the cloud would drop it as
+// stale), so this case stays as it was.
+func TestScaffoldFirstPlacementBySamplePhase(t *testing.T) {
+	const walking = 0.216
+	for phase := range 10 {
+		cursor, eyePath := phaseFirstPlacements(t, uint64(phase), walking, phase, true)
+		oldCursor, _ := phaseFirstPlacements(t, uint64(phase), walking, phase, false)
+		t.Logf("phase %d: caught up %.1f%% mismatched (eye path %.0f%%), without %.1f%%", phase, 100*cursor, 100*eyePath, 100*oldCursor)
+		switch {
+		case phase > 0 && (cursor != 0 || eyePath != 1):
+			t.Fatalf("phase %d: with a held packet every legit first placement has its eye path and matches: %.3f, eye path %.3f", phase, cursor, eyePath)
+		case phase > 0 && oldCursor < 0.15:
+			t.Fatalf("phase %d: the fixture should reproduce the old stream's mismatches: %.3f", phase, oldCursor)
+		case phase == 0 && (cursor != oldCursor || cursor < 0.1):
+			t.Fatalf("phase 0: nothing is held, the stream and its mismatches are the old ones: %.3f vs %.3f", cursor, oldCursor)
+		}
+	}
+}
+
 func TestScaffoldPropertyRandomFirstPlacementAfterAPause(t *testing.T) {
 	for i, speed := range []float64{0.065, 0.216, 0.28} { // sneaking, walking, sprinting
 		if rates := randomFirstPlacements(t, uint64(i), speed, true); len(rates) != 0 {

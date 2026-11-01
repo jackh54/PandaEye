@@ -140,7 +140,9 @@ public final class SessionTelemetry implements SessionEvents {
      * old, the eye path of CHECKS 2.1 is missing, and a moving player's click looks off by up to a tick of
      * movement). Moves older than an event already offered for this session, by any thread (the region
      * thread's EnvSample, the PlayerJoin re-announce, LocalFlag, CheckStats: {@link Session#offered}), are
-     * left out: the cloud would drop them as stale.
+     * left out: the cloud would drop them as stale. For the same reason nothing helps when the last sample
+     * was the packet just before the action (about 1 in 10 at 2 Hz): the one before it was dropped when the
+     * sample was sent, and the cloud then has only the sample before that.
      */
     private void catchUp() {
         int consumed = 0;

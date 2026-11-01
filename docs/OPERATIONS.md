@@ -485,7 +485,8 @@ From the smallest to the largest blast radius:
    clients, poses and pings a check fails. Compare digest hours of one plugin version: the digest has no
    plugin-version dimension, and a plugin update can change what the cloud judges from (since the plugin
    sends the movement it held back before an attack, placement or dig, CHECKS 2.1, the first action after
-   a pause has its previous positions, and `scaffold.cursor` fails less at `gap` `>=1000`).
+   a pause has its previous positions about 9 times in 10, and `scaffold.cursor` fails less at `gap`
+   `>=1000`).
 4. **Remediate**: overturn every wrongful verdict (`POST /api/v1/verdicts/{id}/overturn`, staff or an API
    key with `verdicts:write`). Overturn labels the player `legit` for the window (which also blocks
    KICK/BAN from that window), removes reputation contributions, sends UNMITIGATE to the open session and,
