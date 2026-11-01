@@ -71,8 +71,8 @@ in the Hello.
 - With `PE_FEATURES_DIR=data/ml`: at most about 0.5 MB per concurrently tracked player and day (73 MB a
   day for 150 players), kept 90 days and capped at `PE_FEATURES_MAX_BYTES` (20 GiB); lower the cap to fit
   the disk limit.
-- With `PE_DIGEST_DIR=data/digests`: at most about 0.8 MB an hour (2 048 cells; a handful of servers is
-  expected to need a few hundred, about 0.1 MB an hour, an estimate), kept 30 days (`PE_DIGEST_RETENTION`).
+- With `PE_DIGEST_DIR=data/digests`: at most about 2 MB an hour (2 048 cells; a handful of servers is
+  expected to need a few hundred, about 0.3 MB an hour, an estimate), kept 30 days (`PE_DIGEST_RETENTION`).
 - Building on the server (an egg that runs `go build` at start): Pterodactyl's `/tmp` is a small tmpfs and
   the build fails with "no space left on device". Set `GOTMPDIR` (and `TMPDIR`) to a folder under
   `/home/container`. Set `GOMEMLIMIT` a little below the container's memory limit.
@@ -125,6 +125,6 @@ for the dashboard). Each item says how to check it.
 | Backups | built in: `data/backups/` every 6 h, gzip, 4 kept (see Backups above); a Pterodactyl backup schedule copies them off the node | `online backup written` in the console every 6 h, never `online backup skipped` |
 | Monitoring | an external uptime check on `https://<api host>/status` every 1-5 min: alert on non-200, `connected_servers` dropping to 0, or `slo.met` false | the check is green |
 | Check-health digest | `PE_DIGEST_DIR=data/digests` (aggregate tuning counts, no player data; read them as in [CHECKS.md 5](../docs/CHECKS.md#5-check-health-digest)) | a `data/digests/digest-<UTC hour>Z.jsonl` file appears a minute after each hour |
-| Memory and disk | `GOMEMLIMIT` and `PE_WORKER_MAX_MEMORY` below the container limit; disk for `PE_EVENTS_MAX_BYTES` plus backups (plus `PE_FEATURES_MAX_BYTES` when `PE_FEATURES_DIR` is set, plus about 1 MB an hour for the digest) | container stays below its limits for a week; the daily `store size` line shows which table the database grows with ([OPERATIONS 9.3](../docs/OPERATIONS.md#93-diagnostic-log-lines)) |
+| Memory and disk | `GOMEMLIMIT` and `PE_WORKER_MAX_MEMORY` below the container limit; disk for `PE_EVENTS_MAX_BYTES` plus backups (plus `PE_FEATURES_MAX_BYTES` when `PE_FEATURES_DIR` is set, plus about 2 MB an hour for the digest) | container stays below its limits for a week; the daily `store size` line shows which table the database grows with ([OPERATIONS 9.3](../docs/OPERATIONS.md#93-diagnostic-log-lines)) |
 | Capacity | measured: one Folia server with 100-250 players used about 25% of 2 CPUs. Extrapolated, not measured: about 3 servers of that size per 2-CPU node with headroom; beyond that add CPU or move to the split deployment | `/status` `probe_rtt.p95_us` far below the SLO |
 | Updates | push to the deploy branch, restart the server (it rebuilds and restarts in about 10 s; plugins reconnect and replay their spool) | `/status` `version` shows the new revision |

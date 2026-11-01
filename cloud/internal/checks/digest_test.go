@@ -431,3 +431,34 @@ func TestDigestActionContext(t *testing.T) {
 		}
 	}
 }
+
+// The context follows the judgement: the gap counts from the previous judged placement (one whose next
+// move carries a server-set rotation is not judged), and the turn is that of the R1 the checks used (a
+// tick client's move of a later tick is no R1, however far it turned).
+func TestDigestContextFollowsTheJudgement(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	r.tick(geom.V(0.5, 64, 0.5), geom.Rotation{})
+	b := [3]int32{0, 64, 2}
+	rot := aim(r.eyeOf(false), geom.V(0.5, 64.5, 2))
+	click := func() {
+		r.place(blockClick{block: b, face: pb.Face_FACE_NORTH, cursor: geom.V(0.5, 0.5, 0), eye: r.eyeOf(false), rot: rot})
+	}
+	r.tick(r.p.Pos, rot)
+	click() // judged, the first
+	r.tick(r.p.Pos, rot)
+	click() // 50 ms later, not judged
+	r.flags = uint32(pb.MoveFlag_MOVE_FLAG_SERVER_ROTATION)
+	r.tick(r.p.Pos, rot)
+	r.flags = 0
+	r.tick(r.p.Pos, rot)
+	click() // 150 ms after the first, in a tick without a movement packet
+	r.idle()
+	r.tick(r.p.Pos, geom.Rotation{Yaw: rot.Yaw, Pitch: rot.Pitch + 20})
+
+	_, d := r.runDigest("scaffold")
+	obs := d.of("scaffold.ray")
+	if len(obs) != 2 || obs[0].GapUs != -1 || obs[1].GapUs != 150_000 || obs[0].Turn != 0 || obs[1].Turn != 0 ||
+		obs[0].Rotations != 1 || obs[1].Rotations != 1 {
+		t.Fatalf("observations %+v", obs)
+	}
+}
