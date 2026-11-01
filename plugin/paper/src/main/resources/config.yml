@@ -56,16 +56,21 @@ punishments:
 mitigations:
   enabled: true
 # LiteBans (optional): its bans become labels for the cloud, so verdict accuracy can be measured from what staff
-# already do. Only "ban" entries count; reasons match as case-insensitive substrings. A ban is CHEAT when its
+# already do. Only "ban" entries count. Each reason below matches where it starts a word, case-insensitively:
+# "hack" matches "hacking", "reach" does not match "breach" (hence killaura next to aura). A ban is CHEAT when its
 # reason has a cheat-reason and no ignore-reason (ignore wins) and staff issued it (the console too with
 # count-console: console bans come from other anticheats or PandaEye's own ban-command). The removal of such a
-# ban with a legit-unban-reason is LEGIT. Nothing else is sent; reasons, staff names and IPs never are.
-# Without LiteBans this section does nothing. Changes need a restart.
+# ban with a legit-unban-reason is LEGIT, PandaEye's own included ("unfair advantage" is its default ban reason).
+# Nothing else is sent; reasons, staff names and IPs never are. Without LiteBans this section does nothing.
+# Changes need a restart.
 labels:
   litebans:
     enabled: true
     cheat-reasons: [hack, cheat, blacklisted mod, modification, aura, reach, fly, speed, scaffold, autoclick,
-      auto click, auto totem, autototem, easy place, easyplace, macro, script, nuker, bhop, velocity, timer, client]
+      auto click, auto totem, autototem, easy place, easyplace, macro, script, nuker, bhop, velocity, timer, client,
+      killaura, kill aura, aimbot, aim bot, aim assist, aimassist, triggerbot, trigger bot, antikb, anti kb, anti-kb,
+      antiknockback, anti knockback, auto crystal, autocrystal, auto anchor, autoanchor, auto armor, autoarmor,
+      nofall, no fall, noslow, no slow, fast place, fastplace, hitbox, criticals, baritone, flight, unfair advantage]
     ignore-reasons: [x-ray, xray, esp, bot account, evad, alt, test]
     legit-unban-reasons: [false ban, falsely, wrongful, mistake, appeal accepted]
     count-console: false

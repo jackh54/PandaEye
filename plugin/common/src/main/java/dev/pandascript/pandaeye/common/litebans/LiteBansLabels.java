@@ -25,7 +25,7 @@ import java.util.function.LongSupplier;
  * {@code labels.litebans.enabled: false} or with the cloud off nothing is registered, scheduled or sent and no
  * LiteBans class is loaded; {@link LiteBansHook} is the only class that touches LiteBans' API.
  *
- * <p>Threads: LiteBans calls back on its own threads; a callback is cheap (substring matching, one event into the
+ * <p>Threads: LiteBans calls back on its own threads; a callback is cheap (reason matching, one event into the
  * lock-free sink) and catches everything. The backfill (the bans of the last {@code backfill-days}) runs once per
  * enable on the platform's async scheduler, never on the main or a region thread.
  */
