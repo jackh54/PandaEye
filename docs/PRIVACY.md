@@ -199,7 +199,8 @@ and kept there under the server owner's control.
   bans, appeals, labels (and the LiteBans ban records behind them), replay clips (including clips in which
   the player appears as another player's target), reputation contributions and the analytics copies
   (database tables or feature-window files). An erasure marker makes the service discard any of the
-  player's data still in transit.
+  player's data still in transit, and LiteBans bans from before the erasure that a server sends again are
+  not recorded.
 - **Exception**: while a ban is active, a minimal record (verdict identifier, UUID, check identifiers, score,
   time) is kept so the ban can be enforced and later lifted. It is deleted when the ban is lifted.
 - **Residual copies** expire automatically: raw telemetry within 24 hours, signals within 7 days, verdict

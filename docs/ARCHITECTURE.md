@@ -839,6 +839,8 @@ decision `litebans` (`verdicts.decided_by`), audit principal `litebans`:
   start] (7 d) is confirmed (`litebans` cheat label over its signal window, reputation contribution if
   eligible); without one, a `litebans_unflagged` cheat label over [ban start - `PE_LABELS_WINDOW`, ban start]
   (2 h). A cheat ban whose wrongful unban arrived first is not applied.
+- An erased player's bans that started before the erasure (`erasures.requested_at`) are skipped: the plugins
+  resend them with every backfill, after the tombstone is gone too (5.13).
 - wrongful unban: the entry's cheat labels are deleted (`litebans_unflagged`, and `litebans` labels whose
   window ends in the lookback), then those verdicts are overturned (legit label, UNBAN of an executed BAN,
   UNMITIGATE); without one, a `litebans_unflagged` legit label over the same window.
@@ -913,7 +915,8 @@ returned masked, logged by webhook id only.
 `DELETE /players/{uuid}` runs a job: SQL rows of the tenant (players, player_names, verdicts, bans, appeals,
 labels, moderation_labels, clips, clip_subjects, reputation_contrib), clips that contain the subject as a target are deleted,
 ClickHouse `ALTER TABLE ... DELETE WHERE tenant_id = ? AND player = ?` on every table, and an erasure
-tombstone (`erasures`) published to workers and the verdict service via KV so late data is dropped. Active
+tombstone (`erasures`) published to workers and the verdict service via KV so late data is dropped (the
+label consumer also skips LiteBans bans that started before the erasure, 5.8). Active
 bans keep a minimal record (verdict id, uuid, check ids, score, time) under the legitimate-interest exception
 until unbanned (documented in PRIVACY.md). JetStream expiry bounds residual data (24 h events, 7 d signals,
 30 d verdict records).

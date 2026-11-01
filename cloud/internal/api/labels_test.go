@@ -320,6 +320,68 @@ func TestLiteBansOrderAndIntervals(t *testing.T) {
 	}
 }
 
+// The wrongful unban also removes the cheat labels the ban wrote for verdicts purged since.
+func TestLiteBansUnbanSupersedesLabelsOfPurgedVerdicts(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx := context.Background()
+	ban := fixedNow.Add(-time.Hour)
+	e.applyLabel(cheatBan(player1, 4521, ban))
+	if ls := playerLabels(t, e, tenantA, player1); ls[vAlert+"/cheat"].Source != store.SourceLiteBans {
+		t.Fatalf("labels %v", ls)
+	}
+	_, err := e.d.Store.PurgeVerdicts(ctx, tenantA, fixedNow.Add(-150*time.Minute)) // the ALERT (3 h old), not the active BAN
+	check(t, err)
+	if _, err := e.d.Store.GetVerdict(ctx, tenantA, vAlert); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ALERT not purged: %v", err)
+	}
+	e.applyLabel(wrongfulUnban(player1, 4521, ban))
+	ls := playerLabels(t, e, tenantA, player1)
+	if len(ls) != 1 || ls[vBan+"/legit"].Source != store.SourceLiteBans {
+		t.Fatalf("labels after the unban: %v", ls)
+	}
+}
+
+// Every plugin enable resends the bans of the last backfill-days, also after an erasure: the erased
+// player's bans from before it are not recorded, decided or labelled again; a later ban is new data.
+func TestLiteBansLabelsOfErasedPlayers(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx := context.Background()
+	ban := fixedNow.Add(-time.Hour)
+	e.applyLabel(cheatBan(player1, 4521, ban))
+	e.applyLabel(cheatBan(playerMissed, 7, ban))
+	for _, p := range []string{player1, playerMissed} {
+		e.must(200, "DELETE", "/api/v1/players/"+p, nil, as(tenantA, "owner"))
+	}
+	audits := len(auditActions(t, e, "litebans.cheat")) + len(auditActions(t, e, "litebans.legit"))
+
+	// The next backfill: both bans again, a wrongful unban, and a ban issued at the erasure.
+	for _, m := range []*store.ModerationLabel{cheatBan(player1, 4521, ban), cheatBan(playerMissed, 7, ban),
+		wrongfulUnban(playerMissed, 7, ban), cheatBan(player1, 4522, fixedNow)} {
+		e.applyLabel(m)
+		if _, err := e.d.Store.GetModerationLabel(ctx, tenantA, sourceLiteBans, m.EntryID, m.Kind); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("ban #%s %s of an erased player recorded again: %v", m.EntryID, m.Kind, err)
+		}
+	}
+	for _, p := range []string{player1, playerMissed} {
+		counts, err := e.d.Store.EraseSubject(ctx, tenantA, p)
+		check(t, err)
+		if counts["labels"] != 0 || counts["moderation_labels"] != 0 {
+			t.Fatalf("%s: labels written again after the erasure: %v", p, counts)
+		}
+	}
+	if n := len(auditActions(t, e, "litebans.cheat")) + len(auditActions(t, e, "litebans.legit")); n != audits {
+		t.Fatalf("audit entries %d, want %d", n, audits)
+	}
+
+	// A ban after the erasure is applied (the label export still leaves the erased player out).
+	e.applyLabel(cheatBan(playerMissed, 8, fixedNow.Add(time.Minute)))
+	if row, err := e.d.Store.GetModerationLabel(ctx, tenantA, sourceLiteBans, "8", store.ModerationBanAdded); err != nil || row.AppliedAt.IsZero() {
+		t.Fatalf("ban after the erasure: %+v %v", row, err)
+	}
+}
+
 func TestModerationLabelRecords(t *testing.T) {
 	rec := func(mut func(r *pb.LabelRecord)) *pb.LabelRecord {
 		r := &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA, ServerId: srv1}, Player: uuidBytes(player1),

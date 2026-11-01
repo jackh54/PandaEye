@@ -160,11 +160,21 @@ func moderationLabel(rec *pb.LabelRecord, subjectTenant string) (*store.Moderati
 // applyModerationLabel records m once and applies it: a cheat ban confirms the player's verdicts created
 // in [ban start - lookback, ban start] (or, without one, labels the window before the ban cheat), a
 // wrongful unban overturns them (or labels that window legit) and supersedes the entry's cheat labels.
-// A cheat ban whose wrongful unban was recorded first is not applied. Every step is idempotent: a
-// retry after a failure completes it.
+// A cheat ban whose wrongful unban was recorded first is not applied, nor is a ban of an erased player
+// that started before the erasure. Every step is idempotent: a retry after a failure completes it.
 func (s *Service) applyModerationLabel(ctx context.Context, m *store.ModerationLabel, now time.Time) error {
 	if m.ReceivedAt.IsZero() {
 		m.ReceivedAt = now
+	}
+	// Every plugin enable resends the bans of the last backfill-days, also after an erasure (whose
+	// tombstone only drops data received before it): the erased player's earlier bans stay erased
+	// (5.13), a ban issued after the erasure is new data.
+	switch er, err := s.d.Store.GetErasure(ctx, m.TenantID, m.PlayerUUID); {
+	case err == nil && !m.BanStart.After(er.RequestedAt):
+		s.log.Debug("moderation label of an erased player skipped", "tenant_id", m.TenantID, "entry_id", m.EntryID)
+		return nil
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		return err
 	}
 	stored, _, err := s.d.Store.RecordModerationLabel(ctx, m)
 	if err != nil {
