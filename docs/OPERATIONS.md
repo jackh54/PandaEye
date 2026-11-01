@@ -692,7 +692,7 @@ dashboard (server online, probe RTT).
 
 ### 9.3 Diagnostic log lines
 
-Logs are JSON lines on stdout. These lines carry diagnostics without personal data:
+Logs are JSON lines on stderr. These lines carry diagnostics without personal data:
 
 - `connection closed` (gateway): one line per plugin connection, at info (at debug for connections that
   ended before their Hello's licence was checked) with `connection`, `tenant`, `server`, `platform`,

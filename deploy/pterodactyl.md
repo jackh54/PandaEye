@@ -93,11 +93,14 @@ The cloud writes a gzip-compressed online copy of the database every 6 h to
 `data/backups/pandaeye-<UTC>.db.gz` and keeps the newest 4 (`PE_DB_BACKUP_INTERVAL`, `PE_DB_BACKUP_KEEP`;
 uncompressed `.db` copies of earlier releases count towards the 4 and are deleted first). While the disk
 has less than twice the database size free (at least 1 GiB) it skips the copy and logs `online backup
-skipped: low disk space`. Those copies live on the same disk: schedule a Pterodactyl backup (it may run
-while the server is up; exclude `data/pandaeye.db*` and `data/nats/` from it and rely on `data/backups/`)
-or copy `data/backups/` off the node. To restore, stop the server, download the chosen `.db.gz` over SFTP
-and decompress it (`gunzip`, or 7-Zip on Windows), delete `data/pandaeye.db-wal` and `-shm`, upload the
-decompressed file as `data/pandaeye.db` and start. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#83-backups-and-disaster-recovery).
+skipped: low disk space`. That check sees the node's file system, not the server's disk limit (the panel
+sets no file-system quota), so it does not keep the server under its limit: leave room in the limit for
+the database, its copies and `PE_EVENTS_MAX_BYTES`. Those copies live on the same disk: schedule a
+Pterodactyl backup (it may run while the server is up; exclude `data/pandaeye.db*` and `data/nats/` from
+it and rely on `data/backups/`) or copy `data/backups/` off the node. To restore, stop the server,
+download the chosen `.db.gz` over SFTP and decompress it (`gunzip`, or 7-Zip on Windows), delete
+`data/pandaeye.db-wal` and `-shm`, upload the decompressed file over SFTP as `data/pandaeye.db` (the file
+manager's upload limit can be smaller than the database) and start. Details: [OPERATIONS.md "Backups and disaster recovery"](../docs/OPERATIONS.md#83-backups-and-disaster-recovery).
 
 `data/ml/` (when `PE_FEATURES_DIR` is set) holds player UUIDs. A Pterodactyl backup copies it unless it is
 excluded, and erasures do not reach backups: exclude `data/ml/` (it is training data, not needed to
