@@ -859,3 +859,12 @@ Logs are JSON lines on stderr. These lines carry diagnostics without personal da
     `dig.speed` flagged one player hundreds of times ("0-1 ticks, expected 3") and needs a look at custom
     tools/effects before it is trusted; local checks produced about 2,500 dropped confirmations in 25 minutes
     at 100 players (bounded, but thresholds need tuning).
+17. The plugin does not report the server's pose, so a crawl in a one-block gap (pose SWIMMING, swimming
+    flag clear) is judged from the standing and sneaking eyes. The cloud recovers only the bottom-face
+    clicks no such eye can see (`scaffold.cursor`, CHECKS 2.12); a crawling player's top and side
+    placements and digs can still miss `scaffold.ray`/`dig.ray`. Reporting the pose (own ENTITY_METADATA
+    index 6) would cover them. Separately, client mods that rewrite the placement hit vector (Tweakeroo's
+    fast and flexible placement, Accurate Block Placement's backfill of earlier targets, Shoulder Surfing's
+    third-person pick ray from beside the eye) send cursors about a block off the look ray: they mismatch
+    `scaffold.cursor` by 20 to 30 degrees at 2 to 3 blocks, by design, and are judged like any other
+    non-vanilla placement.

@@ -535,3 +535,197 @@ func TestScaffoldLegitCrawling(t *testing.T) {
 		t.Fatalf("legit crawling placements: %d emissions, first %+v", len(es), es[0])
 	}
 }
+
+// unflaggedCrawl crawls north through a one-block-high tunnel (floor top at y 64, ceiling blocks at y 65)
+// in the vanilla pose-only crawl (entered through a trapdoor or a one-block gap): the server sets no
+// swimming flag, so the plugin reports the standing eye, or the sneaking eye while shift is held, 1.22 or
+// 0.87 blocks above the 0.4 eye the client picks from. act is called each tick with that eye (between
+// the previous and the last position) and the reported one.
+func unflaggedCrawl(r *rig, n int, sneak bool, act func(i int, eye, reported geom.Vec3)) {
+	r.flags = 0
+	if sneak {
+		r.flags = uint32(pb.MoveFlag_MOVE_FLAG_SNEAKING)
+	}
+	r.tick(geom.V(0.5, 64, 0.5), geom.Rotation{})
+	for i := range n {
+		prev := r.p.Pos
+		cur := prev.Add(geom.V(0, 0, -0.08))
+		eye := geom.Eye(prev.Add(cur.Sub(prev).Scale(0.5)), geom.PoseCrawling, r.p.Protocol, 1)
+		r.tick(cur, r.p.Rot)
+		act(i, eye, r.eyeOf(sneak))
+	}
+	r.step(geom.V(0, 0, 0))
+}
+
+// ceilingClick is the vanilla click of a crawling player on the bottom face of a ceiling block of the
+// tunnel at cursor (fx, 0, fz): the rotation aims from the crawling eye at that point.
+func ceilingClick(tb testing.TB, eye geom.Vec3, b [3]int32, fx, fz float64) (geom.Rotation, geom.Vec3) {
+	tb.Helper()
+	target := geom.V(float64(b[0])+fx, float64(b[1]), float64(b[2])+fz)
+	rot := aim(eye, target)
+	face, cursor, ok := rayClick(eye, rot, b)
+	if !ok || face != pb.Face_FACE_DOWN {
+		tb.Fatalf("setup: the crawling eye's ray does not enter the bottom face of %v (face %v)", b, face)
+	}
+	return rot, cursor
+}
+
+// The bottom face of a block can only be clicked from below it. When the cursor point lies below every
+// standing and sneaking candidate eye, the only vanilla eye that can have clicked it is the 0.4 eye of a
+// crawl (or swim) the plugin does not flag, so those clicks are also judged from the crawling eyes.
+// Without them these clicks are 24 to 102 degrees off (over 45 within a block of the reported eye) and
+// hit by some candidate ray: the cursor-only, large-angle bottom-face misses of the digest.
+func TestScaffoldLegitUnflaggedCrawlCeiling(t *testing.T) {
+	for _, sneak := range []bool{false, true} {
+		r := newRig(t, rigProtocol)
+		unflaggedCrawl(r, 24, sneak, func(i int, eye, reported geom.Vec3) {
+			b := [3]int32{int32(i%3 - 1), 65, int32(math.Floor(eye.Z)) - int32(i/3%2)} // overhead, or ahead
+			fx := []float64{0.25, 0.5, 0.75}[i%3]
+			fz := []float64{0.2, 0.5, 0.8}[i/6%3]
+			rot, cursor := ceilingClick(t, eye, b, fx, fz)
+			r.place(blockClick{block: b, face: pb.Face_FACE_DOWN, cursor: cursor, eye: reported, rot: r.p.Rot, sneak: sneak})
+			r.tick(r.p.Pos, rot)
+		})
+		es, d := r.runDigest("scaffold")
+		if len(es) != 0 {
+			t.Fatalf("sneak %v: legit crawling ceiling clicks: %d emissions, first %+v", sneak, len(es), es[0])
+		}
+		obs := d.of("scaffold.cursor")
+		if len(obs) < 20 { // a click within 0.3 blocks of an upright eye is not judged
+			t.Fatalf("sneak %v: only %d cursor observations", sneak, len(obs))
+		}
+		for _, o := range obs {
+			if o.Failed || o.Value > 0.01 {
+				t.Fatalf("sneak %v: crawling click judged %.3f degrees off (%+v)", sneak, o.Value, o)
+			}
+		}
+	}
+}
+
+// The crawling eyes do not excuse a down-face cursor that is off their rays: the client claims the point
+// one block east of the one it looks at, 30 to 50 degrees off from the crawling eye.
+func TestScaffoldCheatUnflaggedCrawlCeilingCursorOff(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	unflaggedCrawl(r, 13, false, func(i int, eye, reported geom.Vec3) {
+		b := [3]int32{0, 65, int32(math.Floor(eye.Z)) - 1}
+		rot, cursor := ceilingClick(t, eye, b, 0.5, 0.5)
+		if i == 0 {
+			r.tick(r.p.Pos, rot) // turn first: R0 -> R1 then spans no east-pointing rotation
+			return
+		}
+		r.place(blockClick{block: [3]int32{b[0] + 1, b[1], b[2]}, face: pb.Face_FACE_DOWN, cursor: cursor, eye: reported, rot: r.p.Rot})
+		r.tick(r.p.Pos, rot)
+	})
+	es, d := r.runDigest("scaffold")
+	expectCount(t, es, "scaffold.cursor", 4)
+	expectCount(t, es, "scaffold.face", 0)
+	for _, o := range d.of("scaffold.cursor") {
+		if !o.Failed || o.Value < 30 {
+			t.Fatalf("cursor one block off the crawling eye's ray judged %.1f degrees (%+v)", o.Value, o)
+		}
+	}
+}
+
+// Only an eye below a bottom face can have clicked it, the crawling eyes included. A standing player
+// (feet at 64.625, on six snow layers or in the middle of a jump) whose 0.4 eye at 65.025 lies above the
+// bottom face at 65 of the block in front of it claims that face with a cursor on a ray aimed from that
+// eye. The face is visible to the sneaking eye (65.895 < 66) and its ray reaches the block, so only the
+// cursor check can catch it, and the crawling eye must not excuse it.
+func TestScaffoldCheatBottomFaceOnARayFromAboveIt(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	r.tick(geom.V(0.5, 64.625, 0.5), geom.Rotation{})
+	crawlEye := geom.Eye(r.p.Pos, geom.PoseCrawling, r.p.Protocol, 1)
+	for i := range 12 {
+		b := [3]int32{1, 65, 0}
+		cursor := geom.V([]float64{0.2, 0.5, 0.8}[i%3], 0, []float64{0.2, 0.5, 0.8}[i/3%3])
+		rot := aim(crawlEye, geom.BlockBox(b[0], b[1], b[2]).Min.Add(cursor))
+		r.tick(r.p.Pos, rot)
+		r.place(blockClick{block: b, face: pb.Face_FACE_DOWN, cursor: cursor, eye: r.eyeOf(false), rot: rot})
+		r.tick(r.p.Pos, rot)
+	}
+	r.step(geom.V(0, 0, 0))
+	es, d := r.runDigest("scaffold")
+	expectCount(t, es, "scaffold.cursor", 4)
+	expectCount(t, es, "scaffold.face", 0)
+	expectCount(t, es, "scaffold.ray", 0)
+	obs := d.of("scaffold.cursor")
+	if len(obs) != 12 {
+		t.Fatalf("%d cursor observations, want 12", len(obs))
+	}
+	for _, o := range obs {
+		if !o.Failed || o.Value < 30 {
+			t.Fatalf("bottom-face cursor aimed from an eye above the face judged %.1f degrees (%+v)", o.Value, o)
+		}
+	}
+}
+
+// A vanilla cursor is the entry point of the look ray, so it lies on the ray at any distance. Client mods
+// that rewrite the hit vector put it about one block off the ray, which is 20 to 30 degrees at 2 to 3
+// blocks, where the digest's fabric failures cluster. Two such rewrites (from the mods' sources), placing
+// on the floor in front of a standing player: a pick ray that starts 0.75 blocks to the right of the eye
+// (Shoulder Surfing Reloaded's default block pick origin in its third-person view; 19 to 22 degrees
+// here), and the hit vector moved one block east together with the block (Tweakeroo's flexible
+// placement offset; 19 to 28 degrees). Both stay mismatches: the cursor check does not loosen with
+// distance, and no mod is exempt.
+func TestScaffoldOffRayHitVectorsAtNormalRange(t *testing.T) {
+	floorHit := func(o geom.Vec3, rot geom.Rotation) (b [3]int32, cursor geom.Vec3, ok bool) {
+		best := math.Inf(1)
+		for x := int32(-4); x <= 4; x++ {
+			for z := int32(-4); z <= 4; z++ {
+				c := [3]int32{x, 63, z}
+				if d, hit := geom.BlockBox(x, 63, z).IntersectRay(o, rot.Look(), 6); hit && d < best {
+					if _, cur, ok2 := rayClick(o, rot, c); ok2 {
+						best, b, cursor, ok = d, c, cur, true
+					}
+				}
+			}
+		}
+		return b, cursor, ok
+	}
+	for _, c := range []struct {
+		name  string
+		click func(eye geom.Vec3, rot geom.Rotation, b [3]int32) ([3]int32, geom.Vec3, bool)
+	}{
+		{"pick origin 0.75 right of the eye", func(eye geom.Vec3, rot geom.Rotation, _ [3]int32) ([3]int32, geom.Vec3, bool) {
+			y := rot.Yaw * math.Pi / 180
+			right := geom.V(-math.Cos(y), 0, -math.Sin(y)) // minus the camera's left vector
+			return floorHit(eye.Add(right.Scale(0.75)), rot)
+		}},
+		{"hit vector moved one block east", func(eye geom.Vec3, rot geom.Rotation, b [3]int32) ([3]int32, geom.Vec3, bool) {
+			_, cursor, ok := rayClick(eye, rot, b)
+			return [3]int32{b[0] + 1, b[1], b[2]}, cursor, ok
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t, rigProtocol)
+			r.tick(geom.V(0.5, 64, 0.5), geom.Rotation{})
+			for i := range 12 {
+				b := [3]int32{int32(i%3 - 1), 63, 1}
+				eye := r.eyeOf(false)
+				rot := aim(eye, geom.V(float64(b[0])+0.5, 64, float64(b[2])+0.5))
+				r.tick(r.p.Pos, rot)
+				cb, cursor, ok := c.click(eye, rot, b)
+				if !ok {
+					t.Fatalf("setup: no floor block hit for %v", b)
+				}
+				r.place(blockClick{block: cb, face: pb.Face_FACE_UP, cursor: cursor, eye: eye, rot: rot})
+				r.tick(r.p.Pos, rot)
+			}
+			r.step(geom.V(0, 0, 0))
+			es, d := r.runDigest("scaffold")
+			expectCount(t, es, "scaffold.cursor", 4)
+			obs, in20to30 := d.of("scaffold.cursor"), 0
+			for _, o := range obs {
+				if !o.Failed || o.Value < 15 || o.Value > 40 || o.Dist < 1.5 || o.Dist > 3.5 {
+					t.Fatalf("off-ray cursor judged %.1f degrees at %.2f blocks (%+v)", o.Value, o.Dist, o)
+				}
+				if o.Value >= 20 && o.Value <= 30 {
+					in20to30++
+				}
+			}
+			if len(obs) != 12 || in20to30 < 4 {
+				t.Fatalf("%d observations, %d of them at 20 to 30 degrees", len(obs), in20to30)
+			}
+		})
+	}
+}

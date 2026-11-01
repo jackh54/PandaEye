@@ -3,6 +3,7 @@ package checks
 import (
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/jackh54/PandaEye/cloud/internal/geom"
 	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
@@ -109,12 +110,13 @@ func (d *scaffoldDetector) judge(c *Ctx, a *blockAction, cand *blockCandidates) 
 	// scaffold.cursor: the click position must lie on some look ray (3 degrees).
 	if v.Protocol >= protocol1_11 && cursorInRange(a.cursor) {
 		p := cube.Min.Add(a.cursor)
+		eyes := cand.cursorEyes(a.face, p, geom.EyeUncertainty(v.Protocol))
 		near := false
-		for _, e := range cand.eyes() {
+		for _, e := range eyes {
 			near = near || p.Dist(e) < c.Param(idScaffoldCursor, "min_dist", 0.3)
 		}
 		if !near {
-			best := cand.minAngleTo(p)
+			best := cand.minAngleTo(eyes, p)
 			mismatch := best > c.Param(idScaffoldCursor, "max_angle", 3)
 			d.cursor.push(mismatch)
 			o := obs
@@ -317,6 +319,10 @@ type blockCandidates struct {
 	rot  [5]geom.Rotation
 	nRot int
 	r1   geom.Rotation // R1 (R0 without one)
+	// crawl holds the 0.4 (crawling) eye at every candidate feet when 0.4 is not a candidate height;
+	// only scaffold.cursor uses them, for bottom-face clicks no other eye can see (cursorEyes).
+	crawl  [2 + eyePathSamples]geom.Vec3
+	nCrawl int
 }
 
 func (b *blockCandidates) eyes() []geom.Vec3 { return b.eye[:b.nEye] }
@@ -330,12 +336,20 @@ func (b *blockCandidates) addEye(e geom.Vec3) {
 	}
 }
 
+func (b *blockCandidates) addCrawlEye(e geom.Vec3) {
+	if b.nCrawl < len(b.crawl) && e.IsFinite() {
+		b.crawl[b.nCrawl] = e
+		b.nCrawl++
+	}
+}
+
 // build derives the candidates: eyes = the event eye, the other heights at the same feet, the eyes on
 // the path from the previous position (eyePath) and the next move's eyes, each at the standing and
 // sneaking heights plus 0.4 when the action's pose is swimming/gliding (a real crawl or swim, or a stale
 // flag of a standing player); rotations = R0, R0->R1 at 0.25 steps and R1. R1 is the next
 // move's rotation when it belongs to the same client tick (tick clients) or arrived within 100 ms (older
-// clients); otherwise R1 = R0.
+// clients); otherwise R1 = R0. When 0.4 is not among the heights (and the client has the 1.14 crawl
+// pose), the 0.4 eyes at the same feet are kept apart for scaffold.cursor (cursorEyes).
 func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
 	stand := geom.EyeHeight(geom.PoseStanding, v.Protocol, v.Scale)
 	sneak := geom.EyeHeight(geom.PoseSneaking, v.Protocol, v.Scale)
@@ -345,6 +359,8 @@ func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
 	if used != stand && used != sneak {
 		heights = all[:]
 	}
+	crawl := geom.EyeHeight(geom.PoseCrawling, v.Protocol, v.Scale)
+	keepCrawl := used != crawl && v.Protocol >= geom.Protocol1_14
 	feet := a.eye.Sub(geom.V(0, used, 0))
 	b.addEye(a.eye)
 	for _, h := range heights {
@@ -352,10 +368,18 @@ func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
 			b.addEye(feet.Add(geom.V(0, h, 0)))
 		}
 	}
+	if keepCrawl {
+		b.addCrawlEye(feet.Add(geom.V(0, crawl, 0)))
+	}
 	if a.hasPrev {
 		for _, h := range heights {
 			for _, e := range eyePath(a.prevFeet, feet, h) {
 				b.addEye(e)
+			}
+		}
+		if keepCrawl {
+			for _, e := range eyePath(a.prevFeet, feet, crawl) {
+				b.addCrawlEye(e)
 			}
 		}
 	}
@@ -364,6 +388,9 @@ func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
 		if next.HasPos {
 			for _, h := range heights {
 				b.addEye(next.Pos.Add(geom.V(0, h, 0)))
+			}
+			if keepCrawl {
+				b.addCrawlEye(next.Pos.Add(geom.V(0, crawl, 0)))
 			}
 		}
 		if next.HasRot && (!v.TickClient || next.Tick == a.tick) {
@@ -389,11 +416,40 @@ func (b *blockCandidates) rayHits(box geom.AABB, maxDist float64) bool {
 	return false
 }
 
-// minAngleTo is the smallest angle (degrees) between a candidate look vector and the direction from its
-// eye to p.
-func (b *blockCandidates) minAngleTo(p geom.Vec3) float64 {
+// cursorEyes returns the eyes scaffold.cursor judges the cursor point p of a click on face from
+// (CHECKS.md 2.12): the candidates, plus the crawling eyes below p when face is the bottom face and p
+// lies below every candidate (by more than the eye uncertainty u). A bottom face is only seen from below
+// it, and the only vanilla eye below the standing and sneaking ones is the 0.4 eye of a crawl or swim
+// the plugin does not flag (the pose-only crawl in a one-block gap); a crawling eye above p cannot have
+// clicked it either.
+func (b *blockCandidates) cursorEyes(face pb.Face, p geom.Vec3, u float64) []geom.Vec3 {
+	eyes := b.eyes()
+	if face != pb.Face_FACE_DOWN || b.nCrawl == 0 {
+		return eyes
+	}
+	for _, e := range eyes {
+		if belowFace(e, p, u) {
+			return eyes
+		}
+	}
+	out := slices.Clip(eyes)
+	for _, e := range b.crawl[:b.nCrawl] {
+		if belowFace(e, p, u) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// belowFace reports whether the eye e may lie below the bottom-face point p, given the eye uncertainty u:
+// only such an eye can have clicked the face.
+func belowFace(e, p geom.Vec3, u float64) bool { return e.Y-u < p.Y }
+
+// minAngleTo is the smallest angle (degrees) between a candidate look vector and the direction from an
+// eye of eyes to p.
+func (b *blockCandidates) minAngleTo(eyes []geom.Vec3, p geom.Vec3) float64 {
 	best := math.Inf(1)
-	for _, e := range b.eyes() {
+	for _, e := range eyes {
 		for _, r := range b.rots() {
 			if a, ok := geom.AngleBetween(r.Look(), p.Sub(e)); ok && a < best {
 				best = a

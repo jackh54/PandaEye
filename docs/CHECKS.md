@@ -285,14 +285,14 @@ OPEN_WINDOW/CLOSE_WINDOW. Points 3, confidence 0.8.
   the catch-up sent none: the first action had no previous position, or that coarse one when a sample
   arrived within 150 ms. In a simulation of legit walking first placements `scaffold.cursor` mismatched
   about a third of them by 3 to 10 degrees without the catch-up, none with a held packet, and about a fifth
-  of those with the coarse path. Heights: placements and digs standing
-  and sneaking; attacks the reported height, plus the other of standing/sneaking when the sneaking state
-  changed around the attack. A reduced report (swimming/gliding, eye 0.4) also tests standing and sneaking
-  for attacks, and 0.4 for placements and digs: the plugin reports these flags while a change is
-  unacknowledged, so without PONGs a stale flag can outlast the server's clear, while a real swim or crawl
-  is judged from 0.4. Plain standing and sneaking
-  reports never get the 0.4 eye, so a crawl the server does not flag (the vanilla pose-only crawl) is
-  judged from the standing eye.
+  of those with the coarse path. Heights: placements and digs standing and sneaking; attacks the reported
+  height, plus the other of standing/sneaking when the sneaking state changed around the attack. A reduced
+  report (swimming/gliding, eye 0.4) also tests standing and sneaking for attacks, and 0.4 for placements
+  and digs: the plugin reports these flags while a change is unacknowledged, so without PONGs a stale flag
+  can outlast the server's clear, while a real swim or crawl is judged from 0.4. Plain standing and sneaking
+  reports never get the 0.4 eye, so a crawl the server does not flag (the vanilla pose-only crawl in a
+  one-block gap: the pose is SWIMMING but the swimming flag is clear) is judged from the standing and
+  sneaking eyes. The one exception is `scaffold.cursor` on a bottom face that no candidate can see (2.12).
 - **Rotation of an attack/placement.** Tick clients pick the target at the start of the tick with the
   rotation that the same tick's movement packet sends: `R1` = the rotation of the next movement packet with
   the same tick number. Candidates: R1, R0 (the previous rotation) and R0->R1 interpolations at 0.25 steps
@@ -408,6 +408,23 @@ Skip placements with `inside_block` set, cursors outside [0, 1] (for scaffold.cu
 - `scaffold.cursor`: `P = B + cursor`; mismatch = for every (eye, rotation) candidate the angle between the
   look vector and `P - E` is > 3 degrees (skip when `|P - E| < 0.3`). Violation when >= 3 of the last 10
   placements mismatched. Points 5, confidence 0.8.
+  The vanilla cursor is the point where the pick ray from the frame's eye enters the clicked block's
+  outline shape, relative to the clicked block (`hit - pos`, floats since 1.11): on the top of a slab,
+  carpet or snow layer, on a plant's small box, under a ceiling, it lies on that ray at any distance, so
+  the 3 degrees do not widen with distance. The eye error the candidates leave is the eye path's sampling
+  (a sixteenth of a tick's step: about 0.014 blocks walking, 0.018 sprinting, 0.04 in the take-off tick
+  of a sprint-jump, whose step is about 0.49 across and 0.42 up) plus the eye uncertainty: under
+  3 degrees beyond the 0.3 skip walking, and beyond about 0.8 blocks in that tick of a sprint-jump.
+  Bottom face: it is only seen from below, so when `P.y` lies below every candidate eye (by more than the
+  eye uncertainty) no candidate can have clicked it and the only vanilla eye left is the 0.4 eye of an
+  unflagged crawl (2.1). For such a click, and only for
+  scaffold.cursor, the 0.4 eyes at the same feet (reported, path, next move) that may lie below `P`
+  (`E.y - u < P.y`, `u` the eye uncertainty) are added to the candidates (clients from 1.14, and only
+  when 0.4 is not a candidate already): a 0.4 eye above the face cannot have clicked it either. A cursor
+  that is not on a look ray from those eyes still mismatches. Client mods that rewrite the hit vector (a
+  pick ray from an origin beside the eye, the hit vector moved by a block, a stale or reused hit vector)
+  are not vanilla and are judged as they are: about a block off the ray, they mismatch by 20 to 30
+  degrees at 2 to 3 blocks.
 - `scaffold.reach`: distance from every eye candidate to the clicked block's cube > `block_reach + 0.6`.
   Points `3 + 5*min(excess, 1)`, confidence 0.8.
 
