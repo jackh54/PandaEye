@@ -23,6 +23,9 @@ type View struct {
 	HotLoaded  bool
 	Online     bool
 
+	Brand       string      // client brand (PlayerJoin.brand, possibly from a later update); "" unknown
+	BrandFamily BrandFamily // Brand normalised (digest.go)
+
 	GameMode      pb.GameMode
 	InVehicle     bool
 	Flying        bool
@@ -154,12 +157,17 @@ func (v *View) Apply(ev *pb.Event, offsetUs int64) {
 			v.HotLoaded = j.GetHotLoaded()
 			v.GameMode = j.GetGameMode()
 			v.JoinedUs = v.NowUs
+			v.Brand = ""
 		} else if j.GetSession() != "" {
 			v.SessionID = j.GetSession()
 		}
 		if j.GetName() != "" {
 			v.Name = j.GetName()
 		}
+		if j.GetBrand() != "" {
+			v.Brand = j.GetBrand() // the brand may arrive after the join, in an update
+		}
+		v.BrandFamily = BrandFamilyOf(v.Brand)
 		v.Bedrock, v.Exempt, v.Online = j.GetBedrock(), j.GetExempt(), true
 	case *pb.Event_Quit:
 		v.Online = false

@@ -53,15 +53,19 @@ func (d *digDetector) Handle(c *Ctx, ev *pb.Event) {
 }
 
 func (d *digDetector) judge(c *Ctx, a *blockAction, cand *blockCandidates) {
-	cube := geom.BlockBox(a.block[0], a.block[1], a.block[2])
-	miss := !cand.rayHits(cube.Expand(c.Param(idDigRay, "expand", 0.05)), a.reachOr(c.View)+c.Param(idDigRay, "extra_reach", 1.5))
+	box := geom.BlockBox(a.block[0], a.block[1], a.block[2]).Expand(c.Param(idDigRay, "expand", 0.05))
+	miss := !cand.rayHits(box, a.reachOr(c.View)+c.Param(idDigRay, "extra_reach", 1.5))
 	d.missed.push(miss)
-	n := d.missed.count(int(c.Param(idDigRay, "of", 10)))
-	if !miss || float64(n) < c.Param(idDigRay, "need", 4) {
-		return
+	o := cand.observation(c, a)
+	o.Check, o.Failed = idDigRay, miss
+	if miss && c.observing() {
+		o.Value = cand.rayAngle(box)
 	}
-	d.missed.reset()
-	c.Emit(Emission{Check: idDigRay, Points: 5, Confidence: 0.85, EventTimeUs: a.eventUs,
-		Info: fmt.Sprintf("%d of the last digs were not in view of any rotation (last %d,%d,%d)", n, a.block[0], a.block[1], a.block[2]),
-		Data: map[string]float64{"missed": float64(n), "x": float64(a.block[0]), "y": float64(a.block[1]), "z": float64(a.block[2])}})
+	if n := d.missed.count(int(c.Param(idDigRay, "of", 10))); miss && float64(n) >= c.Param(idDigRay, "need", 4) {
+		d.missed.reset()
+		o.Emitted = c.publish(Emission{Check: idDigRay, Points: 5, Confidence: 0.85, EventTimeUs: a.eventUs,
+			Info: fmt.Sprintf("%d of the last digs were not in view of any rotation (last %d,%d,%d)", n, a.block[0], a.block[1], a.block[2]),
+			Data: map[string]float64{"missed": float64(n), "x": float64(a.block[0]), "y": float64(a.block[1]), "z": float64(a.block[2])}})
+	}
+	c.observe(o)
 }

@@ -65,6 +65,9 @@ func TestDefaultsAllMode(t *testing.T) {
 	if c.Features.Dir != "" || c.Features.Retention != 90*24*time.Hour || c.Features.MaxBytes != 20<<30 {
 		t.Errorf("features defaults: %+v", c.Features)
 	}
+	if c.Digest.Dir != "" || c.Digest.Retention != 30*24*time.Hour {
+		t.Errorf("digest defaults: %+v", c.Digest)
+	}
 	if c.Leases.Mode != LeaseAll || !strings.HasPrefix(c.OwnerID, "all-") || !c.OutboundKey.IsZero() {
 		t.Errorf("all-mode defaults: %+v %q", c.Leases, c.OwnerID)
 	}
@@ -221,6 +224,14 @@ func TestValidation(t *testing.T) {
 	wantErr(t, RoleAll, []string{"PE_FEATURES_RETENTION=0s"}, "PE_FEATURES_RETENTION")
 	wantErr(t, RoleAll, []string{"PE_FEATURES_RETENTION=soon"}, "not a duration")
 	wantErr(t, RoleAll, []string{"PE_FEATURES_MAX_BYTES=0"}, "PE_FEATURES_MAX_BYTES must be positive")
+	if c := mustLoad(t, RoleAll, "", []string{"PE_DIGEST_DIR=data/digests", "PE_DIGEST_RETENTION=7d"}); c.Digest.Dir != "data/digests" || c.Digest.Retention != 7*24*time.Hour {
+		t.Errorf("digest %+v", c.Digest)
+	}
+	mustLoad(t, RoleWorker, "", prodEnv("PE_DIGEST_DIR=/var/lib/pe/digests")) // aggregate data: no role restriction
+	mustLoad(t, RoleAll, "", []string{"PE_DIGEST_DIR=data/digests", "PE_FEATURES_DIR=data/ml"})
+	wantErr(t, RoleAll, []string{"PE_DIGEST_DIR=data/ml/", "PE_FEATURES_DIR=./data/ml"}, "PE_DIGEST_DIR needs a directory of its own")
+	wantErr(t, RoleAll, []string{"PE_DIGEST_RETENTION=30m"}, "PE_DIGEST_RETENTION must be at least 1h")
+	wantErr(t, RoleAll, []string{"PE_DIGEST_RETENTION=later"}, "not a duration")
 	wantErr(t, RoleAll, []string{"PE_STATIC_LICENSES=a:b"}, "maxServers")
 	wantErr(t, RoleAll, []string{"PE_OWNER_ID=has space"}, "PE_OWNER_ID")
 	wantErr(t, RoleAll, []string{"PE_LEASES=0-3,20"}, "does not exist")

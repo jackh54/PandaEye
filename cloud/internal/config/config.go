@@ -68,6 +68,7 @@ type Config struct {
 	DB            DB
 	ClickHouseDSN identity.Secret // PE_CLICKHOUSE_DSN; empty disables telemetry
 	Features      Features
+	Digest        Digest
 	License       License
 
 	ServiceToken     identity.Secret // PE_SERVICE_TOKEN; empty disables dashboard access
@@ -132,6 +133,13 @@ type Features struct {
 	Dir       string        // PE_FEATURES_DIR; empty disables the files
 	Retention time.Duration // PE_FEATURES_RETENTION (at most MaxFeaturesRetention)
 	MaxBytes  int64         // PE_FEATURES_MAX_BYTES: the oldest files are deleted beyond it
+}
+
+// Digest configures the check-health digest files (CHECKS.md 5): hourly aggregate counts per check,
+// server and client, without player data. Worker and `all`.
+type Digest struct {
+	Dir       string        // PE_DIGEST_DIR; empty disables the digest
+	Retention time.Duration // PE_DIGEST_RETENTION
 }
 
 // License configures licence verification.

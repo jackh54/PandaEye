@@ -19,9 +19,16 @@ func Run(tb testing.TB, f checks.Factory, events []*pb.Event) []checks.Emission 
 // RunWith is Run with a tenant check configuration.
 func RunWith(tb testing.TB, f checks.Factory, events []*pb.Event, cfg checks.Config) []checks.Emission {
 	tb.Helper()
+	return RunDigest(tb, f, events, cfg, nil)
+}
+
+// RunDigest is RunWith with a check-health digest sink (nil: none).
+func RunDigest(tb testing.TB, f checks.Factory, events []*pb.Event, cfg checks.Config, digest checks.DigestSink) []checks.Emission {
+	tb.Helper()
 	view := checks.NewView()
 	var out []checks.Emission
 	ctx := checks.NewCtx(view, cfg, func(e checks.Emission) { out = append(out, e) })
+	ctx.Digest = digest
 	det := f.New()
 	for _, ev := range events {
 		view.Apply(ev, 0)

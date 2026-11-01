@@ -131,6 +131,8 @@ it does not use.
 | `PE_CLICKHOUSE_DSN` | empty | worker, verdict, api | `clickhouse://user:pass@host:9000/pandaeye`; empty disables telemetry. The user needs SELECT, INSERT and ALTER DELETE (erasure) |
 | `PE_FEATURES_DIR` | empty | all | records ML feature windows as hourly CSV files in this directory, for training without ClickHouse ([ml/README.md](../ml/README.md#feature-window-files-no-clickhouse)); empty disables it. Only in `all` (erasure reaches the files only when the api shares the worker's process) and not together with `PE_CLICKHOUSE_DSN`. Use a directory of its own outside the repository clone, e.g. `data/ml`. Unsetting it also stops retention and erasure for the files already there: delete the directory. Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_FEATURES_RETENTION`, `PE_FEATURES_MAX_BYTES` | `90d`, `20GiB` | all | files whose hour ended longer ago are deleted (at most `180d`), then the oldest files beyond the byte cap (checked hourly and after each hour's compression). Disk: about 170 B per window compressed (measured on synthetic data), at most 2 880 windows a day per concurrently tracked player, so at most about 0.5 MB per tracked player and day (73 MB a day for 150 concurrent players), plus the current hour uncompressed (about 700 B per window). Not in ARCHITECTURE 5.1 (implementation) |
+| `PE_DIGEST_DIR` | empty | worker, all | writes the check-health digest ([CHECKS.md 5](CHECKS.md#5-check-health-digest)) to this directory: one JSONL file per UTC hour of aggregate counts per check, server, client protocol and brand family, without player data (files 0640, directory 0750). Empty disables it. Use a directory of its own per process (not `PE_FEATURES_DIR`); `data/digests` on the hosted node. Not in ARCHITECTURE 5.1 (implementation) |
+| `PE_DIGEST_RETENTION` | `30d` | worker, all | digest files whose hour ended longer ago are deleted (at start and hourly); at least `1h`. Disk: about 400 B per world-interaction cell and 150 B per other cell, at most 2 048 cells (about 0.8 MB) an hour per process; a network of a few servers is expected at a few hundred cells an hour (estimate). Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_LICENSE_MODE` | `static` | gateway, api | `static` or `pandascript` |
 | `PE_LICENSE_URL`, `PE_LICENSE_PRODUCT` | empty, `pandaeye` | gateway, api | pandascript licence worker, plain `https://` URL only |
 | `PE_LICENSE_PEPPER` | generated in `all` | gateway, api | HMAC key of licence lookups, >= 32 bytes, required for gateway and api outside `all`, identical everywhere. Never rotate it (8.6) |
@@ -174,6 +176,11 @@ Secrets summary (generate with `openssl rand -hex 32`; `deploy/scripts/gen-env.s
   Files are mode 0600 in a 0700 directory; an erasure is journalled in `erasures.jsonl` and the files are
   rewritten without the player in the background. Writes are queued and dropped on overflow
   (`pandaeye_dropped_total{reason="telemetry_overflow"}`), like ClickHouse inserts.
+- **Check-health digest** (`PE_DIGEST_DIR`, optional): hourly JSONL counts without player data
+  ([CHECKS.md 5](CHECKS.md#5-check-health-digest)), written a minute after each hour and deleted after
+  `PE_DIGEST_RETENTION`. Counts wait in memory until then (a crash loses the hour in progress); the
+  workers never wait for the files, so counts are dropped when the writer falls behind
+  (`pandaeye_dropped_total{reason="digest_queue"}`, `digest_write` for a failed write).
 
 ## 5. NATS
 
@@ -403,6 +410,7 @@ What happens on a graceful stop (SIGTERM, completes within 10 s; give the runtim
 | `PE_SERVERS`, `PE_TENANTS` | NATS KV | rebuilt from the database (see restore) | see restore step 4 |
 | ClickHouse | optional | `BACKUP DATABASE pandaeye TO ...` | analytics and ML feature windows only |
 | Feature-window files | `PE_FEATURES_DIR` (optional) | any file copy (the `.csv.gz` files never change except for erasures) | ML training data only |
+| Check-health digest | `PE_DIGEST_DIR` (optional) | any file copy | aggregate tuning statistics only |
 | Dashboard D1 | Cloudflare | D1 Time Travel / `wrangler d1 export` | dashboard users, invites, sessions |
 | NATS auth | `deploy/nats/auth/keys` | offline copy | re-issue every creds file (8.6) |
 
@@ -469,7 +477,9 @@ From the smallest to the largest blast radius:
    local check off in `config.yml`; for a platform-wide bug, stop the verdict service or roll back.
 3. **Diagnose**: verdict evidence (score, top signals, clips, replay viewer); re-run the checks over stored
    data with `pandaeye replay --tenant <t> --player <uuid> --since <t0> --until <t1>` (events are kept for
-   `PE_EVENTS_MAX_AGE`); compare client versions and brands in the sessions telemetry.
+   `PE_EVENTS_MAX_AGE`); compare client versions and brands in the sessions telemetry. Without evidence
+   access, the check-health digest ([CHECKS.md 5](CHECKS.md#5-check-health-digest)) shows on which servers,
+   clients, poses and pings a check fails.
 4. **Remediate**: overturn every wrongful verdict (`POST /api/v1/verdicts/{id}/overturn`, staff or an API
    key with `verdicts:write`). Overturn labels the player `legit` for the window (which also blocks
    KICK/BAN from that window), removes reputation contributions, sends UNMITIGATE to the open session and,

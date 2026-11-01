@@ -174,6 +174,7 @@ existing checks on players it was not trained on, and it starts with no effect o
 | Records of completed erasures (UUID, dates, counts) | [period], to discard data still in transit and document the erasure |
 | Daily peak player counts (aggregate, no player data) | 2 years |
 | Latency statistics (no player data) | 30 days |
+| Check-health digest (if enabled; hourly counts per check, server, client version and client family, no player data) | 30 days [default; state the operated value] |
 | Audit log | 1 year |
 | Backups | [backup retention period] |
 
@@ -348,3 +349,10 @@ Points where the spec does not support a statement the notice needs. Resolve the
     taken off the node for training, and Pterodactyl or host backups of the directory, are not reached by
     an erasure: they need their own retention, and training filters them with the journal (`--erased`).
     Switching the files off stops their retention and erasure, so the directory must then be deleted.
+12. **Check-health digest** (`PE_DIGEST_DIR`, [CHECKS.md 5](CHECKS.md#5-check-health-digest)): hourly
+    counts per check, game server, client protocol, brand family (one of nine) and, for the
+    world-interaction checks, tick client, pose and ping class. It holds no player name, UUID, session
+    id, IP address, coordinates or free text and is not linked to a player, so it is treated as aggregate
+    data, not personal data, and erasure does not touch it. A cell can still count very few players (one
+    player with a rare client on a small server in one hour): keep the files internal to the operator,
+    do not publish them per server, and do not combine them with session data to single anyone out.

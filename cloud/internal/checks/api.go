@@ -91,8 +91,10 @@ type Emission struct {
 type Ctx struct {
 	View   *View
 	Config Config
-	// Silent suppresses emissions (worker warm start and replays that only rebuild state).
+	// Silent suppresses emissions (worker warm start and replays that only rebuild state) and the digest.
 	Silent bool
+	// Digest receives the check-health digest (digest.go); nil disables it.
+	Digest DigestSink
 
 	emit  func(Emission)
 	event *pb.Event
@@ -125,13 +127,22 @@ func (c *Ctx) Param(id, name string, def float64) float64 {
 }
 
 // Emit publishes an emission unless the check is disabled, the context is silent or the player is
-// exempt (bedrock / bypass). Points are clamped to >= 0 and confidence to [0, 1]; NaN values drop it.
+// exempt (bedrock / bypass), and counts it in the digest. Points are clamped to >= 0 and confidence to
+// [0, 1]; NaN values drop it.
 func (c *Ctx) Emit(e Emission) {
+	if c.publish(e) && c.Digest != nil {
+		c.Digest.Emitted(c.View, e.Check)
+	}
+}
+
+// publish is Emit without the digest count and reports whether the emission went out. The
+// world-interaction checks count their emissions in their observations instead.
+func (c *Ctx) publish(e Emission) bool {
 	if c.Silent || c.emit == nil || !c.Enabled(e.Check) || c.View.Exempt || c.View.Bedrock {
-		return
+		return false
 	}
 	if math.IsNaN(e.Points) || math.IsNaN(e.Confidence) || math.IsInf(e.Points, 0) {
-		return
+		return false
 	}
 	e.Points = math.Max(0, e.Points)
 	e.Confidence = math.Min(1, math.Max(0, e.Confidence))
@@ -139,4 +150,15 @@ func (c *Ctx) Emit(e Emission) {
 		e.EventTimeUs = c.event.GetTimeUs()
 	}
 	c.emit(e)
+	return true
+}
+
+// observing reports whether observations are recorded: a digest is set and the context is not silent.
+func (c *Ctx) observing() bool { return c.Digest != nil && !c.Silent }
+
+// observe records an observation in the digest.
+func (c *Ctx) observe(o Observation) {
+	if c.observing() {
+		c.Digest.Observe(c.View, o)
+	}
 }

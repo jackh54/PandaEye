@@ -67,7 +67,8 @@ type env struct {
 	sessions  telemetry.SessionSink
 	windows   telemetry.FeatureSink
 	scorer    ml.Scorer
-	features  bool // compute feature windows
+	features  bool          // compute feature windows
+	digest    *digestWriter // check-health digest (PE_DIGEST_DIR); nil = off
 	now       func() time.Time
 	panics    atomic.Int64 // detector panics (logged at most once per minute)
 	panicLog  atomic.Int64
@@ -225,6 +226,7 @@ type engine struct {
 	emits    []checks.Emission
 	ordinals map[ordKey]int
 	deltas   map[string]int64
+	digest   *digestShard // nil without a digest
 }
 
 func newEngine(part int, e *env, dedup *dedupTable) *engine {
@@ -233,7 +235,7 @@ func newEngine(part int, e *env, dedup *dedupTable) *engine {
 	}
 	return &engine{part: part, env: e, dedup: dedup, players: map[playerKey]*player{}, sessions: map[sessKey]*session{},
 		byServer: map[serverKey]map[*session]struct{}{}, proxies: map[sessKey]*proxySession{}, buffers: map[sessKey]*buffer{},
-		ordinals: map[ordKey]int{}, deltas: map[string]int64{}}
+		ordinals: map[ordKey]int{}, deltas: map[string]int64{}, digest: newDigestShard(e.digest)}
 }
 
 // handle processes the StreamBatch stored at stream sequence seq (0: no sequence, e.g. a clip
@@ -262,6 +264,7 @@ func (e *engine) handle(seq uint64, sb *pb.StreamBatch, raws [][]byte, silent bo
 	if len(raws) != len(sb.GetEvents()) {
 		raws = nil
 	}
+	e.digest.setNow(e.env.now())
 	for i, ev := range sb.GetEvents() {
 		var raw []byte
 		if raws != nil {
@@ -424,9 +427,13 @@ func (e *engine) newSession(m *batchMeta, key sessKey, j *pb.PlayerJoin, ev *pb.
 	if s.tracked {
 		cost = trackedSessionBytes
 		s.view = checks.NewView()
+		s.view.ServerID = key.server
 		s.ctx = checks.NewCtx(s.view, tenantConfig{src: e.env.tenants, tenant: key.tenant}, func(em checks.Emission) {
 			e.emits = append(e.emits, em)
 		})
+		if e.digest != nil {
+			s.ctx.Digest = e.digest
+		}
 		var gcd checks.GCDSource
 		for _, f := range e.env.factories {
 			d := f.New()
@@ -780,6 +787,9 @@ func (e *engine) localSignal(m *batchMeta, i int, s *session, ev *pb.Event, t in
 		e.env.m.Drops.WithLabelValues("unknown_local_check").Inc()
 		return
 	}
+	if !m.silent {
+		e.digestEmitted(s, spec.ID)
+	}
 	data := make(map[string]float64, len(f.GetData())+2)
 	for k, v := range f.GetData() {
 		data[k] = v
@@ -794,6 +804,18 @@ func (e *engine) localSignal(m *batchMeta, i int, s *session, ev *pb.Event, t in
 		GatewayRecvUnixUs: m.recvUs, WorkerUnixUs: uint64(e.env.now().UnixMicro()), Info: info, Data: data, Local: true,
 		Replayed: m.replayed, HotLoaded: s.hotLoaded, SessionId: s.id}
 	e.emitSignal(m, i, s, t, sig)
+}
+
+// digestEmitted counts a signal the engine emits itself (a forwarded local flag, an ML signal) in the
+// check-health digest.
+func (e *engine) digestEmitted(s *session, check string) {
+	switch {
+	case e.digest == nil:
+	case s.view != nil:
+		e.digest.emitted(check, s.key.server, s.view.Protocol, s.view.BrandFamily)
+	default: // a session beyond the player cap
+		e.digest.emitted(check, s.key.server, s.join.GetProtocolVersion(), checks.BrandFamilyOf(s.join.GetBrand()))
+	}
 }
 
 func (e *engine) emitSignal(m *batchMeta, i int, s *session, t int64, sig *pb.Signal) {
@@ -926,6 +948,7 @@ func (e *engine) windows(m *batchMeta, i int, s *session, ws []*ml.Window) {
 		}
 		if m == nil || !m.silent {
 			e.env.m.Signals.WithLabelValues(check).Inc()
+			e.digestEmitted(s, check)
 			e.push(outMsg{msgID: id, env: &pb.SignalEnvelope{Kind: &pb.SignalEnvelope_Signal{Signal: sig}}})
 		}
 	}
@@ -935,9 +958,12 @@ func (e *engine) windows(m *batchMeta, i int, s *session, ws []*ml.Window) {
 // Housekeeping
 // ---------------------------------------------------------------------------------------------
 
-// housekeep expires buffers, evicts idle sessions, finalises stale feature windows and drops erased
-// players. It returns the messages it produced (ML signals of finalised windows).
+// housekeep hands the digest counts to the writer, expires buffers, evicts idle sessions, finalises stale
+// feature windows and drops erased players. It returns the messages it produced (ML signals of finalised
+// windows).
 func (e *engine) housekeep(now time.Time) []outMsg {
+	e.digest.setNow(now)
+	e.digest.flush()
 	for k, b := range e.buffers {
 		if now.Sub(b.firstWall) > time.Duration(bufferMaxAgeUs)*time.Microsecond ||
 			(len(b.items) > 0 && e.newestUs-b.items[0].t > bufferMaxAgeUs) {
@@ -1022,6 +1048,7 @@ func (e *engine) shrink(tenant string, need int64, now time.Time) int64 {
 
 // close releases everything the engine holds (partition handed over or stopping).
 func (e *engine) close() {
+	e.digest.flush()
 	for _, s := range e.sortedSessions() {
 		e.release(s)
 	}
