@@ -676,7 +676,8 @@ With LiteBans on a backend or the proxy, PandaEye sends its cheating bans and th
 - Tuning: compare the reasons your staff actually use with `cheat-reasons`, `ignore-reasons` and
   `legit-unban-reasons`. An entry matches where it starts a word, never inside one (`reach` does not match
   "breach", `esp` not "disrespect", `test` not "fastest"), and the word may go on (`hack` matches "hacking",
-  `alt` "alts"), so list every spelling staff use (`killaura` and `kill aura` besides `aura`). Keep
+  `alt` "alts"), so list every spelling staff use (`killaura` and `kill aura` besides `aura`); an entry that
+  starts with a space or punctuation (`#30d`) matches anywhere. Keep
   `count-console: false`: console bans come from other anticheats and from PandaEye's own `ban-command`, whose
   default reason ("Unfair advantage. Appeal at ...") is a cheat reason, so they would label PandaEye's own
   verdicts. `unfair advantage` is listed for the other direction: a PandaEye ban lifted with a legit-unban

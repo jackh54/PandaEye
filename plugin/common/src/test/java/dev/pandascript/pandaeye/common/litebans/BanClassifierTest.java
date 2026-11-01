@@ -224,9 +224,22 @@ class BanClassifierTest {
             "anti-kb                   | anti kb         | false",
             "an alt account            | 'alt '          | true",
             "alts                      | 'alt '          | false",
+            // an entry that starts with a space or punctuation brings its own word start
+            "an alt account            | ' alt'          | true",
+            "halt                      | ' alt'          | false",
+            "hacking/ blacklisted mods | / blacklisted   | true",
+            "ban#30d                   | '#30d'          | true",
     })
     void anEntryMatchesWhereItStartsAWord(String text, String entry, boolean expected) {
         assertEquals(expected, BanClassifier.matches(text, List.of(entry)));
+    }
+
+    @Test
+    void aQuotedEntryWithALeadingSpaceStillMatchesAfterAWord() {
+        BanClassifier spaced = new BanClassifier(new LiteBansSettings(true, LiteBansSettings.DEFAULT_CHEAT_REASONS,
+                List.of(" alt "), LiteBansSettings.DEFAULT_LEGIT_UNBAN_REASONS, false, 30));
+        assertEquals(Label.NONE, spaced.added(ban("ban", "Hacking on an alt account", STAFF, null)));
+        assertEquals(Label.CHEAT, spaced.added(ban("ban", "Hacking (halted)", STAFF, null)));
     }
 
     @Test

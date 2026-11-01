@@ -461,7 +461,8 @@ loaded.
   `ban`; a cheat reason matches a `cheat-reasons` entry and no `ignore-reasons` entry (ignore wins). An entry of
   the three lists matches where it starts a word: case-insensitively, at the start of the text or after a
   character that is not a letter or digit, ending anywhere (`hack` matches "hacking", `reach` does not match
-  "breach", so `killaura` is listed apart from `aura`):
+  "breach", so `killaura` is listed apart from `aura`); an entry that starts with another character (`#30d`, a
+  quoted `" alt"`) matches anywhere:
   - CHEAT: a ban added with a cheat reason by staff (by the console only with `count-console`: console bans are
     other anticheats' and PandaEye's own `ban-command`);
   - LEGIT: a ban with a cheat reason removed with a `legit-unban-reasons` reason, whoever issued it
