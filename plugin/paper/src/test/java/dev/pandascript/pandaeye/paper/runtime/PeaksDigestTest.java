@@ -83,6 +83,23 @@ class PeaksDigestTest {
     }
 
     @Test
+    void playersThatEvaluatedNothingStayOutOfTheMaxStatDistribution() {
+        PeaksDigest digest = new PeaksDigest(false, 300);
+        digest.add(ALICE, "alice", "movement.speed", new Snapshot(-0.4, 100, 0, 0, 0));
+        digest.add(BOB, "bob", "movement.speed", new Snapshot(0, 0, 0, 0, 1)); // confirmed after its window ended
+        String summary = lines(digest).get(0);
+        assertTrue(summary.contains("\"players\":2,\"players_with_candidates\":0,\"players_confirmed\":1,"), summary);
+        assertTrue(summary.contains("\"max_stat_p50\":-0.400000,\"max_stat_p90\":-0.400000,"
+                + "\"max_stat_p99\":-0.400000,\"max_stat_max\":-0.400000,"), summary);
+
+        PeaksDigest late = new PeaksDigest(false, 300);
+        late.add(BOB, "bob", "movement.speed", new Snapshot(0, 0, 0, 0, 1));
+        summary = lines(late).get(0);
+        assertTrue(summary.contains("\"max_stat_p50\":null,\"max_stat_p90\":null,\"max_stat_p99\":null,"
+                + "\"max_stat_max\":null,"), summary);
+    }
+
+    @Test
     void anEmptyWindowWritesNothing() {
         assertEquals(List.of(), lines(new PeaksDigest(true, 300)));
     }

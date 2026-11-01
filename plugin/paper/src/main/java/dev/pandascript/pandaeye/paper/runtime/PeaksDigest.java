@@ -12,9 +12,9 @@ import java.util.UUID;
 
 /**
  * The peaks-log lines of one stats window (ARCHITECTURE 4.9): per check one summary line without player fields
- * (players, summed counts, nearest-rank percentiles of the players' max statistic), then a row per player and
- * check that had a candidate, a discarded candidate or a confirmed flag, or every row with
- * {@code alerts.log-all-peaks}. Summaries come first so a peaks budget overrun costs rows, not summaries.
+ * (players, summed counts, nearest-rank percentiles of the max statistic of the players that evaluated something),
+ * then a row per player and check that had a candidate, a discarded candidate or a confirmed flag, or every row
+ * with {@code alerts.log-all-peaks}. Summaries come first so a peaks budget overrun costs rows, not summaries.
  */
 final class PeaksDigest {
 
@@ -23,6 +23,7 @@ final class PeaksDigest {
 
     private static final class Summary {
         double[] maxStats = new double[16];
+        int evaluatedPlayers;
         int players;
         int playersWithCandidates;
         int playersConfirmed;
@@ -32,10 +33,14 @@ final class PeaksDigest {
         long confirmed;
 
         void add(CheckStatsWindow.Snapshot stats) {
-            if (players == maxStats.length) {
-                maxStats = Arrays.copyOf(maxStats, players * 2);
+            players++;
+            // a window without evaluations (only a late confirmation) has no statistic; its 0 is a placeholder
+            if (stats.evaluated() > 0) {
+                if (evaluatedPlayers == maxStats.length) {
+                    maxStats = Arrays.copyOf(maxStats, evaluatedPlayers * 2);
+                }
+                maxStats[evaluatedPlayers++] = stats.maxStat();
             }
-            maxStats[players++] = stats.maxStat();
             if (stats.candidates() > 0) {
                 playersWithCandidates++;
             }
@@ -70,7 +75,7 @@ final class PeaksDigest {
     List<Json> lines(long unixMillis) {
         List<Json> lines = new ArrayList<>(summaries.size() + rows.size());
         summaries.forEach((check, summary) -> {
-            double[] sorted = Arrays.copyOf(summary.maxStats, summary.players);
+            double[] sorted = Arrays.copyOf(summary.maxStats, summary.evaluatedPlayers);
             Arrays.sort(sorted);
             lines.add(new Json()
                     .put("time", unixMillis)
@@ -86,7 +91,7 @@ final class PeaksDigest {
                     .put("max_stat_p50", percentile(sorted, 50))
                     .put("max_stat_p90", percentile(sorted, 90))
                     .put("max_stat_p99", percentile(sorted, 99))
-                    .put("max_stat_max", sorted[sorted.length - 1])
+                    .put("max_stat_max", percentile(sorted, 100))
                     .put("window_s", windowSeconds));
         });
         for (Row row : rows) {
@@ -106,8 +111,11 @@ final class PeaksDigest {
         return lines;
     }
 
-    /** Nearest-rank percentile of a sorted, non-empty array. */
+    /** Nearest-rank percentile of a sorted array; NaN (written as null) when it is empty. */
     private static double percentile(double[] sorted, double p) {
+        if (sorted.length == 0) {
+            return Double.NaN;
+        }
         int rank = (int) Math.ceil(p / 100.0 * sorted.length);
         return sorted[Math.min(sorted.length, Math.max(1, rank)) - 1];
     }

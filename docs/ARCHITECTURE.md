@@ -356,8 +356,9 @@ player name cannot be resolved locally, or the circuit breaker is open. Otherwis
   auto` = on in live mode, off in shadow mode. Recipients are kept in a set updated on join/quit/toggle (no per-flag permission scan).
 - Flag log `plugins/PandaEye/logs/flags-YYYY-MM-DD.jsonl`: aggregated per player+check per 5 s (count, max
   severity, first/last info). Peaks log `logs/peaks-YYYY-MM-DD.jsonl` every 5 minutes: one summary line per
-  check without player fields (players, summed counts, `max_stat` p50/p90/p99/max over the players), then a
-  row per player+check with candidates, discards or confirmations (every row with `alerts.log-all-peaks`).
+  check without player fields (players, summed counts, `max_stat` p50/p90/p99/max over the players that
+  evaluated something), then a row per player+check with candidates, discards or confirmations (every row
+  with `alerts.log-all-peaks`).
   Verdict log `logs/verdicts-YYYY-MM-DD.jsonl`. Each file has its own line budget (flags and verdicts
   50 lines/s each, peaks 2 000 lines per 5 minutes), then one `suppressed_lines` line in that file; bounded
   writer queue (10k); daily size cap 256 MiB per file; writing stops while free disk < 1 GiB; files kept

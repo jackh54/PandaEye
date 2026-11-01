@@ -2,7 +2,7 @@
 /**
  * Readers for what the PandaEye plugin leaves on disk / prints (ARCHITECTURE 4.5, 4.9, 4.10):
  *   plugins/PandaEye/logs/flags-YYYY-MM-DD.jsonl  (aggregated per player+check per 5 s)
- *   plugins/PandaEye/logs/peaks-YYYY-MM-DD.jsonl  (per player per check per 5 min)
+ *   plugins/PandaEye/logs/peaks-YYYY-MM-DD.jsonl  (per check per 5 min, plus per player rows with candidates)
  *   `pandaeye status` console output (packet-handler cost avg/p99 us/packet, cloud state, drops)
  * The line schema is not fixed by the spec, so field names are matched leniently (see FIELD_* below).
  */

@@ -563,11 +563,11 @@ Use `/pandaeye forget <uuid>` to remove a player's lines from local logs.
 - `plugins/PandaEye/logs/peaks-YYYY-MM-DD.jsonl`, every 5 minutes: first one summary line per check without
   player fields (`"summary": true`, `players`, `players_with_candidates`, `players_confirmed`, the summed
   `evaluated`, `candidates`, `discarded` and `confirmed`, and `max_stat_p50`/`p90`/`p99`/`max` over the
-  players' maximum test statistic), then a row per player and check that had candidates, discards (by the
-  confirmation step) or confirmations (`player`, `name`, `check`, `max_stat`, `evaluated`, `candidates`,
-  `discarded`, `confirmed`). `alerts.log-all-peaks: true` writes a row for every player and check; turn it on
-  for the peak-per-player method below. The cloud gets every row as `CheckStats`. Bounded: 2 000 lines per
-  5 minutes.
+  maximum test statistic of the players that evaluated something, null if none), then a row per player and
+  check that had candidates, discards (by the confirmation step) or confirmations (`player`, `name`, `check`,
+  `max_stat`, `evaluated`, `candidates`, `discarded`, `confirmed`). `alerts.log-all-peaks: true` writes a row
+  for every player and check; turn it on for the peak-per-player method below. The cloud gets every row as
+  `CheckStats`. Bounded: 2 000 lines per 5 minutes.
 - `plugins/PandaEye/logs/verdicts-YYYY-MM-DD.jsonl`: every verdict and what was done with it. Bounded: 50
   lines/s.
 
