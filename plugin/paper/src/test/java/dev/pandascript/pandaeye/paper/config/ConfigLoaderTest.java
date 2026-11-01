@@ -1,5 +1,6 @@
 package dev.pandascript.pandaeye.paper.config;
 
+import dev.pandascript.pandaeye.common.litebans.BanClassifier;
 import dev.pandascript.pandaeye.common.litebans.LiteBansSettings;
 import dev.pandascript.pandaeye.paper.check.CheckCatalog;
 import dev.pandascript.pandaeye.paper.check.CheckDescriptor;
@@ -44,6 +45,8 @@ class ConfigLoaderTest {
         assertEquals(3, config.punishments().maxBansPerHour());
         assertEquals(5, config.punishments().maxKicksPer10Min());
         assertEquals(LiteBansSettings.DEFAULT, config.litebans());
+        assertTrue(new BanClassifier(config.litebans()).cheatReason(config.punishments().banCommand()),
+                "PandaEye's own ban reason is a cheat reason, so its bans lifted as wrong are LEGIT");
         for (CheckDescriptor check : CheckCatalog.all()) {
             assertTrue(yaml.isConfigurationSection("checks." + check.id()), check.id() + " listed in config.yml");
             assertTrue(config.check(check.id()).enabled());

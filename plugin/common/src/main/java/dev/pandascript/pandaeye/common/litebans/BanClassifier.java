@@ -6,8 +6,10 @@ import java.util.UUID;
 
 /**
  * Turns a LiteBans ban into a label (ARCHITECTURE 4.12). Only entries of type {@code ban} count. A reason is a
- * cheat reason when it contains one of {@code cheat-reasons} and none of {@code ignore-reasons} (ignore wins),
- * case-insensitively.
+ * cheat reason when one of {@code cheat-reasons} matches it and none of {@code ignore-reasons} does (ignore wins).
+ * An entry of any of the three lists matches where it starts a word, case-insensitively: at the start of the reason
+ * or after a character that is not a letter or digit, ending anywhere ({@code "hack"} matches "hacking" and
+ * {@code "reach"} does not match "breach", so {@code "killaura"} is listed apart from {@code "aura"}).
  * <ul>
  *   <li>{@link Label#CHEAT}: a ban added with a cheat reason by staff (by the console only with
  *       {@code count-console}).</li>
@@ -42,11 +44,11 @@ public final class BanClassifier {
         if (!isBan(ban) || !cheatReason(ban.reason())) {
             return Label.NONE;
         }
-        return contains(ban.removalReason(), settings.legitUnbanReasons()) ? Label.LEGIT : Label.NONE;
+        return matches(ban.removalReason(), settings.legitUnbanReasons()) ? Label.LEGIT : Label.NONE;
     }
 
     public boolean cheatReason(String reason) {
-        return !contains(reason, settings.ignoreReasons()) && contains(reason, settings.cheatReasons());
+        return !matches(reason, settings.ignoreReasons()) && matches(reason, settings.cheatReasons());
     }
 
     /**
@@ -69,14 +71,21 @@ public final class BanClassifier {
         return "ban".equalsIgnoreCase(ban.type());
     }
 
-    private static boolean contains(String text, List<String> needles) {
+    /**
+     * Whether one of {@code entries} (lowercase, as {@link LiteBansSettings} stores them) starts a word of
+     * {@code text}: some occurrence of it, case-insensitively, is at the start of the text or after a character that
+     * is not a letter or digit. Every occurrence is tried ("reach" matches "breach, reach"); the end is free.
+     */
+    static boolean matches(String text, List<String> entries) {
         if (text == null || text.isEmpty()) {
             return false;
         }
         String lower = text.toLowerCase(Locale.ROOT);
-        for (String needle : needles) {
-            if (lower.contains(needle)) {
-                return true;
+        for (String entry : entries) {
+            for (int at = lower.indexOf(entry); at >= 0; at = lower.indexOf(entry, at + 1)) {
+                if (at == 0 || !Character.isLetterOrDigit(lower.codePointBefore(at))) {
+                    return true;
+                }
             }
         }
         return false;

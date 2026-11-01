@@ -71,13 +71,14 @@ Backends work without the proxy plugin.
 ## LiteBans (optional)
 
 If your staff punish with LiteBans, PandaEye reads their bans without any setup: a ban for cheating by staff and
-a cheating ban lifted as a false ban or an accepted appeal become labels for the cloud, which uses them to
-confirm or overturn PandaEye's verdicts and to measure its accuracy, even if staff never open the dashboard.
-Only the outcome is sent: never the ban reason, staff names or IP addresses. The keywords that decide what counts
-as a cheating ban are under `labels.litebans` in `config.yml` (backend and proxy, restart to apply);
-`labels.litebans.enabled: false` turns it off. `/pandaeye status` shows the labels sent. In the dashboard, verdicts
-decided this way are marked "LiteBans" and the overview's "Accuracy (LiteBans)" card compares PandaEye with your
-staff's bans; a decision staff make in the dashboard always wins over LiteBans.
+a cheating ban lifted as a false ban or an accepted appeal (PandaEye's own bans included) become labels for the
+cloud, which uses them to confirm or overturn PandaEye's verdicts and to measure its accuracy, even if staff never
+open the dashboard. Only the outcome is sent: never the ban reason, staff names or IP addresses. The keywords that
+decide what counts as a cheating ban are under `labels.litebans` in `config.yml` (backend and proxy, restart to
+apply); each matches where it starts a word of the reason ("hack" matches "hacking", "reach" does not match
+"breach"). `labels.litebans.enabled: false` turns it off. `/pandaeye status` shows the labels sent. In the
+dashboard, verdicts decided this way are marked "LiteBans" and the overview's "Accuracy (LiteBans)" card compares
+PandaEye with your staff's bans; a decision staff make in the dashboard always wins over LiteBans.
 
 ## Updating and removing
 

@@ -438,7 +438,10 @@ labels:                    # 4.12; without LiteBans this does nothing
   litebans:
     enabled: true
     cheat-reasons: [hack, cheat, blacklisted mod, modification, aura, reach, fly, speed, scaffold, autoclick,
-      auto click, auto totem, autototem, easy place, easyplace, macro, script, nuker, bhop, velocity, timer, client]
+      auto click, auto totem, autototem, easy place, easyplace, macro, script, nuker, bhop, velocity, timer, client,
+      killaura, kill aura, aimbot, aim bot, aim assist, aimassist, triggerbot, trigger bot, antikb, anti kb, anti-kb,
+      antiknockback, anti knockback, auto crystal, autocrystal, auto anchor, autoanchor, auto armor, autoarmor,
+      nofall, no fall, noslow, no slow, fast place, fastplace, hitbox, criticals, baritone, flight, unfair advantage]
     ignore-reasons: [x-ray, xray, esp, bot account, evad, alt, test]   # checked first; ignore wins
     legit-unban-reasons: [false ban, falsely, wrongful, mistake, appeal accepted]
     count-console: false
@@ -455,11 +458,15 @@ loaded.
 
 - `LiteBansHook`, the only class built on `litebans.api` (compiled against `plugin/litebans-stub`; the class
   preloader skips it), listens to `Events.entryAdded` / `entryRemoved`. `BanClassifier` labels entries of type
-  `ban`; a cheat reason contains a `cheat-reasons` entry and no `ignore-reasons` entry (case-insensitive
-  substrings, ignore wins):
+  `ban`; a cheat reason matches a `cheat-reasons` entry and no `ignore-reasons` entry (ignore wins). An entry of
+  the three lists matches where it starts a word: case-insensitively, at the start of the text or after a
+  character that is not a letter or digit, ending anywhere (`hack` matches "hacking", `reach` does not match
+  "breach", so `killaura` is listed apart from `aura`):
   - CHEAT: a ban added with a cheat reason by staff (by the console only with `count-console`: console bans are
     other anticheats' and PandaEye's own `ban-command`);
-  - LEGIT: a ban with a cheat reason removed with a `legit-unban-reasons` reason, whoever issued it;
+  - LEGIT: a ban with a cheat reason removed with a `legit-unban-reasons` reason, whoever issued it
+    (`unfair advantage`, PandaEye's default ban reason, is a cheat reason so that its own bans lifted as wrong
+    count too);
   - anything else is not sent (bot, alt and x-ray bans, mutes and kicks, unbans without a legit reason such as
     "ban has been lifted." or an unban wave).
 - A label is an `Event{player, label: ModerationLabel}` in the normal event sink, so it is batched, buffered and
