@@ -85,6 +85,8 @@ type player struct {
 	newestNetwork     string
 	newestBackend     string // the newest origin that is not a proxy (BAN fallback route)
 	newestBackendName string
+	newestLive        string // the newest origin that is neither a proxy nor in shadow mode (live BAN fallback)
+	newestLiveName    string
 }
 
 func newPlayer(k playerKey, now time.Time) *player {
@@ -102,6 +104,9 @@ func (p *player) touch(name string, o *pb.Origin) {
 		}
 		if o.Platform != pb.Platform_PLATFORM_VELOCITY {
 			p.newestBackend, p.newestBackendName = o.ServerId, o.ServerName
+			if !o.ShadowMode {
+				p.newestLive, p.newestLiveName = o.ServerId, o.ServerName
+			}
 		}
 	}
 }

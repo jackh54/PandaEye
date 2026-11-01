@@ -85,6 +85,7 @@ type route struct {
 	serverName    string
 	network       string
 	lookupNetwork bool   // BAN without an open backend session: resolve a connected server (emitter)
+	live          bool   // BAN of a live origin: only live servers run it, so it never goes to a shadow one
 	fallback      string // the newest signal's server, for a BAN its newest backend (pending until it reconnects)
 	fallbackName  string
 	proxy         string // BAN: the proxy the player is online through (preferred among proxies)
@@ -480,16 +481,19 @@ func (p *partition) buildVerdict(pl *player, sess *session, a pb.Action, sc Scor
 // the newest signal. A BAN never takes a proxy session's server (a proxy has no ban command by
 // default): without an open backend session the emitter resolves a connected backend of the network
 // or the player's newest backend, a proxy only when no backend is connected, else the newest backend
-// (pending until it reconnects).
+// (pending until it reconnects). A plugin in shadow mode never runs a BAN, so a BAN from a live origin
+// skips shadow sessions (and the emitter shadow connections) and falls back to the player's newest live
+// backend, or the origin when there is none; a BAN from a shadow origin is shadow anyway.
 func (p *partition) route(pl *player, sess *session, a pb.Action, tr trigger) route {
 	ban := a == pb.Action_ACTION_BAN
-	r := route{network: firstNonEmpty(sess.network, pl.newestNetwork, tr.origin.GetNetworkId())}
-	if sess.open && sess.server != "" && !(ban && sess.proxy()) {
+	live := ban && !tr.origin.GetShadowMode()
+	r := route{network: firstNonEmpty(sess.network, pl.newestNetwork, tr.origin.GetNetworkId()), live: live}
+	if sess.open && sess.server != "" && !(ban && sess.proxy()) && !(live && sess.shadowMode) {
 		r.server, r.serverName = sess.server, sess.serverName
 		return r
 	}
 	for _, s := range pl.openSessions() {
-		if s.server == "" {
+		if s.server == "" || (live && s.shadowMode) {
 			continue
 		}
 		if ban && s.proxy() {
@@ -506,7 +510,12 @@ func (p *partition) route(pl *player, sess *session, a pb.Action, tr trigger) ro
 		r.fallbackName = tr.origin.GetServerName()
 	}
 	if ban {
-		if pl.newestBackend != "" {
+		switch {
+		case live && pl.newestLive != "":
+			r.fallback, r.fallbackName = pl.newestLive, pl.newestLiveName
+		case live && tr.origin.GetServerId() != "":
+			r.fallback, r.fallbackName = tr.origin.ServerId, tr.origin.ServerName
+		case pl.newestBackend != "":
 			r.fallback, r.fallbackName = pl.newestBackend, pl.newestBackendName
 		}
 		r.lookupNetwork = true

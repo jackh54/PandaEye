@@ -454,6 +454,73 @@ func TestBanRoutingSkipsProxySessions(t *testing.T) {
 	}
 }
 
+// A plugin in shadow mode never runs a BAN: a BAN of a live origin skips shadow sessions and falls
+// back to the player's newest live backend, while a BAN of a shadow origin (shadow itself) keeps the
+// routes above.
+func TestLiveBanRoutingSkipsShadowSessions(t *testing.T) {
+	h := newHarness(t)
+	smp := h.player(h.tenant())
+	lobby := *smp
+	lobby.server, lobby.session, lobby.shadow = testkit.NewServerID(), identity.NewUUID().String(), true
+	px := smp.onProxy()
+	px.shadow = true
+	h.apply(px.marker(pb.SessionMarker_KIND_JOIN))
+	h.clk.add(time.Second)
+	h.apply(smp.marker(pb.SessionMarker_KIND_JOIN))
+	h.apply(smp.marker(pb.SessionMarker_KIND_QUIT))
+	h.clk.add(time.Second)
+	h.apply(lobby.marker(pb.SessionMarker_KIND_JOIN)) // on the shadow lobby now: its newest backend
+	pl := h.p.players[playerKey{smp.tenant, smp.id}]
+	smpSess, lobbySess := pl.sessions[smp.session], pl.sessions[lobby.session]
+	live, shadow := trigger{origin: smp.origin()}, trigger{origin: lobby.origin()}
+	if pl.newestBackend != lobby.server {
+		t.Fatalf("setup: newest backend %s", pl.newestBackend)
+	}
+
+	// A late SMP signal: neither the lobby's open session nor the shadow proxy, the SMP (pending or
+	// resolved by the emitter among live connections). KICK and MITIGATE still follow the player.
+	r := h.p.route(pl, smpSess, aB, live)
+	if !r.live || !r.lookupNetwork || r.network != "net-1" || r.fallback != smp.server || r.server != smp.server || r.proxy != "" {
+		t.Fatalf("live BAN of a player on a shadow lobby: %+v", r)
+	}
+	for _, a := range []pb.Action{aK, aM} {
+		if r := h.p.route(pl, smpSess, a, live); r.server != lobby.server || r.live {
+			t.Fatalf("%v of a player on the lobby: %+v", a, r)
+		}
+	}
+	// The same from the lobby's session: a shadow session is never the target of a live BAN.
+	if r := h.p.route(pl, lobbySess, aB, live); !r.lookupNetwork || r.server != smp.server {
+		t.Fatalf("live BAN from the shadow session: %+v", r)
+	}
+	// A shadow origin: the open session, as before (the verdict is shadow anyway).
+	if r := h.p.route(pl, lobbySess, aB, shadow); r.live || r.lookupNetwork || r.server != lobby.server {
+		t.Fatalf("shadow BAN: %+v", r)
+	}
+	h.apply(lobby.marker(pb.SessionMarker_KIND_QUIT))
+	if r := h.p.route(pl, lobbySess, aB, shadow); r.live || r.fallback != lobby.server || r.proxy != px.server {
+		t.Fatalf("shadow BAN of a player on the proxy: %+v", r)
+	}
+
+	// A live proxy is the player's proxy for a live BAN; a shadow one is not.
+	livePx := smp.onProxy()
+	h.apply(livePx.marker(pb.SessionMarker_KIND_JOIN))
+	if r := h.p.route(pl, smpSess, aB, live); r.proxy != livePx.server || r.fallback != smp.server {
+		t.Fatalf("live BAN of a player on a live proxy: %+v", r)
+	}
+
+	// No live backend ever seen: the BAN waits for its (live) origin.
+	only := h.player(smp.tenant)
+	only.shadow = true
+	h.apply(only.marker(pb.SessionMarker_KIND_JOIN))
+	h.apply(only.marker(pb.SessionMarker_KIND_QUIT))
+	opl := h.p.players[playerKey{only.tenant, only.id}]
+	origin := smp.origin()
+	if r := h.p.route(opl, opl.sessions[only.session], aB, trigger{origin: origin}); !r.live || r.fallback != smp.server ||
+		r.server != smp.server || r.fallbackName != origin.ServerName {
+		t.Fatalf("live BAN without a live backend: %+v", r)
+	}
+}
+
 func TestWatchRequests(t *testing.T) {
 	h := newHarness(t)
 	tp := h.player(h.tenant())

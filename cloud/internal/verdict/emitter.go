@@ -118,7 +118,8 @@ func (s *Service) emit(ctx context.Context, pv *pendingVerdict) error {
 // resolveNetwork routes a BAN without an open backend session to a connected server: a backend of
 // the same network (or the player's newest backend, whatever its network) before any proxy, since a
 // proxy has no ban command by default; a proxy (preferably the one the player is on) only when no
-// backend is connected. Nothing connected leaves the fallback (the newest backend, pending until it
+// backend is connected. A BAN of a live origin only takes live connections, since a plugin in shadow
+// mode never runs it. Nothing connected leaves the fallback (the newest backend, pending until it
 // reconnects).
 func (s *Service) resolveNetwork(ctx context.Context, pv *pendingVerdict) {
 	lctx, cancel := context.WithTimeout(ctx, storeTimeout)
@@ -131,6 +132,9 @@ func (s *Service) resolveNetwork(ctx context.Context, pv *pendingVerdict) {
 	r := &pv.route
 	var match []stream.Connection
 	for _, c := range conns {
+		if r.live && c.Info.ShadowMode {
+			continue
+		}
 		if (r.network != "" && c.Info.NetworkID == r.network) || c.ServerID == r.fallback || c.ServerID == r.proxy {
 			match = append(match, c)
 		}

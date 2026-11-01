@@ -680,7 +680,10 @@ internal/testkit           fake plugin client, event builders, helpers
   server unless it is a proxy (no ban command by default), else the player's newest backend when it is
   connected (whatever its network_id), else another connected backend of the same network_id, else a
   connected proxy (the player's first), else the player's newest backend (pending until it reconnects).
-  UNBAN goes to the server that executed the BAN.
+  A plugin in shadow mode never runs a BAN, so a BAN whose origin is live takes live servers only: it skips
+  sessions and connections in shadow mode, and its newest backend is the player's newest live one (the
+  origin when there is none), which it waits for rather than going to a shadow server. A BAN from a shadow
+  origin is shadow anyway and routed as above. UNBAN goes to the server that executed the BAN.
 - Store writer (one leased instance, `writer` lease): consumes `PE_VERDICTS`, upserts verdicts by id
   (including the serialized Verdict in `verdicts.payload` for redelivery), applies AckRecords (`acked_at`,
   `executed`, `note`), creates `bans` rows only on executed (ack executed=true) non-shadow BANs, records
