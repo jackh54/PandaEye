@@ -49,6 +49,7 @@ func (d *digDetector) Handle(c *Ctx, ev *pb.Event) {
 		rot:      geom.Rotation{Yaw: float64(dig.GetYaw()), Pitch: float64(dig.GetPitch())},
 		sneaking: c.View.Flags&uint32(pb.MoveFlag_MOVE_FLAG_SNEAKING) != 0, // BlockDig has no sneaking field
 		reach:    float64(dig.GetBlockReach()),
+		action:   dig.GetAction(),
 	})
 }
 

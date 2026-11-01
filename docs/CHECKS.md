@@ -556,8 +556,10 @@ histogram edges) and `cloud/internal/worker/digest.go` (cells, files).
 
 **Cells.** The world-interaction checks (`scaffold.face`, `scaffold.ray`, `scaffold.cursor`,
 `scaffold.reach`, `dig.ray`) report every judged placement or dig, one cell per (check, server, protocol,
-brand, tick client, pose, ping). Every other cloud check (`ml.<model>` when its signals are sent, 2.16) and
-every forwarded local flag counts emissions only, one cell per (check, server, protocol, brand).
+brand, tick client, pose, ping); within the cell, `context` splits its evaluations and failures by the
+situation of each action (contexts below), so failure rates compare between situations without more
+cells. Every other cloud check (`ml.<model>` when its signals are sent, 2.16) and every forwarded local flag
+counts emissions only, one cell per (check, server, protocol, brand).
 
 | Field | Meaning |
 |---|---|
@@ -574,7 +576,20 @@ every forwarded local flag counts emissions only, one cell per (check, server, p
 | `eye_path` | evaluations whose eye candidates included the path from the previous position (2.1: the last position arrived within 150 ms, the step was under 4 blocks) |
 | `eyes`, `rotations` | distinct eye and rotation candidates, summed (divide by `evaluations`); candidates within 1e-6 count once, so a still standing player has 2 eyes, and the rotations are 1 without an R1 and 5 with one. `scaffold.face` and `scaffold.reach` use the eyes only |
 | `le`, `hist` | histogram of the decisive value: `hist[0]` counts values <= `le[0]`, `hist[i]` values in (`le[i-1]`, `le[i]`], the last element the values above the last edge |
+| `cursor_only` | `scaffold.cursor` only: its failures for which `scaffold.ray` hit the cube of the same placement (a candidate look ray met the clicked block, but no look ray passes the click position) |
+| `context` | per context (below): `buckets` (names), `evaluations` and `failures` per bucket; each context's arrays sum to the cell's `evaluations` and `failures` |
 | `overflow` | `true` on the line that sums a check's cells beyond 2 048 cells in the hour (it has no dimensions) |
+
+Contexts, the same for every check of an action; lower bounds included unless the bucket says otherwise:
+
+| Context | Of the action | Buckets |
+|---|---|---|
+| `dist` | distance from the event eye to the centre of the clicked or dug block, in blocks | `<1.5`, `1.5-3`, `3-4.5`, `>=4.5` |
+| `turn` | angle between the R0 and R1 look vectors (2.1), in degrees | `0` (no R1, or R1 = R0), `0-5` (0, 5], `5-30` (5, 30], `>30` |
+| `gap` | time since the session's previous judged action of the same detector: the previous placement for `scaffold.*`, the previous START or FINISH for `dig.ray` (a FINISH usually counts from its START), in ms | `<60` (the same or the next tick), `60-250`, `250-1000`, `>=1000` (also the session's first) |
+| `speed` | horizontal length of the eye path's segment (2.1: from the previous position to the event's feet), in blocks per move | `none` (no eye path, see `eye_path`), `<0.05`, `0.05-0.2`, `0.2-0.4`, `>=0.4` |
+| `face` | `scaffold.*`: the clicked face | `up`, `down`, `side` (north, south, east, west), `other` (`scaffold.face` does not judge it) |
+| `action` | `dig.ray`: the dig action | `start`, `finish` |
 
 Brand families: the brand is trimmed and lower-cased; empty is `unknown`; otherwise the first rule whose
 text it contains decides: `lunar`, `badlion`, `feather`, `labymod`, `forge` (also `neoforge` and
@@ -605,6 +620,26 @@ cat data/digests/digest-*.jsonl | jq -s 'map(select(.evaluations)) | group_by([.
   | map(.rate = .failures / .n) | sort_by(-.rate)'
 ```
 
+Failure rates per context bucket of one check, the arrays of all its cells added up bucket by bucket (add
+`and .server_id == "..."` or `and .brand == "..."` to the select to narrow it; lines written before the
+contexts existed have no `context` and are left out):
+
+```sh
+cat data/digests/digest-*.jsonl | jq -s --arg check scaffold.cursor 'map(select(.check == $check and .context))
+  | map(.context | to_entries[]) | group_by(.key) | map({key: .[0].key, value: (
+      [.[0].value.buckets, (map(.value.evaluations) | transpose | map(add)), (map(.value.failures) | transpose | map(add))]
+      | transpose | map({bucket: .[0], n: .[1], failures: .[2], rate: (if .[1] > 0 then .[2] / .[1] else null end)}))})
+  | from_entries'
+```
+
+The share of `scaffold.cursor` failures whose ray hit the block, per server and brand family:
+
+```sh
+cat data/digests/digest-*.jsonl | jq -s 'map(select(.check == "scaffold.cursor" and .context)) | group_by([.server_id, .brand])
+  | map({server: .[0].server_id, brand: .[0].brand, failures: (map(.failures) | add), cursor_only: (map(.cursor_only) | add)})
+  | map(.share = (if .failures > 0 then .cursor_only / .failures else null end))'
+```
+
 - A rate that depends on `brand` or `protocol` points at the client (a mod that changes the pick, a
   ViaVersion translation); one that depends on `server_id` at the server (Folia, a plugin that rewrites
   rotations or teleports); one that grows with `ping` at timing (R1 or the next move not found); one tied to
@@ -616,3 +651,14 @@ cat data/digests/digest-*.jsonl | jq -s 'map(select(.evaluations)) | group_by([.
   (cursor 3-5 degrees, ray up to a degree or two, face margin -0.1..0) are precision or tolerance; failures
   far past it (tens of degrees, whole blocks) mean a wrong eye or rotation, or cheating.
 - `emissions / failures` shows how much the "k of the last n" rule filters isolated failures.
+- Contexts: compare each bucket's rate with the check's overall rate, not its share of the failures (most
+  actions are close, slow and on a side face, so most failures are too). A rate that rises at `dist` `<1.5`
+  points at the eye (small eye errors are large angles up close); with `turn` at the rotation (the client
+  picked with one outside R0 -> R1, or R1 came from the wrong packet); at `gap` `<60` at fast or batched
+  clicks (actions in the same tick share R0 and R1); at `speed` `>=0.4` or `none` at the eye path (the eye
+  between two positions, or no previous position); at `face` `up` at pillaring rather than bridging;
+  `action` tells the first click (`start`) from the break (`finish`).
+- `cursor_only / failures` near 1: the look ray met the clicked block, so eye and rotation were right, but
+  the click position lies off every look ray: the cursor was not computed on that ray (a client or
+  translation layer that rewrites it, a cursor relative to a block other than the clicked one, a made-up
+  cursor). Near 0: the rotation or eye was off too.
