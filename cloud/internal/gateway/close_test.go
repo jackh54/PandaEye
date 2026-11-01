@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"syscall"
@@ -40,6 +42,7 @@ func TestReadCloseReason(t *testing.T) {
 		{fmt.Errorf("failed to read frame payload: %w", io.ErrUnexpectedEOF), "connection_lost", []any{"io_error", "eof"}},
 		{fmt.Errorf("failed to get reader: failed to read frame header: %w", reset), "connection_lost", []any{"io_error", "reset"}},
 		{errors.New("received unmasked frame from client"), "connection_lost", []any{"io_error", "other"}},
+		{fmt.Errorf("failed to get reader: %w", net.ErrClosed), "write_failed", []any{"io_error", "timeout"}},
 	} {
 		reason, attrs := readCloseReason(tc.err)
 		if reason != tc.reason || fmt.Sprint(attrs) != fmt.Sprint(tc.attrs) {
@@ -48,6 +51,48 @@ func TestReadCloseReason(t *testing.T) {
 		if strings.Contains(fmt.Sprint(attrs), "203.0.113.7") {
 			t.Errorf("an address reached the attributes: %v", attrs)
 		}
+	}
+}
+
+// A write that times out makes the library close the socket, and the read loop, which may see that
+// first, must still blame the write.
+func TestWriteTimeoutSeenByTheReader(t *testing.T) {
+	readErr, writeErr := make(chan error, 1), make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		go func() {
+			_, _, err := c.Read(context.Background())
+			readErr <- err
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		writeErr <- c.Write(ctx, websocket.MessageBinary, make([]byte, 64<<20)) // the client never reads
+	}))
+	defer srv.Close()
+	c, _, err := websocket.Dial(ctxT(t, 5*time.Second), "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	select {
+	case err := <-writeErr:
+		if ioErrorKind(err) != "timeout" {
+			t.Fatalf("write: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the write did not time out")
+	}
+	select {
+	case err := <-readErr:
+		if reason, attrs := readCloseReason(err); reason != "write_failed" || fmt.Sprint(attrs) != "[io_error timeout]" {
+			t.Fatalf("read %v: %s %v", err, reason, attrs)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the read did not end")
 	}
 }
 

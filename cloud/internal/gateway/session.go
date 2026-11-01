@@ -167,8 +167,8 @@ func (s *session) readLoop() {
 }
 
 // readCloseReason classifies the error that ended the read loop: the peer's close frame (its code and
-// reason go to the close log), a message over the read limit, or a broken connection (only the
-// error's kind is logged: its text carries addresses).
+// reason go to the close log), a message over the read limit, a write that timed out, or a broken
+// connection (only the error's kind is logged: its text carries addresses).
 func readCloseReason(err error) (string, []any) {
 	var ce websocket.CloseError
 	switch {
@@ -184,6 +184,10 @@ func readCloseReason(err error) (string, []any) {
 		}
 	case errors.Is(err, websocket.ErrMessageTooBig):
 		return "message_too_big", nil
+	case errors.Is(err, net.ErrClosed):
+		// While the session runs, only a timed-out write closes the socket (the library does), and
+		// the reader may see that before the writer reports it.
+		return "write_failed", []any{"io_error", "timeout"}
 	default:
 		return "connection_lost", []any{"io_error", ioErrorKind(err)}
 	}
