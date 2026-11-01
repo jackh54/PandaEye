@@ -626,6 +626,39 @@ func TestScaffoldCheatUnflaggedCrawlCeilingCursorOff(t *testing.T) {
 	}
 }
 
+// Only an eye below a bottom face can have clicked it, the crawling eyes included. A standing player
+// (feet at 64.625, on six snow layers or in the middle of a jump) whose 0.4 eye at 65.025 lies above the
+// bottom face at 65 of the block in front of it claims that face with a cursor on a ray aimed from that
+// eye. The face is visible to the sneaking eye (65.895 < 66) and its ray reaches the block, so only the
+// cursor check can catch it, and the crawling eye must not excuse it.
+func TestScaffoldCheatBottomFaceOnARayFromAboveIt(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	r.tick(geom.V(0.5, 64.625, 0.5), geom.Rotation{})
+	crawlEye := geom.Eye(r.p.Pos, geom.PoseCrawling, r.p.Protocol, 1)
+	for i := range 12 {
+		b := [3]int32{1, 65, 0}
+		cursor := geom.V([]float64{0.2, 0.5, 0.8}[i%3], 0, []float64{0.2, 0.5, 0.8}[i/3%3])
+		rot := aim(crawlEye, geom.BlockBox(b[0], b[1], b[2]).Min.Add(cursor))
+		r.tick(r.p.Pos, rot)
+		r.place(blockClick{block: b, face: pb.Face_FACE_DOWN, cursor: cursor, eye: r.eyeOf(false), rot: rot})
+		r.tick(r.p.Pos, rot)
+	}
+	r.step(geom.V(0, 0, 0))
+	es, d := r.runDigest("scaffold")
+	expectCount(t, es, "scaffold.cursor", 4)
+	expectCount(t, es, "scaffold.face", 0)
+	expectCount(t, es, "scaffold.ray", 0)
+	obs := d.of("scaffold.cursor")
+	if len(obs) != 12 {
+		t.Fatalf("%d cursor observations, want 12", len(obs))
+	}
+	for _, o := range obs {
+		if !o.Failed || o.Value < 30 {
+			t.Fatalf("bottom-face cursor aimed from an eye above the face judged %.1f degrees (%+v)", o.Value, o)
+		}
+	}
+}
+
 // A vanilla cursor is the entry point of the look ray, so it lies on the ray at any distance. Client mods
 // that rewrite the hit vector put it about one block off the ray, which is 20 to 30 degrees at 2 to 3
 // blocks, where the digest's fabric failures cluster. Two such rewrites (from the mods' sources), placing

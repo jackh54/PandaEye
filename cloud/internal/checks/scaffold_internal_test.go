@@ -79,6 +79,8 @@ func TestCursorEyesCrawlCase(t *testing.T) {
 		{"just below the sneaking eyes", 769, geom.PoseStanding, pb.Face_FACE_DOWN, low, true},
 		{"within the uncertainty of the sneaking eyes", 769, geom.PoseStanding, pb.Face_FACE_DOWN, 64 + 1.27 - u/2, false},
 		{"above the sneaking eyes", 769, geom.PoseStanding, pb.Face_FACE_DOWN, 65.5, false},
+		{"within the uncertainty of the crawling eyes", 769, geom.PoseStanding, pb.Face_FACE_DOWN, 64.4 - u/2, true},
+		{"below the crawling eyes too", 769, geom.PoseStanding, pb.Face_FACE_DOWN, 64.4 - 2*u, false},
 		{"top face", 769, geom.PoseStanding, pb.Face_FACE_UP, 65, false},
 		{"side face", 769, geom.PoseStanding, pb.Face_FACE_NORTH, 65, false},
 		{"0.4 is a candidate already", 769, geom.PoseSwimming, pb.Face_FACE_DOWN, 65, false},

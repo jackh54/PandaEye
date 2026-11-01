@@ -406,11 +406,13 @@ Skip placements with `inside_block` set, cursors outside [0, 1] (for scaffold.cu
   3 degrees beyond the 0.3 skip at walking speed. Bottom face: it is only seen from below, so when `P.y`
   lies below every candidate eye (by more than the eye uncertainty) no candidate can have clicked it and
   the only vanilla eye left is the 0.4 eye of an unflagged crawl (2.1). For such a click, and only for
-  scaffold.cursor, the 0.4 eyes at the same feet (reported, path, next move) are added to the candidates
-  (clients from 1.14, and only when 0.4 is not a candidate already). A cursor that is not on a look ray
-  from those eyes still mismatches. Client mods that rewrite the hit vector (a pick ray from an origin
-  beside the eye, the hit vector moved by a block, a stale or reused hit vector) are not vanilla and are
-  judged as they are: about a block off the ray, they mismatch by 20 to 30 degrees at 2 to 3 blocks.
+  scaffold.cursor, the 0.4 eyes at the same feet (reported, path, next move) that may lie below `P`
+  (`E.y - u < P.y`, `u` the eye uncertainty) are added to the candidates (clients from 1.14, and only
+  when 0.4 is not a candidate already): a 0.4 eye above the face cannot have clicked it either. A cursor
+  that is not on a look ray from those eyes still mismatches. Client mods that rewrite the hit vector (a
+  pick ray from an origin beside the eye, the hit vector moved by a block, a stale or reused hit vector)
+  are not vanilla and are judged as they are: about a block off the ray, they mismatch by 20 to 30
+  degrees at 2 to 3 blocks.
 - `scaffold.reach`: distance from every eye candidate to the clicked block's cube > `block_reach + 0.6`.
   Points `3 + 5*min(excess, 1)`, confidence 0.8.
 

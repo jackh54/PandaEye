@@ -417,22 +417,33 @@ func (b *blockCandidates) rayHits(box geom.AABB, maxDist float64) bool {
 }
 
 // cursorEyes returns the eyes scaffold.cursor judges the cursor point p of a click on face from
-// (CHECKS.md 2.12): the candidates, plus the crawling eyes when face is the bottom face and p lies below
-// every candidate (by more than the eye uncertainty u). A bottom face is only seen from below it, and
-// the only vanilla eye below the standing and sneaking ones is the 0.4 eye of a crawl or swim the
-// plugin does not flag (the pose-only crawl in a one-block gap).
+// (CHECKS.md 2.12): the candidates, plus the crawling eyes below p when face is the bottom face and p
+// lies below every candidate (by more than the eye uncertainty u). A bottom face is only seen from below
+// it, and the only vanilla eye below the standing and sneaking ones is the 0.4 eye of a crawl or swim
+// the plugin does not flag (the pose-only crawl in a one-block gap); a crawling eye above p cannot have
+// clicked it either.
 func (b *blockCandidates) cursorEyes(face pb.Face, p geom.Vec3, u float64) []geom.Vec3 {
 	eyes := b.eyes()
 	if face != pb.Face_FACE_DOWN || b.nCrawl == 0 {
 		return eyes
 	}
 	for _, e := range eyes {
-		if e.Y-u < p.Y {
-			return eyes // this eye may lie below the face
+		if belowFace(e, p, u) {
+			return eyes
 		}
 	}
-	return append(slices.Clip(eyes), b.crawl[:b.nCrawl]...)
+	out := slices.Clip(eyes)
+	for _, e := range b.crawl[:b.nCrawl] {
+		if belowFace(e, p, u) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
+
+// belowFace reports whether the eye e may lie below the bottom-face point p, given the eye uncertainty u:
+// only such an eye can have clicked the face.
+func belowFace(e, p geom.Vec3, u float64) bool { return e.Y-u < p.Y }
 
 // minAngleTo is the smallest angle (degrees) between a candidate look vector and the direction from an
 // eye of eyes to p.
