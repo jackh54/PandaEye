@@ -31,7 +31,7 @@ func (b *Bus) provision(ctx context.Context) error {
 			Duplicates: 10 * time.Minute, Replicas: r, MaxMsgSize: MaxPayload,
 		},
 		{
-			Name: StreamVerdicts, Subjects: []string{"pe.verdicts.*", "pe.acks.*"}, Storage: jetstream.FileStorage,
+			Name: StreamVerdicts, Subjects: []string{"pe.verdicts.*", "pe.acks.*", "pe.labels.*"}, Storage: jetstream.FileStorage,
 			Retention: jetstream.LimitsPolicy, Discard: jetstream.DiscardOld, MaxAge: 30 * 24 * time.Hour,
 			Duplicates: time.Hour, Replicas: r, MaxMsgSize: MaxPayload,
 		},

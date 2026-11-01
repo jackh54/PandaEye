@@ -166,7 +166,7 @@ func TestRunServesAndLeasesJobs(t *testing.T) {
 	if res.StatusCode != 200 {
 		t.Fatalf("GET /status on %s: %d", addr, res.StatusCode)
 	}
-	for _, key := range []string{stream.LeaseMetering, stream.LeaseJanitor} {
+	for _, key := range []string{stream.LeaseMetering, stream.LeaseJanitor, stream.LeaseLabels} {
 		if _, err := e.d.Bus.Leases.Get(context.Background(), key); err != nil {
 			t.Errorf("lease %s not held: %v", key, err)
 		}

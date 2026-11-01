@@ -43,7 +43,7 @@ func TestVersionAndUsage(t *testing.T) {
 func TestMigrate(t *testing.T) {
 	env := []string{"PE_DB_DSN=" + filepath.Join(t.TempDir(), "pe.db")}
 	code, out, errOut := runCmd(t, env, "migrate")
-	if code != 0 || !strings.Contains(out, "applied 1 migration(s); schema version 1") {
+	if code != 0 || !strings.Contains(out, "applied 2 migration(s); schema version 2") {
 		t.Fatalf("migrate: %d %q %q", code, out, errOut)
 	}
 	if code, out, _ := runCmd(t, env, "migrate"); code != 0 || !strings.Contains(out, "applied 0") {

@@ -12,6 +12,7 @@
   ],
   "confidence": 0.93,
   "created_at": "2025-06-15T10:00:00Z",
+  "decided_by": "",
   "delivered_at": "2025-06-15T10:00:01Z",
   "evidence": {
     "checks": [

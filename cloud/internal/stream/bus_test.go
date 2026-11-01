@@ -30,7 +30,7 @@ func TestEmbeddedProvisioningAndMeta(t *testing.T) {
 	}{
 		StreamEvents:   {[]string{"pe.events.*"}, 3 * time.Hour, 10 * time.Minute},
 		StreamSignals:  {[]string{"pe.signals.*"}, 7 * 24 * time.Hour, 10 * time.Minute},
-		StreamVerdicts: {[]string{"pe.verdicts.*", "pe.acks.*"}, 30 * 24 * time.Hour, time.Hour},
+		StreamVerdicts: {[]string{"pe.verdicts.*", "pe.acks.*", "pe.labels.*"}, 30 * 24 * time.Hour, time.Hour},
 	} {
 		st, err := b.JS.Stream(ctx, name)
 		if err != nil {
@@ -102,6 +102,12 @@ func TestSubjects(t *testing.T) {
 	if s, err := AcksSubject(tenant); err != nil || s != "pe.acks."+tenant {
 		t.Fatal(s, err)
 	}
+	if s, err := LabelsSubject(tenant); err != nil || s != "pe.labels."+tenant {
+		t.Fatal(s, err)
+	}
+	if _, err := LabelsSubject("t_x.*"); !errors.Is(err, ErrBadToken) {
+		t.Error("wildcard tenant accepted for labels")
+	}
 	if s, err := OutSubject(tenant, server); err != nil || s != "pe.out."+tenant+"."+server {
 		t.Fatal(s, err)
 	}
@@ -125,6 +131,9 @@ func TestSubjects(t *testing.T) {
 	}
 	if SessionMarkerMsgID(tenant, server, 42, 3, 5) != tenant+":"+server+":42:03:5:session" || VerdictRecordMsgID("v") != "v" || AckRecordMsgID("v") != "ack:v" {
 		t.Error("marker/record msg ids")
+	}
+	if LabelRecordMsgID(tenant, "litebans", 4521, 2) != "label:"+tenant+":litebans:4521:2" {
+		t.Error("label msg id")
 	}
 	if p, err := PartitionOf("pe.signals.11"); err != nil || p != 11 {
 		t.Error("PartitionOf")

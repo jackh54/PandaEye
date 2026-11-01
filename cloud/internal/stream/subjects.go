@@ -33,6 +33,14 @@ func AcksSubject(tenantID string) (string, error) {
 	return "pe.acks." + tenantID, nil
 }
 
+// LabelsSubject returns pe.labels.<tenant>.
+func LabelsSubject(tenantID string) (string, error) {
+	if !identity.ValidTenantID(tenantID) {
+		return "", ErrBadToken
+	}
+	return "pe.labels." + tenantID, nil
+}
+
 // OutSubject returns pe.out.<tenant>.<server> (core NATS, SignedOutbound).
 func OutSubject(tenantID, serverID string) (string, error) {
 	k, err := ServerKey(tenantID, serverID)
@@ -85,6 +93,7 @@ const (
 	LeaseWriter   = "writer"   // the store writer (PE_VERDICTS)
 	LeaseMetering = "metering" // the api metering loop
 	LeaseJanitor  = "janitor"  // the api janitor
+	LeaseLabels   = "labels"   // the api's moderation label consumer (pe.labels.*)
 )
 
 // PartitionLeaseKey returns "<group>.<NN>".
@@ -114,3 +123,9 @@ func VerdictRecordMsgID(verdictID string) string { return verdictID }
 
 // AckRecordMsgID returns the msg id of an AckRecord: ack:<verdict id>.
 func AckRecordMsgID(verdictID string) string { return "ack:" + verdictID }
+
+// LabelRecordMsgID returns the msg id of a LabelRecord: label:<tenant>:<source>:<entry id>:<kind>, the
+// key the api de-duplicates labels by (the proxy and every backend may send the same entry).
+func LabelRecordMsgID(tenantID, source string, entryID uint64, kind int32) string {
+	return "label:" + tenantID + ":" + source + ":" + strconv.FormatUint(entryID, 10) + ":" + strconv.Itoa(int(kind))
+}

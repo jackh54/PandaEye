@@ -1,0 +1,490 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackh54/PandaEye/cloud/internal/identity"
+	"github.com/jackh54/PandaEye/cloud/internal/store"
+	"github.com/jackh54/PandaEye/cloud/internal/stream"
+	pb "github.com/jackh54/PandaEye/cloud/internal/wire/pandaeyev1"
+	"google.golang.org/protobuf/proto"
+)
+
+const playerMissed = "aaaaaaaa-0000-4000-8000-000000000009" // no verdicts
+
+func cheatBan(player string, entry int, start time.Time) *store.ModerationLabel {
+	return &store.ModerationLabel{TenantID: tenantA, Source: sourceLiteBans, EntryID: strconv.Itoa(entry), Kind: store.ModerationBanAdded,
+		Label: store.LabelCheat, PlayerUUID: player, BanStart: start, Permanent: true, Executor: store.ExecutorStaff}
+}
+
+func wrongfulUnban(player string, entry int, start time.Time) *store.ModerationLabel {
+	m := cheatBan(player, entry, start)
+	m.Kind, m.Label, m.RemovedAt = store.ModerationBanRemoved, store.LabelLegit, fixedNow.Add(-time.Minute)
+	return m
+}
+
+func (e *env) applyLabel(m *store.ModerationLabel) {
+	e.t.Helper()
+	check(e.t, e.s.applyModerationLabel(context.Background(), m, fixedNow))
+}
+
+// playerLabels returns the tenant's labels of player keyed "<verdict id or source>/<label>".
+func playerLabels(t *testing.T, e *env, tenant, player string) map[string]store.LabelExport {
+	t.Helper()
+	ls, _, err := e.d.Store.ExportLabels(context.Background(), tenant, time.Time{}, store.Page{Limit: 200})
+	check(t, err)
+	out := map[string]store.LabelExport{}
+	for _, l := range ls {
+		if l.PlayerUUID != player {
+			continue
+		}
+		k := l.VerdictID
+		if k == "" {
+			k = l.Source
+		}
+		k += "/" + l.Label.Label
+		if _, dup := out[k]; dup {
+			t.Fatalf("two %s labels", k)
+		}
+		out[k] = l
+	}
+	return out
+}
+
+func wantDecision(t *testing.T, e *env, id, status, by string) {
+	t.Helper()
+	v, err := e.d.Store.GetVerdict(context.Background(), tenantA, id)
+	check(t, err)
+	if v.Status != status || v.DecidedBy != by {
+		t.Fatalf("verdict %s: %s by %q, want %s by %q", id, v.Status, v.DecidedBy, status, by)
+	}
+}
+
+func auditActions(t *testing.T, e *env, action string) []store.AuditEntry {
+	t.Helper()
+	es, _, err := e.d.Store.ListAudit(context.Background(), tenantA, store.Page{Limit: 200})
+	check(t, err)
+	var out []store.AuditEntry
+	for _, a := range es {
+		if a.Action == action {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// A LiteBans cheat ban confirms every verdict of the player created in [ban - lookback, ban] (bounds
+// included) through the confirm path, decided by LiteBans, and nothing outside it; duplicates (another
+// server, a backfill) change nothing.
+func TestLiteBansCheatBanConfirms(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx := context.Background()
+	ban := fixedNow.Add(-time.Hour)
+	week := 7 * 24 * time.Hour
+	edge := verdictFixture(tenantA, "0b000000-0000-5000-8000-0000000000b1", srv1, player1, "Steve", pb.Action_ACTION_ALERT, ban.Add(-week))
+	early := verdictFixture(tenantA, "0b000000-0000-5000-8000-0000000000b2", srv1, player1, "Steve", pb.Action_ACTION_ALERT, ban.Add(-week-time.Microsecond))
+	after := verdictFixture(tenantA, "0b000000-0000-5000-8000-0000000000b3", srv1, player1, "Steve", pb.Action_ACTION_ALERT, ban.Add(time.Microsecond))
+	unmit := verdictFixture(tenantA, "0b000000-0000-5000-8000-0000000000b4", srv1, player1, "Steve", pb.Action_ACTION_UNMITIGATE, ban.Add(-time.Minute))
+	for _, v := range []*store.Verdict{edge, early, after, unmit} {
+		_, err := e.d.Store.UpsertVerdict(ctx, v)
+		check(t, err)
+	}
+	e.applyLabel(cheatBan(player1, 4521, ban))
+
+	for _, id := range []string{vBan, vAlert, edge.ID} {
+		wantDecision(t, e, id, store.StatusConfirmed, store.DecidedByLiteBans)
+	}
+	for _, id := range []string{early.ID, after.ID, unmit.ID} {
+		wantDecision(t, e, id, store.StatusOpen, "")
+	}
+	ls := playerLabels(t, e, tenantA, player1)
+	if len(ls) != 3 {
+		t.Fatalf("labels %v", ls)
+	}
+	for _, id := range []string{vBan, vAlert, edge.ID} {
+		l, ok := ls[id+"/cheat"]
+		if !ok || l.Source != store.SourceLiteBans {
+			t.Fatalf("label of %s: %+v", id, l)
+		}
+	}
+	// The label window is the verdict's signal window (the confirm path's).
+	v, _ := e.d.Store.GetVerdict(ctx, tenantA, vBan)
+	from, to := signalWindow(v)
+	if l := ls[vBan+"/cheat"]; !l.WindowStart.Equal(from) || !l.WindowEnd.Equal(to) {
+		t.Fatalf("window %v..%v, want %v..%v", l.WindowStart, l.WindowEnd, from, to)
+	}
+	row, err := e.d.Store.GetModerationLabel(ctx, tenantA, sourceLiteBans, "4521", store.ModerationBanAdded)
+	check(t, err)
+	if row.AppliedAt.IsZero() || row.Verdicts != 3 {
+		t.Fatalf("row %+v", row)
+	}
+	audits := auditActions(t, e, "litebans.cheat")
+	if len(audits) != 1 || audits[0].Principal != "litebans" || audits[0].Target != "litebans:4521" {
+		t.Fatalf("audit %+v", audits)
+	}
+	// A confirm changes nothing on the servers.
+	if ban, _ := e.d.Store.GetBan(ctx, tenantA, vBan); !ban.Active {
+		t.Fatal("ban lifted by a confirm")
+	}
+	if recs := e.verdictRecords(tenantA); len(recs) != 0 {
+		t.Fatalf("records %v", recs)
+	}
+	// The dashboard sees who decided.
+	got := e.must(200, "GET", "/api/v1/verdicts/"+vBan, nil, as(tenantA, "viewer")).json(t)
+	if got["status"] != store.StatusConfirmed || got["decided_by"] != store.DecidedByLiteBans {
+		t.Fatalf("verdict json: %v", got)
+	}
+
+	// The same entry from the proxy, and again after a plugin restart: nothing changes.
+	for i := 0; i < 2; i++ {
+		e.applyLabel(cheatBan(player1, 4521, ban))
+	}
+	if n := len(auditActions(t, e, "litebans.cheat")); n != 1 {
+		t.Fatalf("a duplicate was applied again: %d audit entries", n)
+	}
+	if ls := playerLabels(t, e, tenantA, player1); len(ls) != 3 {
+		t.Fatalf("labels after duplicates %v", ls)
+	}
+}
+
+// A wrongful unban of the entry supersedes its cheat labels and overturns the verdicts through the
+// overturn path: legit labels, the executed BAN lifted with an UNBAN, UNMITIGATE, no contradiction.
+func TestLiteBansWrongfulUnbanOverturns(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx := context.Background()
+	e.connect(tenantA, srv1, stream.ConnectionInfo{Platform: pb.Platform_PLATFORM_PAPER})
+	ob := e.outbox(tenantA)
+	ban := fixedNow.Add(-time.Hour)
+	e.applyLabel(cheatBan(player1, 4521, ban))
+	e.applyLabel(wrongfulUnban(player1, 4521, ban))
+
+	for _, id := range []string{vBan, vAlert} {
+		wantDecision(t, e, id, store.StatusOverturned, store.DecidedByLiteBans)
+	}
+	ls := playerLabels(t, e, tenantA, player1)
+	if len(ls) != 2 || ls[vBan+"/legit"].Source != store.SourceLiteBans || ls[vAlert+"/legit"].Source != store.SourceLiteBans {
+		t.Fatalf("labels after the unban: %v", ls)
+	}
+	b, err := e.d.Store.GetBan(ctx, tenantA, vBan)
+	check(t, err)
+	unbanID := identity.DerivedVerdictID(vBan, int32(pb.Action_ACTION_UNBAN))
+	if b.Active || b.OverturnedBy != "litebans" || b.OverturnNote != "LiteBans ban #4521" || b.UnbanVerdictID != unbanID || b.UnbanState != store.UnbanPending {
+		t.Fatalf("ban %+v", b)
+	}
+	unban, err := e.d.Store.GetVerdict(ctx, tenantA, unbanID)
+	check(t, err)
+	if unban.ServerID != srv1 || unban.Reason != "Ban lifted as wrong in LiteBans" || unban.Supersedes != vBan {
+		t.Fatalf("unban %+v", unban)
+	}
+	for _, id := range []string{vBan, vAlert} {
+		um, err := e.d.Store.GetVerdict(ctx, tenantA, identity.DerivedVerdictID(id, int32(pb.Action_ACTION_UNMITIGATE)))
+		if err != nil || um.Reason != "Verdict overturned by a LiteBans unban" {
+			t.Fatalf("unmitigate of %s: %+v %v", id, um, err)
+		}
+	}
+	sent := false
+	for _, o := range ob.all(500 * time.Millisecond) {
+		sent = sent || o.GetVerdict().GetVerdictId() == unbanID
+	}
+	if !sent {
+		t.Fatal("UNBAN not sent to the connected executing server")
+	}
+	if cover, _ := e.d.Store.HasLegitCover(ctx, tenantA, player1, fixedNow.Add(-2*time.Hour-time.Minute), fixedNow.Add(-2*time.Hour)); !cover {
+		t.Fatal("no legit cover after the wrongful unban")
+	}
+	row, _ := e.d.Store.GetModerationLabel(ctx, tenantA, sourceLiteBans, "4521", store.ModerationBanRemoved)
+	if row.Verdicts != 2 || !row.RemovedAt.Equal(fixedNow.Add(-time.Minute)) {
+		t.Fatalf("row %+v", row)
+	}
+	e.applyLabel(wrongfulUnban(player1, 4521, ban))
+	if n := len(auditActions(t, e, "litebans.legit")); n != 1 {
+		t.Fatalf("legit audit entries %d", n)
+	}
+}
+
+// Without a verdict in the lookback the ban labels the window before it (unflagged); its wrongful
+// unban replaces that cheat label by a legit one over the same window.
+func TestLiteBansUnflaggedWindow(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ban := fixedNow.Add(-time.Hour)
+	e.applyLabel(cheatBan(playerMissed, 7, ban))
+	ls := playerLabels(t, e, tenantA, playerMissed)
+	l, ok := ls[store.SourceLiteBansUnflagged+"/cheat"]
+	if len(ls) != 1 || !ok || l.VerdictID != "" || !l.WindowStart.Equal(ban.Add(-2*time.Hour)) || !l.WindowEnd.Equal(ban) {
+		t.Fatalf("unflagged cheat label %v", ls)
+	}
+	if row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, sourceLiteBans, "7", store.ModerationBanAdded); row.Verdicts != 0 || row.AppliedAt.IsZero() {
+		t.Fatalf("row %+v", row)
+	}
+	e.applyLabel(wrongfulUnban(playerMissed, 7, ban))
+	ls = playerLabels(t, e, tenantA, playerMissed)
+	l, ok = ls[store.SourceLiteBansUnflagged+"/legit"]
+	if len(ls) != 1 || !ok || !l.WindowStart.Equal(ban.Add(-2*time.Hour)) || !l.WindowEnd.Equal(ban) {
+		t.Fatalf("after the unban %v", ls)
+	}
+	// The export carries the sources (ml/FEATURES.md 7).
+	r := e.must(200, "GET", "/api/v1/export/labels", nil, as(tenantA, "viewer"))
+	if !strings.Contains(string(r.body), `"source":"litebans_unflagged"`) {
+		t.Fatalf("export: %s", r.body)
+	}
+}
+
+// Staff decisions win: a LiteBans label never changes a verdict staff confirmed or overturned, while
+// staff take over a verdict (and its label) LiteBans decided.
+func TestLiteBansNeverReplaceStaffDecisions(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ban := fixedNow.Add(-time.Hour)
+	e.must(200, "POST", "/api/v1/verdicts/"+vAlert+"/confirm", nil, as(tenantA, "staff"))
+	e.must(200, "POST", "/api/v1/verdicts/"+vBan+"/overturn", nil, as(tenantA, "staff"))
+	before := playerLabels(t, e, tenantA, player1)
+	e.applyLabel(cheatBan(player1, 1, ban))
+	wantDecision(t, e, vAlert, store.StatusConfirmed, store.DecidedByStaff)
+	wantDecision(t, e, vBan, store.StatusOverturned, store.DecidedByStaff)
+	e.applyLabel(wrongfulUnban(player1, 1, ban))
+	wantDecision(t, e, vAlert, store.StatusConfirmed, store.DecidedByStaff)
+	after := playerLabels(t, e, tenantA, player1)
+	if len(after) != 2 || after[vAlert+"/cheat"].Source != store.SourceConfirmed || after[vBan+"/legit"].Source != store.SourceOverturned ||
+		len(before) != len(after) {
+		t.Fatalf("staff labels changed: %v -> %v", before, after)
+	}
+	if row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, sourceLiteBans, "1", store.ModerationBanRemoved); row.Verdicts != 0 {
+		t.Fatalf("decided %d staff verdicts", row.Verdicts)
+	}
+
+	// LiteBans decides player2's verdicts first; staff then overturn one and confirm the other.
+	e.applyLabel(cheatBan(player2, 2, ban))
+	wantDecision(t, e, vShadow, store.StatusConfirmed, store.DecidedByLiteBans)
+	wantDecision(t, e, vMit, store.StatusConfirmed, store.DecidedByLiteBans)
+	e.must(200, "POST", "/api/v1/verdicts/"+vShadow+"/overturn", nil, as(tenantA, "staff"))
+	r := e.must(200, "POST", "/api/v1/verdicts/"+vMit+"/confirm", nil, as(tenantA, "staff")).json(t)
+	if r["decided_by"] != store.DecidedByStaff {
+		t.Fatalf("confirm response %v", r)
+	}
+	ls := playerLabels(t, e, tenantA, player2)
+	if len(ls) != 2 || ls[vShadow+"/legit"].Source != store.SourceOverturned || ls[vMit+"/cheat"].Source != store.SourceConfirmed {
+		t.Fatalf("staff did not take over: %v", ls)
+	}
+	e.applyLabel(wrongfulUnban(player2, 2, ban))
+	wantDecision(t, e, vShadow, store.StatusOverturned, store.DecidedByStaff)
+	wantDecision(t, e, vMit, store.StatusConfirmed, store.DecidedByStaff)
+	// A LiteBans overturn is final like a staff one: the dashboard cannot confirm it afterwards, but
+	// staff can overturn it again, which takes it over.
+	late := verdictFixture(tenantA, "0b000000-0000-5000-8000-0000000000c1", srv1, player1, "Steve", pb.Action_ACTION_KICK, fixedNow.Add(-30*time.Minute))
+	_, err := e.d.Store.UpsertVerdict(context.Background(), late)
+	check(t, err)
+	e.applyLabel(wrongfulUnban(player1, 3, fixedNow))
+	wantDecision(t, e, late.ID, store.StatusOverturned, store.DecidedByLiteBans)
+	wantDecision(t, e, vAlert, store.StatusConfirmed, store.DecidedByStaff)
+	if r := e.do("POST", "/api/v1/verdicts/"+late.ID+"/confirm", nil, as(tenantA, "staff")); r.status != 409 {
+		t.Fatalf("confirming a verdict LiteBans overturned: %d", r.status)
+	}
+	e.must(200, "POST", "/api/v1/verdicts/"+late.ID+"/overturn", nil, as(tenantA, "staff"))
+	wantDecision(t, e, late.ID, store.StatusOverturned, store.DecidedByStaff)
+	if l := playerLabels(t, e, tenantA, player1)[late.ID+"/legit"]; l.Source != store.SourceOverturned {
+		t.Fatalf("legit label after the staff overturn: %+v", l)
+	}
+}
+
+// A wrongful unban seen before its ban supersedes it; PE_LABELS_LOOKBACK and PE_LABELS_WINDOW set the
+// intervals.
+func TestLiteBansOrderAndIntervals(t *testing.T) {
+	e := newEnv(t, "PE_LABELS_LOOKBACK=1d", "PE_LABELS_WINDOW=30m")
+	e.seed()
+	ban := fixedNow.Add(-time.Hour)
+	e.applyLabel(wrongfulUnban(player2, 3, ban))
+	wantDecision(t, e, vShadow, store.StatusOverturned, store.DecidedByLiteBans) // 3 h before the ban
+	wantDecision(t, e, vMit, store.StatusOpen, "")                               // 29 h before: outside 1 d
+	e.applyLabel(cheatBan(player2, 3, ban))
+	wantDecision(t, e, vMit, store.StatusOpen, "")
+	ls := playerLabels(t, e, tenantA, player2)
+	if len(ls) != 1 || ls[vShadow+"/legit"].Source != store.SourceLiteBans {
+		t.Fatalf("labels %v", ls)
+	}
+	row, _ := e.d.Store.GetModerationLabel(context.Background(), tenantA, sourceLiteBans, "3", store.ModerationBanAdded)
+	if row.AppliedAt.IsZero() || row.Verdicts != 0 {
+		t.Fatalf("superseded ban row %+v", row)
+	}
+	e.applyLabel(cheatBan(playerMissed, 4, ban))
+	if l := playerLabels(t, e, tenantA, playerMissed)[store.SourceLiteBansUnflagged+"/cheat"]; !l.WindowStart.Equal(ban.Add(-30 * time.Minute)) {
+		t.Fatalf("unflagged window %+v", l)
+	}
+}
+
+func TestModerationLabelRecords(t *testing.T) {
+	rec := func(mut func(r *pb.LabelRecord)) *pb.LabelRecord {
+		r := &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA, ServerId: srv1}, Player: uuidBytes(player1),
+			Label: &pb.ModerationLabel{Source: "litebans", EntryId: 12, Kind: pb.ModerationLabel_KIND_BAN_REMOVED,
+				Classification: pb.ModerationLabel_CLASSIFICATION_LEGIT, BanStartUnixMs: uint64(fixedNow.UnixMilli()),
+				RemovedUnixMs: uint64(fixedNow.Add(time.Hour).UnixMilli()), Executor: pb.ModerationLabel_EXECUTOR_CONSOLE}}
+		if mut != nil {
+			mut(r)
+		}
+		return r
+	}
+	m, err := moderationLabel(rec(nil), tenantA)
+	check(t, err)
+	if m.EntryID != "12" || m.Kind != store.ModerationBanRemoved || m.Label != store.LabelLegit || m.PlayerUUID != player1 ||
+		!m.BanStart.Equal(fixedNow) || !m.RemovedAt.Equal(fixedNow.Add(time.Hour)) || m.Executor != store.ExecutorConsole || m.Permanent {
+		t.Fatalf("label %+v", m)
+	}
+	for name, mut := range map[string]func(r *pb.LabelRecord){
+		"other subject":   nil,
+		"bad tenant":      func(r *pb.LabelRecord) { r.Origin.TenantId = "t_x.*" },
+		"no player":       func(r *pb.LabelRecord) { r.Player = nil },
+		"zero player":     func(r *pb.LabelRecord) { r.Player = make([]byte, 16) },
+		"unknown source":  func(r *pb.LabelRecord) { r.Label.Source = "advancedban" },
+		"no entry":        func(r *pb.LabelRecord) { r.Label.EntryId = 0 },
+		"no start":        func(r *pb.LabelRecord) { r.Label.BanStartUnixMs = 0 },
+		"cheat removal":   func(r *pb.LabelRecord) { r.Label.Classification = pb.ModerationLabel_CLASSIFICATION_CHEAT },
+		"legit ban":       func(r *pb.LabelRecord) { r.Label.Kind = pb.ModerationLabel_KIND_BAN_ADDED },
+		"unspecified":     func(r *pb.LabelRecord) { r.Label.Kind = pb.ModerationLabel_KIND_UNSPECIFIED },
+		"no label at all": func(r *pb.LabelRecord) { r.Label = nil },
+	} {
+		subject := tenantA
+		if name == "other subject" {
+			subject = tenantB
+		}
+		if _, err := moderationLabel(rec(mut), subject); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// The label consumer applies pe.labels.* under its lease and skips records it cannot apply.
+func TestLabelConsumer(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.s.runLabels(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("label consumer did not stop")
+		}
+	}()
+	publish := func(tenant string, rec *pb.LabelRecord, id string) {
+		data, err := proto.Marshal(rec)
+		check(t, err)
+		subj, err := stream.LabelsSubject(tenant)
+		check(t, err)
+		_, err = e.d.Bus.Publish(context.Background(), stream.Message{Subject: subj, Data: data, MsgID: id})
+		check(t, err)
+	}
+	label := &pb.ModerationLabel{Source: "litebans", EntryId: 4521, Kind: pb.ModerationLabel_KIND_BAN_ADDED,
+		Classification: pb.ModerationLabel_CLASSIFICATION_CHEAT, BanStartUnixMs: uint64(fixedNow.Add(-time.Hour).UnixMilli()),
+		Executor: pb.ModerationLabel_EXECUTOR_STAFF}
+	unknown := proto.CloneOf(label)
+	unknown.Source = "advancedban"
+	publish(tenantA, &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA}, Player: uuidBytes(player1), Label: unknown}, "a")
+	publish(tenantB, &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA}, Player: uuidBytes(player1), Label: label}, "b")
+	publish(tenantA, &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA, ServerId: srv1}, Player: uuidBytes(player1), Label: label}, "c")
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		row, err := e.d.Store.GetModerationLabel(context.Background(), tenantA, sourceLiteBans, "4521", store.ModerationBanAdded)
+		if err == nil && !row.AppliedAt.IsZero() {
+			break
+		}
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the label was not applied")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	wantDecision(t, e, vBan, store.StatusConfirmed, store.DecidedByLiteBans)
+	if _, err := e.d.Store.GetModerationLabel(context.Background(), tenantB, sourceLiteBans, "4521", store.ModerationBanAdded); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a record on another tenant's subject was applied: %v", err)
+	}
+	if !strings.Contains(e.logs.String(), `unknown label source`) {
+		t.Fatal("skipped record not logged")
+	}
+}
+
+// GET /api/v1/stats/litebans compares the cheat bans of the last 7 and 30 days with the verdicts; the
+// janitor logs it daily without player ids.
+func TestLiteBansStats(t *testing.T) {
+	e := newEnv(t)
+	e.seed()
+	day := 24 * time.Hour
+	// player1: flagged (ALERT 3 h and BAN 2 h before now), banned 1 h ago: highest BAN, lead 2 h.
+	e.applyLabel(cheatBan(player1, 1, fixedNow.Add(-time.Hour)))
+	// playerMissed: banned 2 d ago without a verdict, and 10 d ago with a ban lifted as wrong.
+	e.applyLabel(cheatBan(playerMissed, 2, fixedNow.Add(-2*day)))
+	e.applyLabel(cheatBan(playerMissed, 3, fixedNow.Add(-10*day)))
+	e.applyLabel(wrongfulUnban(playerMissed, 3, fixedNow.Add(-10*day)))
+	// player2: a shadow BAN 4 h ago, never banned in LiteBans.
+
+	_, key := e.apiKey(tenantA, "read")
+	r := e.must(200, "GET", "/api/v1/stats/litebans", nil, bearer(key)).json(t)
+	keys(t, "litebans stats", r, []string{"lookback_s", "last_7d", "last_30d"})
+	if r["lookback_s"] != float64(7*24*3600) {
+		t.Fatalf("lookback %v", r["lookback_s"])
+	}
+	want := map[string]any{"cheat_bans": 2.0, "players": 2.0, "not_flagged": 1.0, "median_lead_time_s": 7200.0,
+		"would_kick_or_ban": 2.0, "would_kick_or_ban_banned": 1.0, "overturns": 1.0, "verdicts_overturned": 0.0}
+	for _, w := range []string{"last_7d", "last_30d"} {
+		got := r[w].(map[string]any)
+		keys(t, w, got, []string{"cheat_bans", "players", "flagged_before", "not_flagged", "median_lead_time_s", "would_kick_or_ban",
+			"would_kick_or_ban_banned", "overturns", "verdicts_overturned"})
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("%s %s = %v, want %v", w, k, got[k], v)
+			}
+		}
+		fb, _ := json.Marshal(got["flagged_before"])
+		if string(fb) != `{"alert":0,"ban":1,"kick":0,"mitigate":0}` {
+			t.Errorf("%s flagged_before %s", w, fb)
+		}
+	}
+	other := e.must(200, "GET", "/api/v1/stats/litebans", nil, as(tenantB, "viewer")).json(t)["last_30d"].(map[string]any)
+	if other["cheat_bans"] != 0.0 || other["median_lead_time_s"] != nil || other["would_kick_or_ban"] != 1.0 {
+		t.Fatalf("tenant B %v", other)
+	}
+	if r := e.do("GET", "/api/v1/stats/litebans", nil); r.status != 401 {
+		t.Fatalf("unauthenticated: %d", r.status)
+	}
+
+	check(t, e.s.janitorOnce(context.Background(), fixedNow))
+	var lines []string
+	for _, l := range strings.Split(e.logs.String(), "\n") {
+		if strings.Contains(l, `"msg":"litebans agreement"`) {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 2 {
+		t.Fatalf("agreement log lines %q", lines)
+	}
+	var line struct {
+		Level     string `json:"level"`
+		Tenant    string `json:"tenant_id"`
+		Window    string `json:"window"`
+		CheatBans int    `json:"cheat_bans"`
+		Flagged   int    `json:"flagged_ban"`
+		Lead      int64  `json:"median_lead_time_s"`
+	}
+	check(t, json.Unmarshal([]byte(lines[1]), &line))
+	if line.Level != "INFO" || line.Tenant != tenantA || line.Window != "30d" || line.CheatBans != 2 || line.Flagged != 1 || line.Lead != 7200 {
+		t.Fatalf("log line %s", lines[1])
+	}
+	for _, l := range lines {
+		for _, p := range []string{player1, player2, playerMissed} {
+			if strings.Contains(l, p) {
+				t.Fatalf("player id logged: %s", l)
+			}
+		}
+	}
+}

@@ -15,7 +15,7 @@ type Retention struct {
 	Bans          time.Duration // after the ban ends (overturned or timed out)
 	Appeals       time.Duration
 	AppealContact time.Duration // after the decision
-	Labels        time.Duration
+	Labels        time.Duration // labels and moderation labels
 	Players       time.Duration // after last seen (players and player_names)
 	Reputation    time.Duration
 	Erasures      time.Duration // erasure records (proof of erasure)
@@ -55,6 +55,7 @@ func Purge(ctx context.Context, s Store, tenantID string, now time.Time, r Reten
 			return s.PurgeAppeals(ctx, tenantID, now.Add(-r.Appeals), now.Add(-r.AppealContact))
 		}},
 		{"labels", func() (int64, error) { return s.PurgeLabels(ctx, tenantID, now.Add(-r.Labels)) }},
+		{"moderation_labels", func() (int64, error) { return s.PurgeModerationLabels(ctx, tenantID, now.Add(-r.Labels)) }},
 		{"players", func() (int64, error) {
 			p, n, err := s.PurgePlayers(ctx, tenantID, now.Add(-r.Players))
 			counts["player_names"] = n

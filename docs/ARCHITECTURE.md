@@ -471,7 +471,8 @@ loaded.
   50 000 rows), labelled the same way; a lifted ban may give a CHEAT and a LEGIT. It stops at the next row on
   disable.
 - One network can run LiteBans on the proxy and every backend, LiteBans may fire on more than one of them, and
-  every enable resends the backfill: receivers de-duplicate by (tenant, source, entry id, kind).
+  every enable resends the backfill: receivers de-duplicate by (tenant, source, entry id, kind). The cloud
+  applies the labels in the api (5.8 "LiteBans labels").
 - LiteBans' API not up at enable: one retry 10 s later. An incompatible API turns labels off with one warning;
   callbacks never throw into LiteBans. `/pandaeye status` and `/pandaeyeproxy status` show the state, the labels
   sent and the backfill result. Changes need a restart.
@@ -516,6 +517,7 @@ Environment variables (`PE_` prefix), optionally a YAML file (`--config`, keys i
 | `PE_REGION` | `local` | shown on /status |
 | `PE_LOG_LEVEL` | `info` | |
 | `PE_ML_MODEL`, `PE_ML_POINTS` | ``, `0` | ONNX model (`-tags onnx` builds only) |
+| `PE_LABELS_LOOKBACK`, `PE_LABELS_WINDOW` | `7d`, `2h` | LiteBans labels (5.8): verdicts this long before a ban are decided by it; without one, the window before the ban is labelled |
 
 Logging: `log/slog` JSON. Hello, licences, tokens, webhook URLs and Authorization headers implement
 `slog.LogValuer` redaction; a test runs the gateway and API at debug level with known secrets and asserts
@@ -605,8 +607,8 @@ internal/testkit           fake plugin client, event builders, helpers
 |---|---|---|
 | stream `PE_EVENTS` | `pe.events.*` | file, limits, `PE_EVENTS_MAX_AGE/BYTES`, discard old, duplicates 10m |
 | stream `PE_SIGNALS` | `pe.signals.*` | file, max age 7 d, duplicates 10m |
-| stream `PE_VERDICTS` | `pe.verdicts.*`, `pe.acks.*` | file, max age 30 d, duplicates 1 h |
-| KV `PE_LEASES` | `events.<NN>`, `signals.<NN>`, `writer`, `metering`, `janitor`, `members.<owner>` | TTL 15 s |
+| stream `PE_VERDICTS` | `pe.verdicts.*`, `pe.acks.*`, `pe.labels.*` | file, max age 30 d, duplicates 1 h |
+| KV `PE_LEASES` | `events.<NN>`, `signals.<NN>`, `writer`, `metering`, `janitor`, `labels`, `members.<owner>` | TTL 15 s |
 | KV `PE_CONNECTIONS` | `<tenant>.<server>` | TTL 30 s |
 | KV `PE_SERVERS` | `<tenant>.<server>` | last acked seq, secret hash, instance id |
 | KV `PE_TENANTS` | `<tenant>` | tenant settings JSON (api writes; gateway and verdict watch) |
@@ -618,7 +620,7 @@ internal/testkit           fake plugin client, event builders, helpers
   `nats.InProcessServer`. External NATS must have `max_payload >= 8 MiB` (checked at start) and
   credentials (NATS JWT/operator mode, one creds file per role; `deploy/nats/gen-auth`). Per-role subject
   permissions are in OPERATIONS.md: gateway pub `pe.events.>`, `pe.acks.>`, `pe.out.>` (connection
-  replacement), sub `pe.out.>`; worker pub `pe.signals.>`; verdict/api pub `pe.out.>`, `pe.verdicts.>`; each
+  replacement), sub `pe.out.>`; worker pub `pe.signals.>`, `pe.labels.>`; verdict/api pub `pe.out.>`, `pe.verdicts.>`; each
   role gets only the JetStream/KV API subjects for the streams, consumers and buckets it uses. Every process
   provisions streams/buckets idempotently, so `PE_NATS_REPLICAS` and `PE_EVENTS_MAX_*` must be identical on
   all roles.
@@ -654,7 +656,9 @@ internal/testkit           fake plugin client, event builders, helpers
   normalised time are dropped. Statistical accumulators (click stats, aim calibration) live per
   (tenant, player) and take input only from the most recently joined session. Without a known session,
   events are buffered for at most 5 s (bounded) and otherwise dropped — checks never run without session
-  info, and never for bedrock/exempt sessions.
+  info, and never for bedrock/exempt sessions. ModerationLabel events (4.12) are not gameplay: before any
+  session handling they are validated and published as `LabelRecord` to `pe.labels.<tenant>` (msg id
+  `label:<tenant>:<source>:<entry id>:<kind>`) for the api; the player may be offline or never seen.
 - Dedup: last stream sequence per consumer + last batch seq per (tenant, server, partition).
 - Warm start: on lease acquisition the worker first replays the last 60 s of `pe.events.<NN>` before its
   start sequence with an ordered ephemeral consumer in "warm" mode (state only, no signals), so windows and
@@ -760,10 +764,11 @@ it. Tables:
 | `servers` | (tenant_id, id) pk, name, network_id, platform, platform_version, plugin_version, minecraft_version, secret_hash, instance_id, last_seen_at, last_batch_seq, created_at |
 | `players` | (tenant_id, uuid) pk, last_name, first_seen_at, last_seen_at, last_server_id |
 | `player_names` | (tenant_id, uuid, name) pk, seen_at |
-| `verdicts` | id pk, tenant_id, server_id, network_id, player_uuid, player_name, session_id, action, category, score, confidence, reason, checks (json), evidence (json), clip_ids (json), shadow, status ('open','confirmed','overturned','expired','superseded'), supersedes, appeal_code, mitigations (json), strength, ban_duration_s, payload (serialized Verdict), created_at, delivered_at, acked_at, executed, ack_note |
+| `verdicts` | id pk, tenant_id, server_id, network_id, player_uuid, player_name, session_id, action, category, score, confidence, reason, checks (json), evidence (json), clip_ids (json), shadow, status ('open','confirmed','overturned','expired','superseded'), decided_by ('', 'staff', 'litebans'), supersedes, appeal_code, mitigations (json), strength, ban_duration_s, payload (serialized Verdict), created_at, delivered_at, acked_at, executed, ack_note |
 | `bans` | verdict_id pk, tenant_id, server_id, player_uuid, active, reason, created_at, overturned_at, overturned_by, overturn_note, unban_verdict_id, unban_state ('none','pending','done') |
 | `appeals` | id pk, tenant_id, verdict_id, player_uuid, message (<= 2000), contact (<= 200), status, created_at, decided_at, decided_by, decision_note |
-| `labels` | id pk, tenant_id, player_uuid, verdict_id, label ('cheat','legit'), source ('confirmed','overturned','manual'), window_start, window_end, created_at |
+| `labels` | id pk, tenant_id, player_uuid, verdict_id, label ('cheat','legit'), source ('confirmed','overturned','manual','litebans','litebans_unflagged'), window_start, window_end, created_at |
+| `moderation_labels` | (tenant_id, source, entry_id, kind ('ban_added','ban_removed')) pk, label ('cheat','legit'), player_uuid, ban_start, removed_at, permanent, executor ('staff','console'), received_at, applied_at, verdicts (how many it decided) |
 | `clips` | id pk, tenant_id, server_id, player_uuid, start_us, end_us, codec, data, created_at |
 | `clip_subjects` | (clip_id, player_uuid) pk, tenant_id (players appearing in a clip, e.g. attack targets) |
 | `api_keys` | id pk, tenant_id, name, key_hash unique, scopes (json), created_at, last_used_at, revoked_at |
@@ -775,7 +780,7 @@ it. Tables:
 
 Retention (janitor, daily): clips 90 d unless referenced by an active ban, open appeal or label; verdicts and
 evidence 180 d (bans kept while active, inactive bans 1 y after they end); appeals 1 y, contact deleted 30 d
-after decision; labels 2 y; players and player_names 2 y after last seen; reputation_contrib 2 y; erasures
+after decision; labels and moderation labels 2 y; players and player_names 2 y after last seen; reputation_contrib 2 y; erasures
 records 3 y (proof of erasure, no gameplay data); usage 2 y; probe_stats 30 d; audit_log 1 y. Dashboard
 sessions are deleted at expiry and the D1 audit log after 1 y. Backups are kept 30 d. ClickHouse (optional): tables `signals` (TTL 30 d), `verdicts`
 (90 d), `feature_windows` (180 d), `sessions` (90 d), MergeTree ordered by (tenant_id, time); batched inserts
@@ -814,6 +819,7 @@ Authentication:
 | `GET /api/v1/appeals`, `POST /api/v1/appeals/{id}/decide` (staff) | `{decision: accept|deny, note}`; accept = overturn |
 | `POST /api/v1/public/appeals` (service token; the Worker verified Turnstile) | `{verdict_id, appeal_code, message, contact}`; only executed, non-shadow, active BANs; limits 5/h per client IP, 1 open and 3 total per verdict, 200/day per tenant; same response for unknown and wrong codes |
 | `GET /api/v1/stats/overview`, `GET /api/v1/stats/latency` | counts by action/category 24 h / 7 d; probe RTT percentiles 1 h / 24 h from `probe_stats` |
+| `GET /api/v1/stats/litebans` (read) | agreement of LiteBans with the verdicts, 7 d / 30 d (below) |
 | `GET /api/v1/usage` | peak players per day (90 d), plan, free-tier limit (30 peak players) |
 | `POST/GET/DELETE /api/v1/apikeys` (owner) | plaintext returned once |
 | `GET /api/v1/export/labels?since=` (read) | NDJSON of labels + evidence for ML, erased subjects excluded |
@@ -824,6 +830,26 @@ Authentication:
 
 Free tier: 30 peak players. Over the limit for 3 days, the tenant's verdicts are capped at ALERT and the
 dashboard shows a banner; players are never affected by billing state.
+
+LiteBans labels (label consumer: one leased `api` instance, lease `labels`, durable consumer on
+`pe.labels.*`). Each `LabelRecord` is recorded once per (tenant, source, entry id, kind) in
+`moderation_labels` and then applied with the same functions as the confirm and overturn endpoints, as
+decision `litebans` (`verdicts.decided_by`), audit principal `litebans`:
+- cheat ban: every non-corrective verdict of the player created in [ban start - `PE_LABELS_LOOKBACK`, ban
+  start] (7 d) is confirmed (`litebans` cheat label over its signal window, reputation contribution if
+  eligible); without one, a `litebans_unflagged` cheat label over [ban start - `PE_LABELS_WINDOW`, ban start]
+  (2 h). A cheat ban whose wrongful unban arrived first is not applied.
+- wrongful unban: the entry's cheat labels are deleted (`litebans_unflagged`, and `litebans` labels whose
+  window ends in the lookback), then those verdicts are overturned (legit label, UNBAN of an executed BAN,
+  UNMITIGATE); without one, a `litebans_unflagged` legit label over the same window.
+- A label never changes a verdict staff decided (`DecideVerdict` refuses it); a staff confirm or overturn
+  takes over a LiteBans decision and its label. Overturned verdicts stay overturned (no confirm afterwards).
+- Agreement (`GET /api/v1/stats/litebans`, and a daily `litebans agreement` log line per tenant with data):
+  per 7 d and 30 d, the cheat bans that started in the period and were not lifted as wrong, their players by
+  the highest ALERT..BAN verdict (shadow included) in the lookback before their first ban, the median lead
+  time from that player's first such verdict to the ban, the players with a KICK/BAN verdict in the period
+  and how many of them got a cheat ban within the lookback after one, and the wrongful unbans (by removal
+  time) with the verdicts they overturned.
 
 Metering loop (one leased `api` instance, every minute): sums `online_players` from live `PE_CONNECTIONS`
 values per tenant (per network_id: the proxy's count when a proxy is connected, else the sum of backends) and
@@ -858,8 +884,8 @@ writes `usage_daily = max(existing, value)`.
   where a zero-point signal would still run the ladder (ALERT timing, watch requests); a model that cannot
   load is logged and leaves ML off (`pandaeye_worker_ml_model_loaded` 0). Every scored window feeds the
   `pandaeye_worker_ml_p_cheat` histogram.
-- `ml/` (Python): dataset export (API label export + ClickHouse feature windows, erased subjects excluded,
-  labels only from trusted tenants), training (gradient boosting), ONNX export, `evaluate.py` gate (must beat
+- `ml/` (Python): dataset export (API label export, staff and LiteBans labels with their source, + ClickHouse
+  feature windows, erased subjects excluded, labels only from trusted tenants), training (gradient boosting), ONNX export, `evaluate.py` gate (must beat
   the heuristic baseline on a held-out set at an equal or lower false-positive rate, else exit 1). A
   synthetic generator exists only to test the pipeline and says so.
 
@@ -885,7 +911,7 @@ returned masked, logged by webhook id only.
 ### 5.13 Erasure (GDPR)
 
 `DELETE /players/{uuid}` runs a job: SQL rows of the tenant (players, player_names, verdicts, bans, appeals,
-labels, clips, clip_subjects, reputation_contrib), clips that contain the subject as a target are deleted,
+labels, moderation_labels, clips, clip_subjects, reputation_contrib), clips that contain the subject as a target are deleted,
 ClickHouse `ALTER TABLE ... DELETE WHERE tenant_id = ? AND player = ?` on every table, and an erasure
 tombstone (`erasures`) published to workers and the verdict service via KV so late data is dropped. Active
 bans keep a minimal record (verdict id, uuid, check ids, score, time) under the legitimate-interest exception
@@ -933,9 +959,9 @@ until unbanned (documented in PRIVACY.md). JetStream expiry bounds residual data
   (10 / 15 min) and per username (exponential backoff); session cookie `__Host-pe_session` (HttpOnly,
   Secure, SameSite=Lax), 12 h absolute / 2 h idle, rotated on login, deleted on disable/role/password change.
   CSRF token on every POST. Every API call carries a fresh assertion.
-- Pages: overview, servers, verdicts, verdict detail (evidence, confidence, replay viewer: top-down and side
-  views of suspect and target positions, rotations as view rays, attacks/placements as markers, timeline
-  scrubber), players, bans (with unban state), appeals (one-click overturn = label), settings, users and
+- Pages: overview (with "Accuracy (LiteBans)"), servers, verdicts (LiteBans decisions marked), verdict detail
+  (who decided it, evidence, confidence, replay viewer: top-down and side views of suspect and target
+  positions, rotations as view rays, attacks/placements as markers, timeline scrubber), players, bans (with unban state), appeals (one-click overturn = label), settings, users and
   invites (owner/admin), API keys (owner), usage, public `/status`, public `/appeal` (Turnstile), `/privacy`.
 - Roles: viewer reads; staff confirm/overturn/decide appeals; admin settings + invites; owner users + API keys.
 

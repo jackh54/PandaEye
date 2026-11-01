@@ -167,7 +167,7 @@ existing checks on players it was not trained on, and it starts with no effect o
 | Replay clips | 90 days, longer while needed for an active ban, an open appeal or a label |
 | Ban records | while active; afterwards [period] |
 | Appeals | 1 year; the contact detail is deleted 30 days after the decision |
-| Labels | 2 years |
+| Labels (including the LiteBans bans and unbans they come from) | 2 years |
 | Analytics copies (if enabled): signals / verdicts / sessions / feature windows | 30 days / 90 days / 90 days / 180 days |
 | Feature-window files (if enabled instead of the analytics copies; feature windows only) | 90 days [default; state the operated value, at most 180 days] |
 | Player records (UUID, latest name, first and last seen, last server) and name history | [period] |
@@ -196,9 +196,10 @@ and kept there under the server owner's control.
 - **How**: ask the server owner, who starts the erasure in the dashboard or through the API (owner or admin
   role, or an API key with the `erase` permission). You can also ask us and we will forward or assist.
 - **What is deleted**, for that server owner's account: the player record and name history, verdicts,
-  bans, appeals, labels, replay clips (including clips in which the player appears as another player's
-  target), reputation contributions and the analytics copies (database tables or feature-window files). An
-  erasure marker makes the service discard any of the player's data still in transit.
+  bans, appeals, labels (and the LiteBans ban records behind them), replay clips (including clips in which
+  the player appears as another player's target), reputation contributions and the analytics copies
+  (database tables or feature-window files). An erasure marker makes the service discard any of the
+  player's data still in transit.
 - **Exception**: while a ban is active, a minimal record (verdict identifier, UUID, check identifiers, score,
   time) is kept so the ban can be enforced and later lifted. It is deleted when the ban is lifted.
 - **Residual copies** expire automatically: raw telemetry within 24 hours, signals within 7 days, verdict

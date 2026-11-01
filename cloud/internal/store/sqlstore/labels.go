@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackh54/PandaEye/cloud/internal/identity"
@@ -20,6 +21,32 @@ func (s *Store) InsertLabel(ctx context.Context, l *store.Label) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, l.ID, l.TenantID, l.PlayerUUID, l.VerdictID, l.Label, l.Source,
 		l.WindowStart.UnixMicro(), l.WindowEnd.UnixMicro(), l.CreatedAt.UnixMicro())
 	return err
+}
+
+func (s *Store) ReplaceLabel(ctx context.Context, l *store.Label, sources ...string) error {
+	err := s.InsertLabel(ctx, l)
+	if !errors.Is(err, store.ErrConflict) || len(sources) == 0 {
+		return err
+	}
+	args := []any{l.PlayerUUID, l.VerdictID, l.Label, l.Source, l.WindowStart.UnixMicro(), l.WindowEnd.UnixMicro(),
+		l.CreatedAt.UnixMicro(), l.ID, l.TenantID}
+	for _, src := range sources {
+		args = append(args, src)
+	}
+	res, err := s.exec(ctx, s.w, `UPDATE labels SET player_uuid = ?, verdict_id = ?, label = ?, source = ?, window_start = ?,
+		window_end = ?, created_at = ? WHERE id = ? AND tenant_id = ? AND source IN (`+placeholders(len(sources))+`)`, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrConflict
+	}
+	return nil
+}
+
+func (s *Store) DeletePlayerLabels(ctx context.Context, tenantID, player, label, source string, endFrom, endTo time.Time) (int64, error) {
+	return s.deleteCount(ctx, `DELETE FROM labels WHERE tenant_id = ? AND player_uuid = ? AND label = ? AND source = ?
+		AND window_end >= ? AND window_end <= ?`, tenantID, player, label, source, endFrom.UnixMicro(), endTo.UnixMicro())
 }
 
 func (s *Store) HasLegitCover(ctx context.Context, tenantID, player string, from, to time.Time) (bool, error) {

@@ -89,6 +89,8 @@ var fields = []field{
 	{"features.max.bytes", "20GiB", size(func(c *Config) *int64 { return &c.Features.MaxBytes })},
 	{"digest.dir", "", str(func(c *Config) *string { return &c.Digest.Dir })},
 	{"digest.retention", "30d", func(c *Config, v string) (err error) { c.Digest.Retention, err = ParseDuration(v); return err }},
+	{"labels.lookback", "7d", func(c *Config, v string) (err error) { c.Labels.Lookback, err = ParseDuration(v); return err }},
+	{"labels.window", "2h", func(c *Config, v string) (err error) { c.Labels.Window, err = ParseDuration(v); return err }},
 	{"license.mode", LicenseStatic, str(func(c *Config) *string { return &c.License.Mode })},
 	{"license.url", "", str(func(c *Config) *string { return &c.License.URL })},
 	{"license.product", "pandaeye", str(func(c *Config) *string { return &c.License.Product })},

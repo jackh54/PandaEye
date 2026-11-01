@@ -106,7 +106,7 @@ func (s *Service) handleDecideAppeal(w http.ResponseWriter, r *http.Request, rc 
 			}
 			return err
 		}
-		res, err := s.overturn(ctx, v, rc.p.name, note, rc.now)
+		res, err := s.overturn(ctx, v, staffDecision(rc.p.name, note), rc.now)
 		if err != nil {
 			return err
 		}

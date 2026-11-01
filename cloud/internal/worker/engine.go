@@ -191,12 +191,13 @@ type batchMeta struct {
 	silent   bool
 }
 
-// outMsg is one message for pe.signals.<NN>. A signal with clip waits for the clip's commit and then
-// carries its id.
+// outMsg is one message for pe.signals.<NN> (env), or a LabelRecord for pe.labels.<tenant> (label). A
+// signal with clip waits for the clip's commit and then carries its id.
 type outMsg struct {
 	subject string
 	msgID   string
 	env     *pb.SignalEnvelope
+	label   *pb.LabelRecord
 	clip    *clipJob
 }
 
@@ -296,6 +297,10 @@ func (e *engine) account(s *session, delta int64) {
 }
 
 func (e *engine) event(m *batchMeta, i int, ev *pb.Event, raw []byte) {
+	if l := ev.GetLabel(); l != nil {
+		e.label(m, ev, l) // not gameplay: never reaches sessions, buffers or checks
+		return
+	}
 	t := int64(ev.GetTimeUs()) + m.offset
 	e.newestUs = max(e.newestUs, t)
 	switch k := ev.GetKind().(type) {
@@ -754,6 +759,49 @@ func (e *engine) ordinal(m *batchMeta, i int, check string) int {
 func (e *engine) push(o outMsg) {
 	o.subject = stream.SignalsSubject(e.part)
 	e.out = append(e.out, o)
+}
+
+// label forwards a ModerationLabel (a punishment plugin's ban classified by the plugin, PROTOCOL 5) as a
+// LabelRecord to pe.labels.<tenant>, where the api de-duplicates and applies it. The player may be offline,
+// unknown to the worker or on another partition owner's server: the label needs no session.
+func (e *engine) label(m *batchMeta, ev *pb.Event, l *pb.ModerationLabel) {
+	player, err := identity.UUIDFromBytes(ev.GetPlayer())
+	if err != nil || player.IsZero() || !validLabel(l) {
+		e.env.m.Drops.WithLabelValues("invalid_label").Inc()
+		return
+	}
+	if e.erased(m, player) || m.silent {
+		return
+	}
+	subj, err := stream.LabelsSubject(m.tenant)
+	if err != nil {
+		e.env.m.Drops.WithLabelValues("invalid_label").Inc()
+		return
+	}
+	e.env.wm.Labels.Inc()
+	e.out = append(e.out, outMsg{subject: subj, msgID: stream.LabelRecordMsgID(m.tenant, l.GetSource(), l.GetEntryId(), int32(l.GetKind())),
+		label: &pb.LabelRecord{Origin: m.origin, Player: ev.GetPlayer(), Label: l, GatewayRecvUnixUs: m.recvUs}})
+}
+
+// validLabel accepts the labels plugins send (PROTOCOL 5): a source token, an entry id, CHEAT on
+// BAN_ADDED or LEGIT on BAN_REMOVED, and a ban start.
+func validLabel(l *pb.ModerationLabel) bool {
+	src := l.GetSource()
+	if src == "" || len(src) > 32 || l.GetEntryId() == 0 || l.GetBanStartUnixMs() == 0 {
+		return false
+	}
+	for _, c := range src {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	switch l.GetKind() {
+	case pb.ModerationLabel_KIND_BAN_ADDED:
+		return l.GetClassification() == pb.ModerationLabel_CLASSIFICATION_CHEAT
+	case pb.ModerationLabel_KIND_BAN_REMOVED:
+		return l.GetClassification() == pb.ModerationLabel_CLASSIFICATION_LEGIT
+	}
+	return false
 }
 
 func (e *engine) probe(m *batchMeta, i int, ev *pb.Event, p *pb.Probe) {

@@ -525,7 +525,7 @@ func keys(t *testing.T, what string, obj any, required []string, optional ...str
 // Shapes of docs/API.md.
 var (
 	verdictKeys = []string{"id", "server_id", "network_id", "player_uuid", "player_name", "session_id", "action", "category",
-		"score", "confidence", "reason", "checks", "shadow", "status", "supersedes", "created_at", "delivered_at", "acked_at",
+		"score", "confidence", "reason", "checks", "shadow", "status", "decided_by", "supersedes", "created_at", "delivered_at", "acked_at",
 		"executed", "ack_note", "clip_ids", "mitigations", "strength"}
 	banKeys = []string{"verdict_id", "server_id", "player_uuid", "active", "reason", "created_at", "overturned_at",
 		"overturned_by", "overturn_note", "unban_verdict_id", "unban_state"}

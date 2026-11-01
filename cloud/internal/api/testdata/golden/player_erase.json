@@ -4,6 +4,7 @@
     "bans": 0,
     "clips": 1,
     "labels": 1,
+    "moderation_labels": 0,
     "player_names": 1,
     "players": 1,
     "reputation_contrib": 0,

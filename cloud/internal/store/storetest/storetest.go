@@ -34,6 +34,9 @@ func Run(t *testing.T, open Opener) {
 		{"AcksAndBans", testAcksAndBans},
 		{"Appeals", testAppeals},
 		{"Labels", testLabels},
+		{"VerdictDecisions", testVerdictDecisions},
+		{"ModerationLabels", testModerationLabels},
+		{"ModerationAgreement", testModerationAgreement},
 		{"Clips", testClips},
 		{"APIKeys", testAPIKeys},
 		{"Reputation", testReputation},
@@ -589,6 +592,231 @@ func testLabels(t *testing.T, s store.Store) {
 	}
 }
 
+// A staff decision wins: a label source never changes a verdict staff decided, staff may change one a
+// label decided. ReplaceLabel takes over only labels of the given sources.
+func testVerdictDecisions(t *testing.T, s store.Store) {
+	a, b := newTenant(t, s, "A"), newTenant(t, s, "B")
+	player := uuid()
+	v := verdict(a, uuid(), player, pb.Action_ACTION_ALERT, t0)
+	staff := verdict(a, uuid(), player, pb.Action_ACTION_BAN, t0)
+	for _, x := range []*store.Verdict{v, staff} {
+		_, err := s.UpsertVerdict(ctx, x)
+		check(t, err)
+	}
+	if got, _ := s.GetVerdict(ctx, a, v.ID); got.DecidedBy != "" {
+		t.Fatalf("new verdict decided by %q", got.DecidedBy)
+	}
+	check(t, s.DecideVerdict(ctx, a, v.ID, store.StatusConfirmed, store.DecidedByLiteBans, store.StatusOpen))
+	if got, _ := s.GetVerdict(ctx, a, v.ID); got.Status != store.StatusConfirmed || got.DecidedBy != store.DecidedByLiteBans {
+		t.Fatalf("after the label: %s by %q", got.Status, got.DecidedBy)
+	}
+	wantErr(t, s.DecideVerdict(ctx, a, v.ID, store.StatusConfirmed, store.DecidedByLiteBans, store.StatusOverturned), store.ErrConflict)
+	check(t, s.DecideVerdict(ctx, a, v.ID, store.StatusOverturned, store.DecidedByStaff))
+	wantErr(t, s.DecideVerdict(ctx, a, v.ID, store.StatusConfirmed, store.DecidedByLiteBans), store.ErrConflict)
+	wantErr(t, s.DecideVerdict(ctx, a, v.ID, store.StatusOverturned, store.DecidedByLiteBans), store.ErrConflict)
+	if got, _ := s.GetVerdict(ctx, a, v.ID); got.Status != store.StatusOverturned || got.DecidedBy != store.DecidedByStaff {
+		t.Fatalf("staff decision replaced: %s by %q", got.Status, got.DecidedBy)
+	}
+	check(t, s.DecideVerdict(ctx, a, staff.ID, store.StatusConfirmed, store.DecidedByStaff, store.StatusOpen))
+	wantErr(t, s.DecideVerdict(ctx, a, staff.ID, store.StatusOverturned, store.DecidedByLiteBans), store.ErrConflict)
+	wantErr(t, s.DecideVerdict(ctx, b, staff.ID, store.StatusOverturned, store.DecidedByStaff), store.ErrNotFound)
+	// The gateway's expiry keeps the decision column.
+	check(t, s.SetVerdictStatus(ctx, a, staff.ID, store.StatusConfirmed))
+	if got, _ := s.GetVerdict(ctx, a, staff.ID); got.DecidedBy != store.DecidedByStaff {
+		t.Fatalf("decided by %q", got.DecidedBy)
+	}
+
+	l := &store.Label{ID: uuid(), TenantID: a, PlayerUUID: player, VerdictID: v.ID, Label: store.LabelCheat, Source: store.SourceLiteBans,
+		WindowStart: t0.Add(-time.Hour), WindowEnd: t0, CreatedAt: t0}
+	check(t, s.InsertLabel(ctx, l))
+	wantErr(t, s.InsertLabel(ctx, l), store.ErrConflict)
+	took := *l
+	took.Source, took.CreatedAt = store.SourceConfirmed, t0.Add(time.Minute)
+	wantErr(t, s.ReplaceLabel(ctx, &took, store.SourceOverturned), store.ErrConflict)
+	check(t, s.ReplaceLabel(ctx, &took, store.SourceLiteBans, store.SourceLiteBansUnflagged))
+	again := *l
+	wantErr(t, s.ReplaceLabel(ctx, &again, store.SourceLiteBans), store.ErrConflict) // now a staff label
+	other := took
+	other.TenantID = b
+	wantErr(t, s.ReplaceLabel(ctx, &other, store.SourceConfirmed), store.ErrConflict) // another tenant's label id
+	fresh := &store.Label{TenantID: a, PlayerUUID: player, Label: store.LabelLegit, Source: store.SourceManual, WindowStart: t0, WindowEnd: t0}
+	check(t, s.ReplaceLabel(ctx, fresh, store.SourceLiteBans))
+	ex, _, _ := s.ExportLabels(ctx, a, time.Time{}, store.Page{})
+	if len(ex) != 2 || ex[0].ID != l.ID || ex[0].Source != store.SourceConfirmed || !ex[0].CreatedAt.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("labels after the take-over: %+v", ex)
+	}
+	// DeletePlayerLabels: by player, value, source and window end.
+	lb := func(label, source string, end time.Time) {
+		check(t, s.InsertLabel(ctx, &store.Label{TenantID: a, PlayerUUID: player, Label: label, Source: source, WindowStart: end.Add(-time.Hour), WindowEnd: end}))
+	}
+	lb(store.LabelCheat, store.SourceLiteBans, t0.Add(-2*time.Hour))
+	lb(store.LabelCheat, store.SourceLiteBans, t0.Add(-8*24*time.Hour)) // before the range
+	lb(store.LabelLegit, store.SourceLiteBans, t0.Add(-2*time.Hour))    // other value
+	lb(store.LabelCheat, store.SourceLiteBansUnflagged, t0)             // other source
+	if n, err := s.DeletePlayerLabels(ctx, b, player, store.LabelCheat, store.SourceLiteBans, t0.Add(-7*24*time.Hour), t0); err != nil || n != 0 {
+		t.Fatalf("other tenant deleted labels: %d %v", n, err)
+	}
+	if n, err := s.DeletePlayerLabels(ctx, a, player, store.LabelCheat, store.SourceLiteBans, t0.Add(-7*24*time.Hour), t0); err != nil || n != 1 {
+		t.Fatalf("deleted %d %v", n, err)
+	}
+	if n, err := s.DeletePlayerLabels(ctx, a, player, store.LabelCheat, store.SourceLiteBansUnflagged, t0, t0); err != nil || n != 1 {
+		t.Fatalf("deleted unflagged %d %v", n, err)
+	}
+	if ex, _, _ := s.ExportLabels(ctx, a, time.Time{}, store.Page{}); len(ex) != 4 {
+		t.Fatalf("labels left %d", len(ex))
+	}
+}
+
+func moderation(tenant, entry, kind, player string, start time.Time) *store.ModerationLabel {
+	label := store.LabelCheat
+	if kind == store.ModerationBanRemoved {
+		label = store.LabelLegit
+	}
+	return &store.ModerationLabel{TenantID: tenant, Source: "litebans", EntryID: entry, Kind: kind, Label: label, PlayerUUID: player,
+		BanStart: start, Permanent: true, Executor: store.ExecutorStaff, ReceivedAt: start}
+}
+
+func testModerationLabels(t *testing.T, s store.Store) {
+	a, b := newTenant(t, s, "A"), newTenant(t, s, "B")
+	player := uuid()
+	m := moderation(a, "4521", store.ModerationBanAdded, player, t0)
+	got, created, err := s.RecordModerationLabel(ctx, m)
+	check(t, err)
+	if !created || got.EntryID != "4521" || got.Label != store.LabelCheat || !got.BanStart.Equal(t0) || !got.RemovedAt.IsZero() ||
+		!got.Permanent || got.Executor != store.ExecutorStaff || !got.AppliedAt.IsZero() || got.Verdicts != 0 {
+		t.Fatalf("recorded %+v (created %v)", got, created)
+	}
+	dup := *m
+	dup.ReceivedAt, dup.Permanent = t0.Add(time.Hour), false
+	got, created, err = s.RecordModerationLabel(ctx, &dup)
+	check(t, err)
+	if created || !got.ReceivedAt.Equal(t0) || !got.Permanent {
+		t.Fatalf("a duplicate must keep the first row: %+v %v", got, created)
+	}
+	// Same entry, other kind; same entry id in another tenant.
+	rm := moderation(a, "4521", store.ModerationBanRemoved, player, t0)
+	rm.RemovedAt = t0.Add(time.Hour)
+	if _, created, err := s.RecordModerationLabel(ctx, rm); err != nil || !created {
+		t.Fatalf("removal: %v %v", created, err)
+	}
+	if _, created, err := s.RecordModerationLabel(ctx, moderation(b, "4521", store.ModerationBanAdded, player, t0)); err != nil || !created {
+		t.Fatalf("other tenant: %v %v", created, err)
+	}
+	check(t, s.MarkModerationLabelApplied(ctx, a, "litebans", "4521", store.ModerationBanAdded, 3, t0.Add(time.Minute)))
+	got, err = s.GetModerationLabel(ctx, a, "litebans", "4521", store.ModerationBanAdded)
+	check(t, err)
+	if !got.AppliedAt.Equal(t0.Add(time.Minute)) || got.Verdicts != 3 {
+		t.Fatalf("applied %+v", got)
+	}
+	if got, _ := s.GetModerationLabel(ctx, a, "litebans", "4521", store.ModerationBanRemoved); !got.RemovedAt.Equal(t0.Add(time.Hour)) || !got.AppliedAt.IsZero() {
+		t.Fatalf("removal row %+v", got)
+	}
+	_, err = s.GetModerationLabel(ctx, a, "litebans", "9", store.ModerationBanAdded)
+	wantErr(t, err, store.ErrNotFound)
+	wantErr(t, s.MarkModerationLabelApplied(ctx, a, "litebans", "9", store.ModerationBanAdded, 0, t0), store.ErrNotFound)
+	if got, _ := s.GetModerationLabel(ctx, b, "litebans", "4521", store.ModerationBanAdded); !got.AppliedAt.IsZero() {
+		t.Fatal("other tenant's row marked applied")
+	}
+	if n, _ := s.PurgeModerationLabels(ctx, a, t0.Add(time.Second)); n != 2 {
+		t.Fatalf("purged %d", n)
+	}
+	if _, err := s.GetModerationLabel(ctx, b, "litebans", "4521", store.ModerationBanAdded); err != nil {
+		t.Fatal("other tenant's row purged")
+	}
+}
+
+func testModerationAgreement(t *testing.T, s store.Store) {
+	a, b := newTenant(t, s, "A"), newTenant(t, s, "B")
+	day := 24 * time.Hour
+	lookback := 7 * day
+	flagged, missed, lifted, late, early, wouldBan := uuid(), uuid(), uuid(), uuid(), uuid(), uuid()
+	srv := uuid()
+	add := func(tenant, player string, action pb.Action, at time.Time, shadow bool) {
+		v := verdict(tenant, srv, player, action, at)
+		v.Shadow = shadow
+		_, err := s.UpsertVerdict(ctx, v)
+		check(t, err)
+	}
+	// flagged: ALERT 3 d and a shadow KICK 1 h before the ban; a corrective UNBAN and a verdict after
+	// the ban do not count.
+	ban1 := t0.Add(-2 * day)
+	add(a, flagged, pb.Action_ACTION_ALERT, ban1.Add(-3*day), false)
+	add(a, flagged, pb.Action_ACTION_KICK, ban1.Add(-time.Hour), true)
+	add(a, flagged, pb.Action_ACTION_UNBAN, ban1.Add(-time.Minute), false)
+	add(a, flagged, pb.Action_ACTION_BAN, ban1.Add(time.Hour), false)
+	// early: a BAN 8 d before the ban (outside the lookback).
+	ban2 := t0.Add(-day)
+	add(a, early, pb.Action_ACTION_BAN, ban2.Add(-8*day), false)
+	// wouldBan: a BAN 2 d ago, never banned in LiteBans.
+	add(a, wouldBan, pb.Action_ACTION_BAN, t0.Add(-2*day), true)
+	// Tenant B's verdict of the missed player does not count for tenant A.
+	add(b, missed, pb.Action_ACTION_BAN, ban2.Add(-time.Hour), false)
+	for _, m := range []*store.ModerationLabel{
+		moderation(a, "1", store.ModerationBanAdded, flagged, ban1),
+		moderation(a, "2", store.ModerationBanAdded, missed, ban2),
+		moderation(a, "3", store.ModerationBanAdded, lifted, ban2),
+		moderation(a, "5", store.ModerationBanAdded, early, ban2),
+		moderation(a, "6", store.ModerationBanAdded, late, t0.Add(-40*day)), // before the period
+	} {
+		_, _, err := s.RecordModerationLabel(ctx, m)
+		check(t, err)
+	}
+	add(a, lifted, pb.Action_ACTION_BAN, ban2.Add(-time.Hour), false)
+	rm := moderation(a, "3", store.ModerationBanRemoved, lifted, ban2)
+	rm.RemovedAt = t0.Add(-time.Hour)
+	_, _, err := s.RecordModerationLabel(ctx, rm)
+	check(t, err)
+	check(t, s.MarkModerationLabelApplied(ctx, a, "litebans", "3", store.ModerationBanRemoved, 1, t0))
+	// A removal without a known time counts by when it was received.
+	old := moderation(a, "7", store.ModerationBanRemoved, late, t0.Add(-40*day))
+	old.ReceivedAt = t0.Add(-3 * day)
+	_, _, err = s.RecordModerationLabel(ctx, old)
+	check(t, err)
+
+	got, err := s.ModerationAgreement(ctx, a, t0.Add(-30*day), t0, lookback)
+	check(t, err)
+	if len(got.Bans) != 3 {
+		t.Fatalf("bans %+v", got.Bans)
+	}
+	byPlayer := map[string]store.ModerationBan{}
+	for _, b := range got.Bans {
+		byPlayer[b.PlayerUUID] = b
+	}
+	if f := byPlayer[flagged]; f.TopAction != pb.Action_ACTION_KICK || !f.FirstVerdict.Equal(ban1.Add(-3*day)) || !f.BanStart.Equal(ban1) {
+		t.Fatalf("flagged %+v", f)
+	}
+	if m := byPlayer[missed]; m.TopAction != pb.Action_ACTION_UNSPECIFIED || !m.FirstVerdict.IsZero() {
+		t.Fatalf("missed %+v", m)
+	}
+	if e := byPlayer[early]; e.TopAction != pb.Action_ACTION_UNSPECIFIED {
+		t.Fatalf("a verdict before the lookback counted: %+v", e)
+	}
+	if _, ok := byPlayer[lifted]; ok {
+		t.Fatal("a ban lifted as wrong counted as a cheat ban")
+	}
+	if got.Bans[0].PlayerUUID != flagged {
+		t.Fatalf("not oldest first: %+v", got.Bans)
+	}
+	// KICK/BAN players of the period: flagged (banned 1 h after the KICK), early (banned 8 d after its
+	// BAN, past the lookback), wouldBan (never banned) and lifted (its ban was lifted as wrong).
+	if got.WouldAct != 4 || got.WouldActBanned != 1 {
+		t.Fatalf("would act %d banned %d", got.WouldAct, got.WouldActBanned)
+	}
+	if got.Overturns != 2 || got.VerdictsOverturned != 1 {
+		t.Fatalf("overturns %d verdicts %d", got.Overturns, got.VerdictsOverturned)
+	}
+	week, err := s.ModerationAgreement(ctx, a, t0.Add(-7*day), t0, lookback)
+	check(t, err)
+	if len(week.Bans) != 3 || week.Overturns != 2 || week.WouldAct != 3 || week.WouldActBanned != 1 {
+		t.Fatalf("7 d %+v", week)
+	}
+	none, err := s.ModerationAgreement(ctx, b, t0.Add(-30*day), t0, lookback)
+	check(t, err)
+	if len(none.Bans) != 0 || none.WouldAct != 1 || none.WouldActBanned != 0 || none.Overturns != 0 {
+		t.Fatalf("tenant B %+v", none)
+	}
+}
+
 func testClips(t *testing.T, s store.Store) {
 	a, b := newTenant(t, s, "A"), newTenant(t, s, "B")
 	player, target := uuid(), uuid()
@@ -830,11 +1058,16 @@ func testErasure(t *testing.T, s store.Store) {
 	check(t, s.CreateAppeal(ctx, &store.Appeal{TenantID: a, VerdictID: active.ID, PlayerUUID: player, Message: "m", Contact: "c"}, store.DefaultAppealLimits))
 	check(t, s.InsertLabel(ctx, &store.Label{TenantID: a, PlayerUUID: player, VerdictID: active.ID, Label: store.LabelCheat, Source: store.SourceConfirmed, WindowStart: t0, WindowEnd: t0}))
 	check(t, s.AddReputationContrib(ctx, store.ReputationContrib{TenantID: a, PlayerUUID: player, VerdictID: active.ID, Weight: 1}))
+	_, _, err := s.RecordModerationLabel(ctx, moderation(a, "1", store.ModerationBanAdded, player, t0))
+	check(t, err)
+	_, _, err = s.RecordModerationLabel(ctx, moderation(b, "1", store.ModerationBanAdded, player, t0))
+	check(t, err)
 
 	check(t, s.BeginErasure(ctx, a, player, t0))
 	counts, err := s.EraseSubject(ctx, a, player)
 	check(t, err)
-	want := map[string]int64{"players": 1, "player_names": 1, "clips": 2, "verdicts": 2, "verdicts_minimised": 1, "bans": 1, "appeals": 1, "labels": 1, "reputation_contrib": 1}
+	want := map[string]int64{"players": 1, "player_names": 1, "clips": 2, "verdicts": 2, "verdicts_minimised": 1, "bans": 1, "appeals": 1, "labels": 1, "reputation_contrib": 1,
+		"moderation_labels": 1}
 	for k, n := range want {
 		if counts[k] != n {
 			t.Errorf("counts[%s] = %d, want %d (all: %v)", k, counts[k], n, counts)
@@ -915,6 +1148,10 @@ func testRetention(t *testing.T, s store.Store) {
 	check(t, s.AddReputationContrib(ctx, store.ReputationContrib{TenantID: a, PlayerUUID: player, VerdictID: "v", Weight: 1, CreatedAt: old}))
 	check(t, s.BeginErasure(ctx, a, uuid(), t0.Add(-4*365*day)))
 	check(t, s.BeginErasure(ctx, a, uuid(), t0.Add(-day)))
+	for _, m := range []*store.ModerationLabel{moderation(a, "1", store.ModerationBanAdded, player, old), moderation(a, "2", store.ModerationBanAdded, player, t0)} {
+		_, _, err := s.RecordModerationLabel(ctx, m)
+		check(t, err)
+	}
 
 	// Bans outlive their verdicts: an active ban keeps its verdict, an overturned one is kept for a
 	// year after the overturn, a timed one for a year after it ends.
@@ -946,7 +1183,7 @@ func testRetention(t *testing.T, s store.Store) {
 	counts, err := store.Purge(ctx, s, a, t0, store.DefaultRetention)
 	check(t, err)
 	want := map[string]int64{"clips": 1, "verdicts": 4, "bans": 2, "labels": 1, "usage_daily": 1, "probe_stats": 1, "audit_log": 1,
-		"players": 1, "player_names": 1, "reputation_contrib": 1, "erasures": 1}
+		"players": 1, "player_names": 1, "reputation_contrib": 1, "erasures": 1, "moderation_labels": 1}
 	for table, n := range want {
 		if counts[table] != n {
 			t.Errorf("%s purged %d, want %d", table, counts[table], n)

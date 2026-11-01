@@ -112,6 +112,13 @@ const (
 	StatusSuperseded = "superseded"
 )
 
+// Who decided a verdict's status (verdicts.decided_by; "" = nobody): staff on the dashboard or with an API
+// key, or a moderation label (a LiteBans ban or wrongful unban). A label never replaces a staff decision.
+const (
+	DecidedByStaff    = "staff"
+	DecidedByLiteBans = "litebans"
+)
+
 // Verdict is a stored verdict (from a VerdictRecord, plus delivery and ack state).
 type Verdict struct {
 	ID           string
@@ -135,6 +142,7 @@ type Verdict struct {
 	Payload      []byte // serialised pb.Verdict, re-sent by the gateway
 	Shadow       bool
 	Status       string
+	DecidedBy    string // who confirmed or overturned it: "", DecidedByStaff or DecidedByLiteBans
 	Supersedes   string
 	AppealCode   string
 	CreatedAt    time.Time
@@ -293,6 +301,12 @@ const (
 	SourceConfirmed  = "confirmed"
 	SourceOverturned = "overturned"
 	SourceManual     = "manual"
+	// SourceLiteBans: a verdict confirmed (cheat) or overturned (legit) by a LiteBans ban or wrongful
+	// unban, over the verdict's signal window.
+	SourceLiteBans = "litebans"
+	// SourceLiteBansUnflagged: a LiteBans ban or wrongful unban of a player without a verdict in the
+	// lookback before the ban, over the window just before it (no verdict id).
+	SourceLiteBansUnflagged = "litebans_unflagged"
 )
 
 // Label is ground truth for a player over a time window.
@@ -315,6 +329,54 @@ type LabelExport struct {
 	Score    float64
 	Checks   []string
 	Evidence json.RawMessage // nil when the label has no (remaining) verdict
+}
+
+// Moderation label kinds and executors (moderation_labels).
+const (
+	ModerationBanAdded   = "ban_added"
+	ModerationBanRemoved = "ban_removed"
+
+	ExecutorStaff   = "staff"
+	ExecutorConsole = "console"
+)
+
+// ModerationLabel is a ban of a punishment plugin (LiteBans) that the plugin classified as for cheating
+// (ModerationBanAdded, LabelCheat) or found lifted as wrong (ModerationBanRemoved, LabelLegit). Its key is
+// (tenant, source, entry id, kind): the proxy and every backend of a network may report the same entry.
+type ModerationLabel struct {
+	TenantID   string
+	Source     string // "litebans"
+	EntryID    string // the source's id of the ban
+	Kind       string // ModerationBanAdded or ModerationBanRemoved
+	Label      string // LabelCheat (ban added) or LabelLegit (ban removed)
+	PlayerUUID string
+	BanStart   time.Time
+	RemovedAt  time.Time // ban removed: when it was lifted (zero = unknown)
+	Permanent  bool
+	Executor   string    // who issued the ban: ExecutorStaff or ExecutorConsole
+	ReceivedAt time.Time // first received
+	AppliedAt  time.Time // zero until its verdict decisions and labels are written
+	Verdicts   int       // verdicts it confirmed or overturned
+}
+
+// ModerationBan is a cheat ban of the agreement statistics with the player's verdicts before it.
+type ModerationBan struct {
+	PlayerUUID   string
+	BanStart     time.Time
+	TopAction    pb.Action // highest ALERT..BAN verdict created in [BanStart - lookback, BanStart]; unspecified = none
+	FirstVerdict time.Time // the earliest of those verdicts
+}
+
+// ModerationAgreement compares moderation labels with the tenant's verdicts over one period.
+type ModerationAgreement struct {
+	// Bans are the cheat bans that started in the period and were not lifted as wrong, oldest first.
+	Bans []ModerationBan
+	// WouldAct counts players with a KICK or BAN verdict (shadow included) created in the period;
+	// WouldActBanned those of them with a cheat ban within the lookback after such a verdict.
+	WouldAct, WouldActBanned int
+	// Overturns counts wrongful unbans lifted (else received) in the period; VerdictsOverturned the
+	// verdicts they overturned.
+	Overturns, VerdictsOverturned int
 }
 
 // ClipCodecZstd is clips.codec 1: a zstd frame with content size of a serialised ClipData.
@@ -399,7 +461,7 @@ type UsageDay struct {
 type AuditEntry struct {
 	ID        string // generated when empty
 	TenantID  string
-	Principal string // "user:<name>", "apikey:<id>", "system"
+	Principal string // "user:<name>", "apikey:<id>", "system", "litebans"
 	Action    string
 	Target    string
 	Detail    json.RawMessage

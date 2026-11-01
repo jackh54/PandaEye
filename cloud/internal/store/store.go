@@ -34,6 +34,7 @@ type Store interface {
 	BanStore
 	AppealStore
 	LabelStore
+	ModerationStore
 	ClipStore
 	APIKeyStore
 	ReputationStore

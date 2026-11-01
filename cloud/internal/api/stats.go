@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -61,6 +62,115 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request, rc *req
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"last_24h": day, "last_7d": week})
 	return nil
+}
+
+// agreementJSON compares the LiteBans cheat bans and wrongful unbans of one period with the verdicts
+// (GET /api/v1/stats/litebans; aggregate counts only).
+type agreementJSON struct {
+	CheatBans int `json:"cheat_bans"` // cheat bans that started in the period, not lifted as wrong
+	Players   int `json:"players"`    // their players
+	// FlaggedBefore counts those players by the highest action of their verdicts (shadow included) in
+	// the lookback before their first such ban; NotFlagged those without one.
+	FlaggedBefore map[string]int `json:"flagged_before"`
+	NotFlagged    int            `json:"not_flagged"`
+	// MedianLeadTimeS is the median time from a flagged player's first verdict to the ban (null without).
+	MedianLeadTimeS *int64 `json:"median_lead_time_s"`
+	// WouldKickOrBan counts players with a KICK or BAN verdict (shadow included) created in the period,
+	// WouldKickOrBanBanned those of them with a cheat ban within the lookback after one.
+	WouldKickOrBan       int `json:"would_kick_or_ban"`
+	WouldKickOrBanBanned int `json:"would_kick_or_ban_banned"`
+	// Overturns counts the wrongful unbans of the period, VerdictsOverturned the verdicts they overturned.
+	Overturns          int `json:"overturns"`
+	VerdictsOverturned int `json:"verdicts_overturned"`
+}
+
+// agreement computes agreementJSON for [now - span, now).
+func (s *Service) agreement(ctx context.Context, tenantID string, now time.Time, span time.Duration) (agreementJSON, error) {
+	out := agreementJSON{FlaggedBefore: map[string]int{}}
+	for a := pb.Action_ACTION_ALERT; a <= pb.Action_ACTION_BAN; a++ {
+		out.FlaggedBefore[actionName(a)] = 0
+	}
+	ag, err := s.d.Store.ModerationAgreement(ctx, tenantID, now.Add(-span), now, s.d.Config.Labels.Lookback)
+	if err != nil {
+		return out, err
+	}
+	out.CheatBans = len(ag.Bans)
+	seen := map[string]bool{}
+	var leads []time.Duration
+	for _, b := range ag.Bans { // oldest first: a player counts with their first ban of the period
+		if seen[b.PlayerUUID] {
+			continue
+		}
+		seen[b.PlayerUUID] = true
+		out.Players++
+		if b.TopAction == pb.Action_ACTION_UNSPECIFIED {
+			out.NotFlagged++
+			continue
+		}
+		out.FlaggedBefore[actionName(b.TopAction)]++
+		leads = append(leads, b.BanStart.Sub(b.FirstVerdict))
+	}
+	if len(leads) > 0 {
+		slices.Sort(leads)
+		m := leads[len(leads)/2]
+		if len(leads)%2 == 0 {
+			m = (leads[len(leads)/2-1] + m) / 2
+		}
+		sec := int64(m / time.Second)
+		out.MedianLeadTimeS = &sec
+	}
+	out.WouldKickOrBan, out.WouldKickOrBanBanned = ag.WouldAct, ag.WouldActBanned
+	out.Overturns, out.VerdictsOverturned = ag.Overturns, ag.VerdictsOverturned
+	return out, nil
+}
+
+// handleLiteBansStats serves the agreement of LiteBans with the verdicts over the last 7 and 30 days.
+func (s *Service) handleLiteBansStats(w http.ResponseWriter, r *http.Request, rc *reqCtx) error {
+	week, err := s.agreement(r.Context(), rc.tenant(), rc.now, 7*24*time.Hour)
+	if err != nil {
+		return err
+	}
+	month, err := s.agreement(r.Context(), rc.tenant(), rc.now, 30*24*time.Hour)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lookback_s": int64(s.d.Config.Labels.Lookback / time.Second), "last_7d": week, "last_30d": month})
+	return nil
+}
+
+// logAgreement logs the LiteBans agreement of every tenant with LiteBans data in the last 30 days, once
+// per window, aggregate counts only (the janitor runs it daily).
+func (s *Service) logAgreement(ctx context.Context, tenantIDs []string, now time.Time) {
+	for _, id := range tenantIDs {
+		month, err := s.agreement(ctx, id, now, 30*24*time.Hour)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.log.Warn("litebans agreement failed", "tenant_id", id, "err", err)
+			}
+			continue
+		}
+		if month.CheatBans == 0 && month.Overturns == 0 {
+			continue
+		}
+		week, err := s.agreement(ctx, id, now, 7*24*time.Hour)
+		if err != nil {
+			continue
+		}
+		for _, w := range []struct {
+			name string
+			a    agreementJSON
+		}{{"7d", week}, {"30d", month}} {
+			lead := int64(-1)
+			if w.a.MedianLeadTimeS != nil {
+				lead = *w.a.MedianLeadTimeS
+			}
+			s.log.Info("litebans agreement", "tenant_id", id, "window", w.name, "cheat_bans", w.a.CheatBans, "players", w.a.Players,
+				"flagged_alert", w.a.FlaggedBefore["alert"], "flagged_mitigate", w.a.FlaggedBefore["mitigate"],
+				"flagged_kick", w.a.FlaggedBefore["kick"], "flagged_ban", w.a.FlaggedBefore["ban"], "not_flagged", w.a.NotFlagged,
+				"median_lead_time_s", lead, "would_kick_or_ban", w.a.WouldKickOrBan, "would_kick_or_ban_banned", w.a.WouldKickOrBanBanned,
+				"overturns", w.a.Overturns, "verdicts_overturned", w.a.VerdictsOverturned)
+		}
+	}
 }
 
 type percentilesJSON struct {

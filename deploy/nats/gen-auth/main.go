@@ -153,9 +153,9 @@ var roles = []role{
 	},
 	{
 		user:    "pe-worker",
-		purpose: "worker: consumes PE_EVENTS, publishes signals and session markers, holds partition leases, honours erasures",
+		purpose: "worker: consumes PE_EVENTS, publishes signals, session markers and moderation labels, holds partition leases, honours erasures",
 		pub: join(
-			[]string{"pe.signals.*"},
+			[]string{"pe.signals.*", "pe.labels.*"},
 			service(),
 			consume(streamEvents),
 			kv(kvLeases, true), kv(kvTenants, false), kv(kvErasures, false),
@@ -175,10 +175,11 @@ var roles = []role{
 	},
 	{
 		user:    "pe-api",
-		purpose: "api: writes tenant settings and erasure tombstones, publishes config updates and corrective verdicts, runs leased loops",
+		purpose: "api: writes tenant settings and erasure tombstones, publishes config updates and corrective verdicts, consumes moderation labels (PE_VERDICTS), runs leased loops",
 		pub: join(
 			[]string{"pe.out.*.*", "pe.verdicts.*"},
 			service(),
+			consume(streamVerdicts),
 			kv(kvTenants, true), kv(kvLeases, true), kv(kvErasures, true), kv(kvConnections, false), kv(kvServers, false),
 		),
 		sub: inbox,

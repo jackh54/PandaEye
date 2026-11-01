@@ -68,6 +68,9 @@ func TestDefaultsAllMode(t *testing.T) {
 	if c.Digest.Dir != "" || c.Digest.Retention != 30*24*time.Hour {
 		t.Errorf("digest defaults: %+v", c.Digest)
 	}
+	if c.Labels.Lookback != 7*24*time.Hour || c.Labels.Window != 2*time.Hour {
+		t.Errorf("labels defaults: %+v", c.Labels)
+	}
 	if c.Leases.Mode != LeaseAll || !strings.HasPrefix(c.OwnerID, "all-") || !c.OutboundKey.IsZero() {
 		t.Errorf("all-mode defaults: %+v %q", c.Leases, c.OwnerID)
 	}
@@ -232,6 +235,13 @@ func TestValidation(t *testing.T) {
 	wantErr(t, RoleAll, []string{"PE_DIGEST_DIR=data/ml/", "PE_FEATURES_DIR=./data/ml"}, "PE_DIGEST_DIR needs a directory of its own")
 	wantErr(t, RoleAll, []string{"PE_DIGEST_RETENTION=30m"}, "PE_DIGEST_RETENTION must be at least 1h")
 	wantErr(t, RoleAll, []string{"PE_DIGEST_RETENTION=later"}, "not a duration")
+	if c := mustLoad(t, RoleAll, "", []string{"PE_LABELS_LOOKBACK=14d", "PE_LABELS_WINDOW=30m"}); c.Labels.Lookback != 14*24*time.Hour || c.Labels.Window != 30*time.Minute {
+		t.Errorf("labels %+v", c.Labels)
+	}
+	wantErr(t, RoleAll, []string{"PE_LABELS_LOOKBACK=31d"}, "PE_LABELS_LOOKBACK must be between 1h and 30d")
+	wantErr(t, RoleAll, []string{"PE_LABELS_LOOKBACK=30m"}, "PE_LABELS_LOOKBACK")
+	wantErr(t, RoleAll, []string{"PE_LABELS_LOOKBACK=2h", "PE_LABELS_WINDOW=3h"}, "PE_LABELS_WINDOW must be at least 1m and at most PE_LABELS_LOOKBACK")
+	wantErr(t, RoleAll, []string{"PE_LABELS_WINDOW=10s"}, "PE_LABELS_WINDOW")
 	wantErr(t, RoleAll, []string{"PE_STATIC_LICENSES=a:b"}, "maxServers")
 	wantErr(t, RoleAll, []string{"PE_OWNER_ID=has space"}, "PE_OWNER_ID")
 	wantErr(t, RoleAll, []string{"PE_LEASES=0-3,20"}, "does not exist")

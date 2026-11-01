@@ -141,6 +141,7 @@ type verdictJSON struct {
 	Checks      []string `json:"checks"`
 	Shadow      bool     `json:"shadow"`
 	Status      string   `json:"status"`
+	DecidedBy   string   `json:"decided_by"` // "" (undecided), "staff" or "litebans"
 	Supersedes  string   `json:"supersedes"`
 	CreatedAt   nullTime `json:"created_at"`
 	DeliveredAt nullTime `json:"delivered_at"`
@@ -168,7 +169,7 @@ func toVerdictJSON(v *store.Verdict, serverName string) verdictJSON {
 		ID: v.ID, ServerID: v.ServerID, ServerName: serverName, NetworkID: v.NetworkID, PlayerUUID: v.PlayerUUID,
 		PlayerName: v.PlayerName, SessionID: v.SessionID, Action: actionName(v.Action), Category: categoryName(v.Category),
 		Score: num(v.Score), Confidence: num(v.Confidence), Reason: v.Reason, Checks: nonNil(v.Checks), Shadow: v.Shadow,
-		Status: v.Status, Supersedes: v.Supersedes, CreatedAt: nullTime(v.CreatedAt), DeliveredAt: nullTime(v.DeliveredAt),
+		Status: v.Status, DecidedBy: v.DecidedBy, Supersedes: v.Supersedes, CreatedAt: nullTime(v.CreatedAt), DeliveredAt: nullTime(v.DeliveredAt),
 		AckedAt: nullTime(v.AckedAt), Executed: v.Executed, AckNote: v.AckNote, ClipIDs: nonNil(v.ClipIDs), Mitigations: ms,
 		Strength: num(v.Strength),
 	}

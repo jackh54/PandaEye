@@ -4,6 +4,7 @@
 // GDPR erasure (5.13), bans, appeals (including public appeals), statistics, usage, API keys, check
 // configuration, the audit log, the ML label export and the public /status document.
 //
-// It also runs two leased singletons: the metering loop (every minute, usage_daily and the free-tier
-// limit) and the janitor (daily retention, erasure tombstone expiry).
+// It also runs leased singletons: the metering loop (every minute, usage_daily and the free-tier
+// limit), the janitor (daily retention, erasure tombstone expiry, the LiteBans agreement log) and the
+// label consumer (LiteBans bans and wrongful unbans confirm or overturn verdicts, labels.go).
 package api

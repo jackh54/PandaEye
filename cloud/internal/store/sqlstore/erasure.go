@@ -39,6 +39,7 @@ func (s *Store) EraseSubject(ctx context.Context, tenantID, player string) (map[
 			{"players", `DELETE FROM players WHERE tenant_id = ? AND uuid = ?`},
 			{"appeals", `DELETE FROM appeals WHERE tenant_id = ? AND player_uuid = ?`},
 			{"labels", `DELETE FROM labels WHERE tenant_id = ? AND player_uuid = ?`},
+			{"moderation_labels", `DELETE FROM moderation_labels WHERE tenant_id = ? AND player_uuid = ?`},
 			{"reputation_contrib", `DELETE FROM reputation_contrib WHERE tenant_id = ? AND player_uuid = ?`},
 		}
 		for _, st := range steps {

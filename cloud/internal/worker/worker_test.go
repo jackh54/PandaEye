@@ -175,6 +175,54 @@ func TestWorkerOrderingDedupAndProbes(t *testing.T) {
 	}
 }
 
+// A label sent beside gameplay is published to pe.labels.<tenant> (stream PE_VERDICTS) as a LabelRecord,
+// once per msg id, with the signals published as usual.
+func TestWorkerPublishesLabelRecords(t *testing.T) {
+	d := testkit.NewDeps(t)
+	startWorker(t, d)
+	c := &client{t: t, d: d, server: testkit.NewServerID()}
+	p := testkit.NewPlayer("banned")
+	ev := labelEvent(p, 77, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT)
+	part := c.send(p, p.Join(), ev)
+	c.send(p, ev) // the same entry again (another server, or a backfill): one stream message
+	if envs := readSignals(t, d, part, 1, 20*time.Second); len(envs) != 1 || envs[0].GetSession() == nil {
+		t.Fatalf("signals %+v", envs)
+	}
+	subj, _ := stream.LabelsSubject(testTenant)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cons, err := d.Bus.JS.OrderedConsumer(ctx, stream.StreamVerdicts, jetstream.OrderedConsumerConfig{FilterSubjects: []string{subj}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recs []*pb.LabelRecord
+	for ctx.Err() == nil && len(recs) < 2 {
+		batch, err := cons.Fetch(10, jetstream.FetchMaxWait(500*time.Millisecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for m := range batch.Messages() {
+			n++
+			var r pb.LabelRecord
+			if err := proto.Unmarshal(m.Data(), &r); err != nil {
+				t.Fatal(err)
+			}
+			if m.Headers().Get(jetstream.MsgIDHeader) != stream.LabelRecordMsgID(testTenant, "litebans", 77, int32(pb.ModerationLabel_KIND_BAN_ADDED)) {
+				t.Errorf("msg id %q", m.Headers().Get(jetstream.MsgIDHeader))
+			}
+			recs = append(recs, &r)
+		}
+		if n == 0 && len(recs) > 0 {
+			break
+		}
+	}
+	if len(recs) != 1 || recs[0].GetLabel().GetEntryId() != 77 || string(recs[0].GetPlayer()) != string(p.UUID) ||
+		recs[0].GetOrigin().GetTenantId() != testTenant {
+		t.Fatalf("label records %+v", recs)
+	}
+}
+
 // A new owner warm-starts over the messages before its start sequence without emitting anything,
 // and continues with the rebuilt sessions.
 func TestWorkerWarmStartEmitsNothing(t *testing.T) {

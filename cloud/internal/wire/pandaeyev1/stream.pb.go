@@ -1063,6 +1063,77 @@ func (x *AckRecord) GetAckedUnixUs() uint64 {
 	return 0
 }
 
+// Subject pe.labels.<tenant_id> (stream PE_VERDICTS): a ModerationLabel event the worker took out of the
+// event stream, for the api's label consumer, which de-duplicates it by (tenant, source, entry id, kind)
+// and confirms or overturns the player's verdicts (ARCHITECTURE 5.8). The player may be offline.
+type LabelRecord struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Origin            *Origin                `protobuf:"bytes,1,opt,name=origin,proto3" json:"origin,omitempty"` // the server or proxy that sent it
+	Player            []byte                 `protobuf:"bytes,2,opt,name=player,proto3" json:"player,omitempty"`
+	Label             *ModerationLabel       `protobuf:"bytes,3,opt,name=label,proto3" json:"label,omitempty"`
+	GatewayRecvUnixUs uint64                 `protobuf:"varint,4,opt,name=gateway_recv_unix_us,json=gatewayRecvUnixUs,proto3" json:"gateway_recv_unix_us,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *LabelRecord) Reset() {
+	*x = LabelRecord{}
+	mi := &file_pandaeye_v1_stream_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LabelRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LabelRecord) ProtoMessage() {}
+
+func (x *LabelRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_pandaeye_v1_stream_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LabelRecord.ProtoReflect.Descriptor instead.
+func (*LabelRecord) Descriptor() ([]byte, []int) {
+	return file_pandaeye_v1_stream_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *LabelRecord) GetOrigin() *Origin {
+	if x != nil {
+		return x.Origin
+	}
+	return nil
+}
+
+func (x *LabelRecord) GetPlayer() []byte {
+	if x != nil {
+		return x.Player
+	}
+	return nil
+}
+
+func (x *LabelRecord) GetLabel() *ModerationLabel {
+	if x != nil {
+		return x.Label
+	}
+	return nil
+}
+
+func (x *LabelRecord) GetGatewayRecvUnixUs() uint64 {
+	if x != nil {
+		return x.GatewayRecvUnixUs
+	}
+	return 0
+}
+
 // Stored replay clip payload (zstd-compressed when persisted).
 // clips.codec 1 = a zstd frame with content size (same rules as wire codec 0x01) of a serialized ClipData.
 type ClipData struct {
@@ -1079,7 +1150,7 @@ type ClipData struct {
 
 func (x *ClipData) Reset() {
 	*x = ClipData{}
-	mi := &file_pandaeye_v1_stream_proto_msgTypes[9]
+	mi := &file_pandaeye_v1_stream_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1091,7 +1162,7 @@ func (x *ClipData) String() string {
 func (*ClipData) ProtoMessage() {}
 
 func (x *ClipData) ProtoReflect() protoreflect.Message {
-	mi := &file_pandaeye_v1_stream_proto_msgTypes[9]
+	mi := &file_pandaeye_v1_stream_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1104,7 +1175,7 @@ func (x *ClipData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClipData.ProtoReflect.Descriptor instead.
 func (*ClipData) Descriptor() ([]byte, []int) {
-	return file_pandaeye_v1_stream_proto_rawDescGZIP(), []int{9}
+	return file_pandaeye_v1_stream_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ClipData) GetOrigin() *Origin {
@@ -1259,7 +1330,12 @@ const file_pandaeye_v1_stream_proto_rawDesc = "" +
 	"verdict_id\x18\x03 \x01(\tR\tverdictId\x12\x1a\n" +
 	"\bexecuted\x18\x04 \x01(\bR\bexecuted\x12\x12\n" +
 	"\x04note\x18\x05 \x01(\tR\x04note\x12\"\n" +
-	"\racked_unix_us\x18\x06 \x01(\x04R\vackedUnixUs\"\xd4\x01\n" +
+	"\racked_unix_us\x18\x06 \x01(\x04R\vackedUnixUs\"\xb7\x01\n" +
+	"\vLabelRecord\x12+\n" +
+	"\x06origin\x18\x01 \x01(\v2\x13.pandaeye.v1.OriginR\x06origin\x12\x16\n" +
+	"\x06player\x18\x02 \x01(\fR\x06player\x122\n" +
+	"\x05label\x18\x03 \x01(\v2\x1c.pandaeye.v1.ModerationLabelR\x05label\x12/\n" +
+	"\x14gateway_recv_unix_us\x18\x04 \x01(\x04R\x11gatewayRecvUnixUs\"\xd4\x01\n" +
 	"\bClipData\x12+\n" +
 	"\x06origin\x18\x01 \x01(\v2\x13.pandaeye.v1.OriginR\x06origin\x12\x16\n" +
 	"\x06player\x18\x02 \x01(\fR\x06player\x12*\n" +
@@ -1282,7 +1358,7 @@ func file_pandaeye_v1_stream_proto_rawDescGZIP() []byte {
 }
 
 var file_pandaeye_v1_stream_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_pandaeye_v1_stream_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_pandaeye_v1_stream_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_pandaeye_v1_stream_proto_goTypes = []any{
 	(SessionMarker_Kind)(0), // 0: pandaeye.v1.SessionMarker.Kind
 	(*Origin)(nil),          // 1: pandaeye.v1.Origin
@@ -1294,41 +1370,45 @@ var file_pandaeye_v1_stream_proto_goTypes = []any{
 	(*Outbound)(nil),        // 7: pandaeye.v1.Outbound
 	(*VerdictRecord)(nil),   // 8: pandaeye.v1.VerdictRecord
 	(*AckRecord)(nil),       // 9: pandaeye.v1.AckRecord
-	(*ClipData)(nil),        // 10: pandaeye.v1.ClipData
-	nil,                     // 11: pandaeye.v1.Signal.DataEntry
-	(Platform)(0),           // 12: pandaeye.v1.Platform
-	(*Event)(nil),           // 13: pandaeye.v1.Event
-	(Category)(0),           // 14: pandaeye.v1.Category
-	(*Verdict)(nil),         // 15: pandaeye.v1.Verdict
-	(*ProbeResult)(nil),     // 16: pandaeye.v1.ProbeResult
-	(*WatchRequest)(nil),    // 17: pandaeye.v1.WatchRequest
-	(*PlayerRisk)(nil),      // 18: pandaeye.v1.PlayerRisk
-	(*RemoteConfig)(nil),    // 19: pandaeye.v1.RemoteConfig
+	(*LabelRecord)(nil),     // 10: pandaeye.v1.LabelRecord
+	(*ClipData)(nil),        // 11: pandaeye.v1.ClipData
+	nil,                     // 12: pandaeye.v1.Signal.DataEntry
+	(Platform)(0),           // 13: pandaeye.v1.Platform
+	(*Event)(nil),           // 14: pandaeye.v1.Event
+	(Category)(0),           // 15: pandaeye.v1.Category
+	(*Verdict)(nil),         // 16: pandaeye.v1.Verdict
+	(*ProbeResult)(nil),     // 17: pandaeye.v1.ProbeResult
+	(*WatchRequest)(nil),    // 18: pandaeye.v1.WatchRequest
+	(*PlayerRisk)(nil),      // 19: pandaeye.v1.PlayerRisk
+	(*RemoteConfig)(nil),    // 20: pandaeye.v1.RemoteConfig
+	(*ModerationLabel)(nil), // 21: pandaeye.v1.ModerationLabel
 }
 var file_pandaeye_v1_stream_proto_depIdxs = []int32{
-	12, // 0: pandaeye.v1.Origin.platform:type_name -> pandaeye.v1.Platform
+	13, // 0: pandaeye.v1.Origin.platform:type_name -> pandaeye.v1.Platform
 	1,  // 1: pandaeye.v1.StreamBatch.origin:type_name -> pandaeye.v1.Origin
-	13, // 2: pandaeye.v1.StreamBatch.events:type_name -> pandaeye.v1.Event
+	14, // 2: pandaeye.v1.StreamBatch.events:type_name -> pandaeye.v1.Event
 	1,  // 3: pandaeye.v1.Signal.origin:type_name -> pandaeye.v1.Origin
-	14, // 4: pandaeye.v1.Signal.category:type_name -> pandaeye.v1.Category
-	11, // 5: pandaeye.v1.Signal.data:type_name -> pandaeye.v1.Signal.DataEntry
+	15, // 4: pandaeye.v1.Signal.category:type_name -> pandaeye.v1.Category
+	12, // 5: pandaeye.v1.Signal.data:type_name -> pandaeye.v1.Signal.DataEntry
 	1,  // 6: pandaeye.v1.SessionMarker.origin:type_name -> pandaeye.v1.Origin
 	0,  // 7: pandaeye.v1.SessionMarker.kind:type_name -> pandaeye.v1.SessionMarker.Kind
 	3,  // 8: pandaeye.v1.SignalEnvelope.signal:type_name -> pandaeye.v1.Signal
 	4,  // 9: pandaeye.v1.SignalEnvelope.session:type_name -> pandaeye.v1.SessionMarker
-	15, // 10: pandaeye.v1.Outbound.verdict:type_name -> pandaeye.v1.Verdict
-	16, // 11: pandaeye.v1.Outbound.probe_result:type_name -> pandaeye.v1.ProbeResult
-	17, // 12: pandaeye.v1.Outbound.watch:type_name -> pandaeye.v1.WatchRequest
-	18, // 13: pandaeye.v1.Outbound.player_risk:type_name -> pandaeye.v1.PlayerRisk
-	19, // 14: pandaeye.v1.Outbound.config_update:type_name -> pandaeye.v1.RemoteConfig
-	15, // 15: pandaeye.v1.VerdictRecord.verdict:type_name -> pandaeye.v1.Verdict
-	1,  // 16: pandaeye.v1.ClipData.origin:type_name -> pandaeye.v1.Origin
-	13, // 17: pandaeye.v1.ClipData.events:type_name -> pandaeye.v1.Event
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	16, // 10: pandaeye.v1.Outbound.verdict:type_name -> pandaeye.v1.Verdict
+	17, // 11: pandaeye.v1.Outbound.probe_result:type_name -> pandaeye.v1.ProbeResult
+	18, // 12: pandaeye.v1.Outbound.watch:type_name -> pandaeye.v1.WatchRequest
+	19, // 13: pandaeye.v1.Outbound.player_risk:type_name -> pandaeye.v1.PlayerRisk
+	20, // 14: pandaeye.v1.Outbound.config_update:type_name -> pandaeye.v1.RemoteConfig
+	16, // 15: pandaeye.v1.VerdictRecord.verdict:type_name -> pandaeye.v1.Verdict
+	1,  // 16: pandaeye.v1.LabelRecord.origin:type_name -> pandaeye.v1.Origin
+	21, // 17: pandaeye.v1.LabelRecord.label:type_name -> pandaeye.v1.ModerationLabel
+	1,  // 18: pandaeye.v1.ClipData.origin:type_name -> pandaeye.v1.Origin
+	14, // 19: pandaeye.v1.ClipData.events:type_name -> pandaeye.v1.Event
+	20, // [20:20] is the sub-list for method output_type
+	20, // [20:20] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_pandaeye_v1_stream_proto_init() }
@@ -1355,7 +1435,7 @@ func file_pandaeye_v1_stream_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pandaeye_v1_stream_proto_rawDesc), len(file_pandaeye_v1_stream_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

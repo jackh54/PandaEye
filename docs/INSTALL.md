@@ -75,7 +75,9 @@ a cheating ban lifted as a false ban or an accepted appeal become labels for the
 confirm or overturn PandaEye's verdicts and to measure its accuracy, even if staff never open the dashboard.
 Only the outcome is sent: never the ban reason, staff names or IP addresses. The keywords that decide what counts
 as a cheating ban are under `labels.litebans` in `config.yml` (backend and proxy, restart to apply);
-`labels.litebans.enabled: false` turns it off. `/pandaeye status` shows the labels sent.
+`labels.litebans.enabled: false` turns it off. `/pandaeye status` shows the labels sent. In the dashboard, verdicts
+decided this way are marked "LiteBans" and the overview's "Accuracy (LiteBans)" card compares PandaEye with your
+staff's bans; a decision staff make in the dashboard always wins over LiteBans.
 
 ## Updating and removing
 

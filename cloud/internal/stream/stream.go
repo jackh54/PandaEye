@@ -23,9 +23,9 @@ import (
 const (
 	StreamEvents   = "PE_EVENTS"   // pe.events.<NN>: StreamBatch
 	StreamSignals  = "PE_SIGNALS"  // pe.signals.<NN>: SignalEnvelope
-	StreamVerdicts = "PE_VERDICTS" // pe.verdicts.<tenant>: VerdictRecord, pe.acks.<tenant>: AckRecord
+	StreamVerdicts = "PE_VERDICTS" // pe.verdicts.<tenant>: VerdictRecord, pe.acks.<tenant>: AckRecord, pe.labels.<tenant>: LabelRecord
 
-	BucketLeases      = "PE_LEASES"      // events.<NN>, signals.<NN>, writer, metering, janitor, members.*
+	BucketLeases      = "PE_LEASES"      // events.<NN>, signals.<NN>, writer, metering, janitor, labels, members.*
 	BucketConnections = "PE_CONNECTIONS" // <tenant>.<server>: ConnectionInfo
 	BucketServers     = "PE_SERVERS"     // <tenant>.<server>: ServerRecord
 	BucketTenants     = "PE_TENANTS"     // <tenant>: TenantSettings

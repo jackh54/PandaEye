@@ -69,6 +69,7 @@ type Config struct {
 	ClickHouseDSN identity.Secret // PE_CLICKHOUSE_DSN; empty disables telemetry
 	Features      Features
 	Digest        Digest
+	Labels        Labels
 	License       License
 
 	ServiceToken     identity.Secret // PE_SERVICE_TOKEN; empty disables dashboard access
@@ -140,6 +141,17 @@ type Features struct {
 type Digest struct {
 	Dir       string        // PE_DIGEST_DIR; empty disables the digest
 	Retention time.Duration // PE_DIGEST_RETENTION
+}
+
+// Labels configures how moderation labels (LiteBans bans and wrongful unbans) decide verdicts and
+// labels (api).
+type Labels struct {
+	// Lookback: the verdicts created this long before a ban are the ones it confirms or overturns, and
+	// a KICK/BAN verdict followed by a ban within it counts as agreement (PE_LABELS_LOOKBACK, 7d).
+	Lookback time.Duration
+	// Window: a ban without such a verdict labels the player over this window before it
+	// (PE_LABELS_WINDOW, 2h).
+	Window time.Duration
 }
 
 // License configures licence verification.

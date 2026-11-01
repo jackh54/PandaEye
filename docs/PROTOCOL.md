@@ -241,7 +241,8 @@ BAN_REMOVED), `classification` (CHEAT on BAN_ADDED, LEGIT on BAN_REMOVED; NONE i
 `ban_start_unix_ms`, `removed_unix_ms` (0 = unknown), `permanent` and `executor` (STAFF or CONSOLE, of the ban);
 the plugin never sends reason texts, staff names or ids, or IPs. The proxy and every backend of a network may
 send the same entry and each enable resends the backfill: receivers de-duplicate by
-(tenant, `source`, `entry_id`, `kind`) and treat a LEGIT as superseding the entry's CHEAT.
+(tenant, `source`, `entry_id`, `kind`) and treat a LEGIT as superseding the entry's CHEAT. In the cloud the
+worker forwards it as a `LabelRecord` (section 14.1) and the api applies it once (ARCHITECTURE 5.8).
 
 ## 6. Event clock and normalisation
 
@@ -464,6 +465,7 @@ Payloads are defined in `stream.proto` and never reach plugins. Every identifier
 | `pe.signals.<NN>` | `PE_SIGNALS` (file, 7 d, duplicates 10 min) | `SignalEnvelope` (Signal or SessionMarker, ordered) | worker | verdict service owning NN | signals: `<tenant_id>:<server_id>:<batch_seq>:<NN>:<event index>:<check_id>:<emit ordinal>`; session markers: **Open** |
 | `pe.verdicts.<tenant>` | `PE_VERDICTS` (file, 30 d, duplicates 1 h) | `VerdictRecord` | verdict service; api (UNBAN, UNMITIGATE) | store writer | **Open** (the deterministic `verdict_id` is the natural choice) |
 | `pe.acks.<tenant>` | `PE_VERDICTS` | `AckRecord` | gateway | store writer | **Open** |
+| `pe.labels.<tenant>` | `PE_VERDICTS` | `LabelRecord` (a `ModerationLabel` with its origin and player) | worker | api label consumer (lease `labels`; the store writer skips it) | `label:<tenant_id>:<source>:<entry_id>:<kind number>` |
 | `pe.out.<tenant>.<server>` | none (core NATS) | `SignedOutbound` | verdict service, api | the gateway holding the connection | none |
 
 `<NN>` is the partition number, at least two digits (`07`). Partitions: `siphash24(partition_key, 16 uuid
@@ -476,7 +478,7 @@ subject.
 
 | Bucket | Keys | Settings | Writers |
 |---|---|---|---|
-| `PE_LEASES` | `events.<NN>`, `signals.<NN>`, `writer`; the implementation adds `metering`, `janitor` and `members.*` (lease balancing) | TTL 15 s | worker, verdict, api |
+| `PE_LEASES` | `events.<NN>`, `signals.<NN>`, `writer`; the implementation adds `metering`, `janitor`, `labels` and `members.*` (lease balancing) | TTL 15 s | worker, verdict, api |
 | `PE_CONNECTIONS` | `<tenant>.<server>` = {connection_id, gateway_id, instance_id, online_players} | TTL 30 s, renewed every 10 s with revision checks | gateway |
 | `PE_SERVERS` | `<tenant>.<server>` = last acked seq, secret hash, instance id | none | gateway |
 | `PE_TENANTS` | `<tenant>` = settings JSON incl. enforcement and `tenant_checks` | none | api (gateway, worker and verdict watch it) |

@@ -13,7 +13,7 @@ import (
 
 const verdictCols = `id, tenant_id, server_id, network_id, player_uuid, player_name, session_id, action, category, score,
 	confidence, reason, checks, evidence, clip_ids, mitigations, strength, ban_duration_s, payload, shadow, status,
-	supersedes, appeal_code, created_at, delivered_at, acked_at, executed, ack_note`
+	supersedes, appeal_code, created_at, delivered_at, acked_at, executed, ack_note, decided_by`
 
 func scanVerdict(sc interface{ Scan(...any) error }) (*store.Verdict, error) {
 	var v store.Verdict
@@ -23,7 +23,7 @@ func scanVerdict(sc interface{ Scan(...any) error }) (*store.Verdict, error) {
 	if err := sc.Scan(&v.ID, &v.TenantID, &v.ServerID, &v.NetworkID, &v.PlayerUUID, &v.PlayerName, &v.SessionID, &action,
 		&category, &v.Score, &v.Confidence, &v.Reason, &checks, &evidence, &clips, &mitigations, &v.Strength, &banDuration,
 		&v.Payload, &v.Shadow, &v.Status, &v.Supersedes, &v.AppealCode, &created, &delivered, &acked, &v.Executed,
-		&v.AckNote); err != nil {
+		&v.AckNote, &v.DecidedBy); err != nil {
 		return nil, mapErr(err)
 	}
 	v.Action, v.Category, v.BanDurationS = pb.Action(action), pb.Category(category), uint32(banDuration)
@@ -82,11 +82,11 @@ func (s *Store) UpsertVerdict(ctx context.Context, v *store.Verdict) (bool, erro
 	}
 	created := false
 	err := s.tx(ctx, func(tx *sql.Tx) error {
-		res, err := s.exec(ctx, tx, `INSERT INTO verdicts (`+verdictCols+`) VALUES (`+placeholders(28)+`) ON CONFLICT (id) DO NOTHING`,
+		res, err := s.exec(ctx, tx, `INSERT INTO verdicts (`+verdictCols+`) VALUES (`+placeholders(29)+`) ON CONFLICT (id) DO NOTHING`,
 			v.ID, v.TenantID, v.ServerID, v.NetworkID, v.PlayerUUID, v.PlayerName, v.SessionID, int64(v.Action),
 			int64(v.Category), v.Score, v.Confidence, v.Reason, jsonText(v.Checks, "[]"), evidence, jsonText(v.ClipIDs, "[]"),
 			jsonText(ms, "[]"), v.Strength, int64(v.BanDurationS), v.Payload, v.Shadow, v.Status, v.Supersedes, v.AppealCode,
-			v.CreatedAt.UnixMicro(), us(v.DeliveredAt), us(v.AckedAt), v.Executed, v.AckNote)
+			v.CreatedAt.UnixMicro(), us(v.DeliveredAt), us(v.AckedAt), v.Executed, v.AckNote, v.DecidedBy)
 		if err != nil {
 			return err
 		}
@@ -257,6 +257,21 @@ func (s *Store) SetVerdictStatus(ctx context.Context, tenantID, id, to string, f
 			return store.ErrConflict
 		}
 		_, err := s.exec(ctx, tx, `UPDATE verdicts SET status = ? WHERE id = ? AND tenant_id = ?`, to, id, tenantID)
+		return err
+	})
+}
+
+func (s *Store) DecideVerdict(ctx context.Context, tenantID, id, to, by string, from ...string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var cur, curBy string
+		if err := s.queryRow(ctx, tx, `SELECT status, decided_by FROM verdicts WHERE id = ? AND tenant_id = ?`+s.forUpdate(),
+			id, tenantID).Scan(&cur, &curBy); err != nil {
+			return mapErr(err)
+		}
+		if len(from) > 0 && !contains(from, cur) || by != store.DecidedByStaff && curBy == store.DecidedByStaff {
+			return store.ErrConflict
+		}
+		_, err := s.exec(ctx, tx, `UPDATE verdicts SET status = ?, decided_by = ? WHERE id = ? AND tenant_id = ?`, to, by, id, tenantID)
 		return err
 	})
 }

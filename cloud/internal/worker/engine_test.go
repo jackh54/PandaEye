@@ -762,3 +762,101 @@ func TestMLSignals(t *testing.T) {
 		}
 	}
 }
+
+func labelEvent(p *testkit.Player, entry uint64, kind pb.ModerationLabel_Kind, c pb.ModerationLabel_Classification) *pb.Event {
+	return &pb.Event{Player: p.UUID, TimeUs: p.TimeUs, Kind: &pb.Event_Label{Label: &pb.ModerationLabel{Source: "litebans", EntryId: entry,
+		Kind: kind, Classification: c, BanStartUnixMs: uint64(time.Now().Add(-time.Hour).UnixMilli()), Permanent: true,
+		Executor: pb.ModerationLabel_EXECUTOR_STAFF}}}
+}
+
+func labels(out []outMsg) []outMsg {
+	var l []outMsg
+	for _, m := range out {
+		if m.label != nil {
+			l = append(l, m)
+		}
+	}
+	return l
+}
+
+// Moderation labels skip sessions and checks: they are forwarded to pe.labels.<tenant> for players the
+// worker never saw (offline, or on a proxy), are invalid without a source, entry or matching
+// classification, and are neither forwarded in warm mode nor for an erased player's late data.
+func TestModerationLabelsForwarded(t *testing.T) {
+	h := newHarness(t, nil)
+	srv := testkit.NewServerID()
+	proxy := origin(srv, pb.Platform_PLATFORM_VELOCITY)
+	p := testkit.NewPlayer("offline")
+	cheat := labelEvent(p, 4521, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT)
+	out := h.send(proxy, 1, false, cheat)
+	ls := labels(out)
+	if len(ls) != 1 || len(out) != 1 {
+		t.Fatalf("label out %+v", out)
+	}
+	if ls[0].subject != "pe.labels."+testTenant || ls[0].msgID != stream.LabelRecordMsgID(testTenant, "litebans", 4521, int32(pb.ModerationLabel_KIND_BAN_ADDED)) {
+		t.Fatalf("subject %s msg id %s", ls[0].subject, ls[0].msgID)
+	}
+	rec := ls[0].label
+	if !proto.Equal(rec.Label, cheat.GetLabel()) || string(rec.Player) != string(p.UUID) || rec.Origin.GetServerId() != srv || rec.GatewayRecvUnixUs == 0 {
+		t.Fatalf("record %+v", rec)
+	}
+	if len(h.eng.proxies) != 0 || len(h.eng.sessions) != 0 || len(h.eng.buffers) != 0 {
+		t.Fatal("a label must not create, touch or wait for sessions")
+	}
+
+	// A backend without the player's session forwards it at once (nothing buffered or dropped).
+	backend := origin(testkit.NewServerID(), pb.Platform_PLATFORM_PAPER)
+	legit := labelEvent(p, 4521, pb.ModerationLabel_KIND_BAN_REMOVED, pb.ModerationLabel_CLASSIFICATION_LEGIT)
+	if ls := labels(h.send(backend, 1, false, legit)); len(ls) != 1 || ls[0].label.Label.GetKind() != pb.ModerationLabel_KIND_BAN_REMOVED {
+		t.Fatalf("backend label %+v", ls)
+	}
+	if _, n := h.eng.counts(); n != 0 {
+		t.Fatalf("label buffered (%d)", n)
+	}
+	before := dropCount(t, h, "invalid_label")
+	bad := []*pb.Event{
+		labelEvent(p, 0, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT),
+		labelEvent(p, 1, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_LEGIT),
+		labelEvent(p, 2, pb.ModerationLabel_KIND_BAN_REMOVED, pb.ModerationLabel_CLASSIFICATION_CHEAT),
+		labelEvent(p, 3, pb.ModerationLabel_KIND_UNSPECIFIED, pb.ModerationLabel_CLASSIFICATION_CHEAT),
+		{TimeUs: p.TimeUs, Kind: cheat.Kind}, // no player
+	}
+	noSource := labelEvent(p, 5, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT)
+	noSource.GetLabel().Source = ""
+	badSource := labelEvent(p, 6, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT)
+	badSource.GetLabel().Source = "lite bans:*"
+	noStart := labelEvent(p, 7, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT)
+	noStart.GetLabel().BanStartUnixMs = 0
+	bad = append(bad, noSource, badSource, noStart)
+	if out := h.send(backend, 2, false, bad...); len(out) != 0 {
+		t.Fatalf("invalid labels forwarded: %+v", out)
+	}
+	if n := dropCount(t, h, "invalid_label") - before; n != float64(len(bad)) {
+		t.Fatalf("invalid_label drops %v, want %d", n, len(bad))
+	}
+	// A label next to gameplay events of an online player leaves the session alone.
+	q := testkit.NewPlayer("online")
+	h.send(backend, 3, false, q.Join(), q.State())
+	q.Advance(time.Second)
+	out = h.send(backend, 4, false, labelEvent(q, 9, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT),
+		flag(q, "movement.fly", 1))
+	if len(labels(out)) != 1 || len(signals(out)) != 1 {
+		t.Fatalf("label beside gameplay: %+v", out)
+	}
+	if out := h.send(backend, 5, true, labelEvent(q, 10, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT)); len(out) != 0 {
+		t.Fatalf("warm mode forwarded %+v", out)
+	}
+	h.era[testTenant+"/"+identity.UUID(q.UUID).String()] = time.Now().Add(time.Second)
+	if out := h.send(backend, 6, false, labelEvent(q, 11, pb.ModerationLabel_KIND_BAN_ADDED, pb.ModerationLabel_CLASSIFICATION_CHEAT)); len(out) != 0 {
+		t.Fatalf("label of an erased player forwarded: %+v", out)
+	}
+}
+
+func dropCount(t *testing.T, h *harness, reason string) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := h.env.m.Drops.WithLabelValues(reason).Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	return m.GetCounter().GetValue()
+}

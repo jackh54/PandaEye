@@ -183,6 +183,7 @@ func (s *Service) Run(ctx context.Context) error {
 	g.Go(func() error { return s.runMetering(gctx) })
 	g.Go(func() error { return s.runJanitor(gctx) })
 	g.Go(func() error { return s.runBackups(gctx) })
+	g.Go(func() error { return s.runLabels(gctx) })
 	return g.Wait()
 }
 
@@ -332,6 +333,7 @@ func (s *Service) routes() http.Handler {
 
 	h("GET /api/v1/stats/overview", accRead, s.handleOverview)
 	h("GET /api/v1/stats/latency", accRead, s.handleLatency)
+	h("GET /api/v1/stats/litebans", accRead, s.handleLiteBansStats)
 	h("GET /api/v1/usage", accRead, s.handleUsage)
 
 	h("GET /api/v1/apikeys", accOwner, s.handleListAPIKeys)

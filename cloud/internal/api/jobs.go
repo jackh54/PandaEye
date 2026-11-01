@@ -215,6 +215,7 @@ func (s *Service) janitorOnce(ctx context.Context, now time.Time) error {
 	}
 	s.log.Info("janitor finished", "tenants", len(ids), "deleted", totals, "tombstones_deleted", n)
 	s.logStoreSize(ctx)
+	s.logAgreement(ctx, ids, now)
 	return errors.Join(errs...)
 }
 

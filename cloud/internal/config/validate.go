@@ -116,6 +116,13 @@ func (c *Config) Validate() error {
 		bad("PE_DIGEST_DIR needs a directory of its own, not PE_FEATURES_DIR")
 	}
 
+	if c.Labels.Lookback < time.Hour || c.Labels.Lookback > 30*24*time.Hour {
+		bad("PE_LABELS_LOOKBACK must be between 1h and 30d")
+	}
+	if c.Labels.Window < time.Minute || c.Labels.Window > c.Labels.Lookback {
+		bad("PE_LABELS_WINDOW must be at least 1m and at most PE_LABELS_LOOKBACK")
+	}
+
 	errs = append(errs, c.validateLicense()...)
 
 	for _, t := range []struct {

@@ -29,6 +29,11 @@ type VerdictStore interface {
 	// SetVerdictStatus changes the status to `to` if the current status is one of from (any status
 	// when from is empty). ErrNotFound when missing, ErrConflict when the status does not match.
 	SetVerdictStatus(ctx context.Context, tenantID, id, to string, from ...string) error
+	// DecideVerdict records a decision: status `to` and decided_by `by` (DecidedByStaff or a label
+	// source such as DecidedByLiteBans), if the current status is one of from (any status when from is
+	// empty) and, for a label source, the verdict has no staff decision. ErrNotFound when missing,
+	// ErrConflict when the status does not match or staff decided it.
+	DecideVerdict(ctx context.Context, tenantID, id, to, by string, from ...string) error
 	// VerdictCounts counts verdicts created since `since` by action and category.
 	VerdictCounts(ctx context.Context, tenantID string, since time.Time) ([]VerdictCount, error)
 	// PurgeVerdicts deletes verdicts created before `before`, except those whose ban is still active

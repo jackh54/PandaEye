@@ -48,6 +48,7 @@ tested against it.
 | `POST /api/v1/public/appeals` | `{verdict_id, appeal_code, message, contact}` | 202 `{ok: true}` (same response for unknown ids or wrong codes) |
 | `GET /api/v1/stats/overview` | | `{last_24h: {by_action: {alert: n, ...}, by_category: {HEURISTICS: n, ...}, shadow: n}, last_7d: {...}}` |
 | `GET /api/v1/stats/latency` | | `{last_1h: {p50_us, p95_us, p99_us, count}, last_24h: {...}, slo: {target_p95_ms, met}}` |
+| `GET /api/v1/stats/litebans` | | `{lookback_s, last_7d: agreement, last_30d: agreement}` |
 | `GET /api/v1/usage` | | `{plan, free_tier_limit, over_limit_since, days: [{day: "YYYY-MM-DD", peak_players}]}` |
 | `GET /api/v1/apikeys` | | `{api_keys: [{id, name, scopes, created_at, last_used_at, revoked_at}]}` |
 | `POST /api/v1/apikeys` | `{name, scopes}` | 201 `{id, name, scopes, created_at, key: "pe_<id>_<secret>"}` (key shown once) |
@@ -55,13 +56,19 @@ tested against it.
 | `GET /api/v1/checks` | | `{checks: [{id, enabled, overrides: {<name>: number}}]}` |
 | `PUT /api/v1/checks` | `{checks: [...]}` (full list; unknown ids are kept unchanged) | same shape |
 | `GET /api/v1/audit` | `limit, cursor` | `{entries: [{id, principal, action, target, detail, created_at}], next_cursor}` |
-| `GET /api/v1/export/labels` | `since, limit, cursor` | NDJSON, one label per line, oldest first, erased players excluded (`{action, category, checks, created_at, evidence, ...}`); a final `{"next_cursor": "..."}` line means more pages |
+| `GET /api/v1/export/labels` | `since, limit, cursor` | NDJSON, one label per line, oldest first, erased players excluded (`{id, tenant_id, player_uuid, verdict_id, label, source, window_start, window_end, created_at, category, action, score, checks, evidence}`; `source`: `confirmed`, `overturned`, `manual`, `litebans`, `litebans_unflagged` (no verdict)); a final `{"next_cursor": "..."}` line means more pages |
 | `GET /status` | | `{region, version, uptime_s, connected_servers, generated_at, probe_rtt: {p50_us, p95_us, p99_us, samples, window_s}, slo: {target_p95_ms, target_p99_ms, p95_met, p99_met, met}}` (`met` = both; same document the gateway serves, cached 30 s) |
 | `GET /healthz` | | 200 `{ok: true}`; 503 once shutdown began |
 
 `verdict` = `{id, server_id, server_name?, network_id, player_uuid, player_name, session_id, action, category,
-score, confidence, reason, checks: [string], shadow, status, supersedes, created_at, delivered_at, acked_at,
-executed, ack_note, clip_ids: [string], mitigations: [string], strength}`.
+score, confidence, reason, checks: [string], shadow, status, decided_by, supersedes, created_at, delivered_at,
+acked_at, executed, ack_note, clip_ids: [string], mitigations: [string], strength}`; `decided_by` is who confirmed
+or overturned it: `""` (nobody), `"staff"` (dashboard or API key) or `"litebans"` (a LiteBans ban or wrongful
+unban, which never replaces a staff decision).
+
+`agreement` = `{cheat_bans, players, flagged_before: {alert, mitigate, kick, ban}, not_flagged, median_lead_time_s
+(null without flagged players), would_kick_or_ban, would_kick_or_ban_banned, overturns, verdicts_overturned}`
+(ARCHITECTURE 5.8 "LiteBans labels"; aggregate counts only).
 
 `evidence` = `{score, confidence, leniency, thresholds: {alert, mitigate, kick, ban}, families: [{family,
 contribution, cap}], checks: [{check, contribution, cap, confidence, count}], signals: [{check, category,

@@ -133,6 +133,8 @@ it does not use.
 | `PE_FEATURES_RETENTION`, `PE_FEATURES_MAX_BYTES` | `90d`, `20GiB` | all | files whose hour ended longer ago are deleted (at most `180d`), then the oldest files beyond the byte cap (checked hourly and after each hour's compression). Disk: about 170 B per window compressed (measured on synthetic data), at most 2 880 windows a day per concurrently tracked player, so at most about 0.5 MB per tracked player and day (73 MB a day for 150 concurrent players), plus the current hour uncompressed (about 700 B per window). Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_DIGEST_DIR` | empty | worker, all | writes the check-health digest ([CHECKS.md 5](CHECKS.md#5-check-health-digest)) to this directory: one JSONL file per UTC hour of aggregate counts per check, server, client protocol and brand family, without player data (files 0640, directory 0750). Empty disables it. Use a directory of its own per process (not `PE_FEATURES_DIR`); `data/digests` on the hosted node. Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_DIGEST_RETENTION` | `30d` | worker, all | digest files whose hour ended longer ago are deleted (at start and hourly); at least `1h`. Disk: about 1 KB per world-interaction cell and 150 B per other cell, at most 2 048 cells (about 2 MB) an hour per process; a network of a few servers is expected at a few hundred cells an hour (estimate). Not in ARCHITECTURE 5.1 (implementation) |
+| `PE_LABELS_LOOKBACK` | `7d` | api, all | a LiteBans cheat ban confirms (a wrongful unban overturns) the player's verdicts created up to this long before the ban, and the agreement statistics count a KICK/BAN verdict as followed by a ban within it; `1h`..`30d` (8.9). Not in ARCHITECTURE 5.1 (implementation) |
+| `PE_LABELS_WINDOW` | `2h` | api, all | a LiteBans ban or wrongful unban of a player without a verdict in the lookback labels the player over this window before the ban (`litebans_unflagged`); `1m`..`PE_LABELS_LOOKBACK`. Not in ARCHITECTURE 5.1 (implementation) |
 | `PE_LICENSE_MODE` | `static` | gateway, api | `static` or `pandascript` |
 | `PE_LICENSE_URL`, `PE_LICENSE_PRODUCT` | empty, `pandaeye` | gateway, api | pandascript licence worker, plain `https://` URL only |
 | `PE_LICENSE_PEPPER` | generated in `all` | gateway, api | HMAC key of licence lookups, >= 32 bytes, required for gateway and api outside `all`, identical everywhere. Never rotate it (8.6) |
@@ -190,7 +192,7 @@ Secrets summary (generate with `openssl rand -hex 32`; `deploy/scripts/gen-env.s
   every non-loopback client. The shipped configs set `max_payload: 8388608`.
 - Streams and buckets (ARCHITECTURE 5.4): `PE_EVENTS` (`pe.events.*`, file, limits, `PE_EVENTS_MAX_AGE` /
   `PE_EVENTS_MAX_BYTES`, discard old, duplicates 10 min), `PE_SIGNALS` (`pe.signals.*`, 7 d, duplicates
-  10 min), `PE_VERDICTS` (`pe.verdicts.*`, `pe.acks.*`, 30 d, duplicates 1 h), KV `PE_LEASES` (TTL 15 s),
+  10 min), `PE_VERDICTS` (`pe.verdicts.*`, `pe.acks.*`, `pe.labels.*`, 30 d, duplicates 1 h), KV `PE_LEASES` (TTL 15 s),
   `PE_CONNECTIONS` (TTL 30 s), `PE_SERVERS`, `PE_TENANTS`, `PE_META` (no TTL), plus `PE_ERASURES`
   (erasure tombstones, TTL 31 d; the spec does not name this bucket, the name comes from
   `cloud/internal/stream`). Core subject `pe.out.<tenant>.<server>`. All with `PE_NATS_REPLICAS` replicas.
@@ -232,7 +234,8 @@ ARCHITECTURE 5.4 summarises the data plane as gateway pub `pe.events.>` / sub `p
 flows of 5.3-5.13 and the implementation also need: the gateway publishes `AckRecord` on
 `pe.acks.<tenant>` (5.3); every process provisions the streams and buckets and creates or reads
 `PE_META` when it connects; the api writes erasure tombstones that workers and the verdict service watch
-(5.13); and every user receives replies on `_INBOX.>`. Data-plane tokens are narrowed to the subject
+(5.13); workers forward LiteBans labels on `pe.labels.<tenant>`, which the api consumes from `PE_VERDICTS`
+(5.8); and every user receives replies on `_INBOX.>`. Data-plane tokens are narrowed to the subject
 shapes actually used (`pe.events.*` rather than `pe.events.>`). The authoritative list is the table in
 [`deploy/nats/gen-auth/main.go`](../deploy/nats/gen-auth/main.go); `make -C deploy nats-permissions`
 prints it.
@@ -240,9 +243,9 @@ prints it.
 | User | Publish (data plane) | Subscribe | Consumes | KV read + write | KV read |
 |---|---|---|---|---|---|
 | `pe-gateway` | `pe.events.*`, `pe.acks.*` | `_INBOX.>`, `pe.out.>` | - | `PE_CONNECTIONS`, `PE_SERVERS`, `PE_META` | `PE_TENANTS` |
-| `pe-worker` | `pe.signals.*` | `_INBOX.>` | `PE_EVENTS` | `PE_LEASES`, `PE_META` | `PE_TENANTS`, `PE_ERASURES` |
+| `pe-worker` | `pe.signals.*`, `pe.labels.*` | `_INBOX.>` | `PE_EVENTS` | `PE_LEASES`, `PE_META` | `PE_TENANTS`, `PE_ERASURES` |
 | `pe-verdict` | `pe.verdicts.*`, `pe.out.*.*` | `_INBOX.>` | `PE_SIGNALS`, `PE_VERDICTS` | `PE_LEASES`, `PE_META` | `PE_TENANTS`, `PE_CONNECTIONS`, `PE_ERASURES` |
-| `pe-api` | `pe.out.*.*`, `pe.verdicts.*` | `_INBOX.>` | - | `PE_TENANTS`, `PE_LEASES`, `PE_ERASURES`, `PE_META` | `PE_CONNECTIONS`, `PE_SERVERS` |
+| `pe-api` | `pe.out.*.*`, `pe.verdicts.*` | `_INBOX.>` | `PE_VERDICTS` (label consumer) | `PE_TENANTS`, `PE_LEASES`, `PE_ERASURES`, `PE_META` | `PE_CONNECTIONS`, `PE_SERVERS` |
 | `pe-replay` | - | `_INBOX.>` | `PE_EVENTS` (plus `STREAM.MSG.GET`) | `PE_META` | - |
 | `pe-admin` | `>` | `>` | all | all | all |
 
@@ -676,6 +679,34 @@ With LiteBans on a backend or the proxy, PandaEye sends its cheating bans and th
   default reason contains the appeal URL, so they would label PandaEye's own verdicts. A backfill on every
   restart is harmless (the cloud de-duplicates); `backfill-days: 0` turns it off.
 
+In the cloud (ARCHITECTURE 5.8 "LiteBans labels"), the api's label consumer (lease `labels`) applies each ban
+and wrongful unban once, whichever proxy or backend sent it:
+
+- A cheat ban confirms the player's verdicts of the `PE_LABELS_LOOKBACK` (7 d) before it, shadow ones
+  included, as a staff confirm would (status, `litebans` cheat label, reputation if eligible); a wrongful unban
+  overturns them as a staff overturn would, so an executed BAN gets its UNBAN and the open session an
+  UNMITIGATE. Without such a verdict the player is labelled over the `PE_LABELS_WINDOW` (2 h) before the ban
+  (`litebans_unflagged`, missed cheaters for recall and ML). The wrongful unban replaces the ban's cheat
+  labels. A staff decision on the dashboard (or with an API key) always wins: LiteBans never changes a
+  verdict staff confirmed or overturned, and staff can take over one LiteBans decided (confirm it again, or
+  overturn it; an overturn stays final either way).
+- The dashboard marks such verdicts "LiteBans: confirmed" / "LiteBans: overturned" and the overview's
+  "Accuracy (LiteBans)" card (`GET /api/v1/stats/litebans`) shows, for the last 7 and 30 days, the cheat bans,
+  how many of their players PandaEye flagged first (by highest action) and the median lead time, how many
+  players PandaEye would have kicked or banned got a cheat ban within the lookback, and the wrongful unbans.
+- The janitor logs the same numbers once a day per tenant with LiteBans data (`litebans agreement`, 9.3).
+  `pandaeye_worker_labels_total` counts the labels the workers forwarded; `pandaeye_dropped_total{reason=
+  "invalid_label"}` the malformed ones. Every applied ban and unban is in the audit log (`litebans.cheat`,
+  `litebans.legit`, principal `litebans`, with the verdicts it decided).
+- External NATS with per-role creds: the worker now publishes `pe.labels.*` and the api consumes `PE_VERDICTS`
+  (5.3), so issue new creds for both before the upgrade (`go run . -out ../auth -reissue pe-worker,pe-api` in
+  `deploy/nats/gen-auth`, 8.6).
+- Upgrade the cloud before (or together with) the plugins: a cloud without the label consumer drops the labels
+  (`unknown_session` on backends). Restarting the plugins afterwards resends the backfill. The consumer starts
+  2 min back on its first start, like every consumer (PROTOCOL 14.4). The release adds schema version 2
+  (`moderation_labels`, `verdicts.decided_by`; `all` migrates at start, split deployments run `pandaeye
+  migrate` first); it marks every verdict confirmed or overturned before it as a staff decision.
+
 ## 9. Monitoring
 
 ### 9.1 Metrics
@@ -695,6 +726,7 @@ PandaEye metrics (`/metrics` on `PE_METRICS_LISTEN`; no tenant or server labels)
 | `pandaeye_leases_held`, `pandaeye_lease_changes_total` | `group`; `group`, `event` (`acquired`, `released`, `lost`) | partition and singleton leases |
 | `pandaeye_signals_total` | `check` | signals emitted; for `ml.<model>` with `PE_ML_POINTS=0`, flagged windows (counted, not emitted) |
 | `pandaeye_worker_ml_model_loaded` | - | 1 while an ML model scores windows, 0 when `PE_ML_MODEL` is unset or the model did not load |
+| `pandaeye_worker_labels_total` | - | moderation labels (LiteBans bans and wrongful unbans) the workers forwarded to the api (8.9) |
 | `pandaeye_worker_ml_p_cheat` | - | histogram of the model's P(cheat) over every scored window |
 | `pandaeye_verdicts_total` | `action`, `shadow` | verdicts produced |
 | `pandaeye_dropped_total` | `reason` (overflow, stale, erased, ...) | anything dropped |
@@ -743,6 +775,11 @@ Logs are JSON lines on stderr. These lines carry diagnostics without personal da
   pages freed by deletions, reused before the file grows), `wal_bytes` (sqlite: the `-wal` file, reused but
   not shrunk after a checkpoint) and per table `rows` and `table_bytes` (with its indexes). Two days'
   lines show which table grows.
+- `litebans agreement` (api, info, once a day after the janitor, two lines per tenant with LiteBans cheat bans
+  or wrongful unbans in the last 30 days: `window` `7d` and `30d`): `cheat_bans`, `players`, `flagged_alert`
+  ... `flagged_ban` (players by PandaEye's highest action in the lookback before their ban), `not_flagged`,
+  `median_lead_time_s` (-1 = none), `would_kick_or_ban`, `would_kick_or_ban_banned`, `overturns`,
+  `verdicts_overturned`. Aggregate counts and the tenant id only (8.9).
 
 ## 10. Security checklist
 

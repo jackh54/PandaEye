@@ -10,6 +10,7 @@
   "clip_ids": [],
   "confidence": 0.93,
   "created_at": "2025-06-15T08:00:00Z",
+  "decided_by": "staff",
   "delivered_at": null,
   "executed": false,
   "id": "0c000000-0000-5000-8000-000000000003",

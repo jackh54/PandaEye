@@ -136,25 +136,77 @@ func (s *Service) handleConfirm(w http.ResponseWriter, r *http.Request, rc *reqC
 	if corrective(v.Action) {
 		return conflict("%s verdicts cannot be confirmed", actionName(v.Action))
 	}
-	if err := s.d.Store.SetVerdictStatus(ctx, v.TenantID, v.ID, store.StatusConfirmed,
-		store.StatusOpen, store.StatusConfirmed, store.StatusExpired, store.StatusSuperseded); err != nil {
-		if errors.Is(err, store.ErrConflict) {
-			return conflict("an overturned verdict cannot be confirmed")
-		}
-		return err
+	contrib, err := s.confirm(ctx, v, staffDecision(rc.p.name, note), rc.now)
+	if errors.Is(err, store.ErrConflict) {
+		return conflict("an overturned verdict cannot be confirmed")
 	}
-	from, to := signalWindow(v)
-	if err := s.insertLabel(ctx, v, store.LabelCheat, store.SourceConfirmed, from, to, rc.now); err != nil {
-		return err
-	}
-	// Race-safe with the store writer's ack path: the contribution is inserted only while the
-	// verdict is an executed, confirmed, eligible BAN of an opted-in, trusted tenant.
-	contrib, err := verdict.ContributeReputation(ctx, s.d.Store, v.TenantID, v.ID, rc.now)
 	if err != nil {
 		return err
 	}
 	s.auditRC(r, rc, "verdict.confirm", v.ID, map[string]any{"note": note, "reputation_contribution": contrib})
 	return s.writeVerdict(w, r, rc, v.ID)
+}
+
+// decision is who confirms or overturns a verdict: staff (the dashboard or an API key) or a moderation
+// label (a LiteBans ban or wrongful unban). A label never replaces a staff decision (store.DecideVerdict),
+// while staff take over a label's decision and its label.
+type decision struct {
+	by        string // store.DecidedByStaff or store.DecidedByLiteBans
+	principal string // the overturned ban's overturned_by: "user:<name>", "apikey:<id>" or "litebans"
+	note      string
+	source    string // the label source; "" = staff (confirmed / overturned)
+}
+
+func staffDecision(principal, note string) decision {
+	return decision{by: store.DecidedByStaff, principal: principal, note: note}
+}
+
+// liteBansDecision is the decision of a LiteBans label; its note (on an overturned ban) names the ban.
+func liteBansDecision(m *store.ModerationLabel) decision {
+	return decision{by: store.DecidedByLiteBans, principal: liteBansPrincipal, note: "LiteBans ban #" + m.EntryID, source: store.SourceLiteBans}
+}
+
+// labelSource is the source of the cheat or legit label the decision writes.
+func (d decision) labelSource(label string) string {
+	switch {
+	case d.source != "":
+		return d.source
+	case label == store.LabelCheat:
+		return store.SourceConfirmed
+	}
+	return store.SourceOverturned
+}
+
+// unbanReason and unmitigateReason are the reasons of the corrective verdicts an overturn issues.
+func (d decision) unbanReason() string {
+	if d.by == store.DecidedByLiteBans {
+		return "Ban lifted as wrong in LiteBans"
+	}
+	return "Ban overturned by staff"
+}
+
+func (d decision) unmitigateReason() string {
+	if d.by == store.DecidedByLiteBans {
+		return "Verdict overturned by a LiteBans unban"
+	}
+	return "Verdict overturned by staff"
+}
+
+// confirm marks v confirmed by d, labels the player cheat for the signal window and adds v's
+// reputation contribution when it is eligible. store.ErrConflict when v is overturned or, for a label's
+// decision, staff decided it. Callers reject corrective verdicts first.
+func (s *Service) confirm(ctx context.Context, v *store.Verdict, d decision, now time.Time) (bool, error) {
+	if err := s.d.Store.DecideVerdict(ctx, v.TenantID, v.ID, store.StatusConfirmed, d.by,
+		store.StatusOpen, store.StatusConfirmed, store.StatusExpired, store.StatusSuperseded); err != nil {
+		return false, err
+	}
+	from, to := signalWindow(v)
+	if err := s.insertLabel(ctx, v, store.LabelCheat, d.labelSource(store.LabelCheat), from, to, now); err != nil {
+		return false, err
+	}
+	// Race-safe with the store writer's ack path: the contribution is inserted only while the
+	// verdict is an executed, confirmed, eligible BAN of an opted-in, trusted tenant.
+	return verdict.ContributeReputation(ctx, s.d.Store, v.TenantID, v.ID, now)
 }
 
 func (s *Service) writeVerdict(w http.ResponseWriter, r *http.Request, rc *reqCtx, id string) error {
@@ -179,7 +231,7 @@ func (s *Service) handleOverturn(w http.ResponseWriter, r *http.Request, rc *req
 	if err != nil {
 		return err
 	}
-	res, err := s.overturn(r.Context(), v, rc.p.name, note, rc.now)
+	res, err := s.overturn(r.Context(), v, staffDecision(rc.p.name, note), rc.now)
 	if err != nil {
 		return err
 	}
@@ -198,17 +250,17 @@ func (o overturnResult) detail(note string) map[string]any {
 		"unmitigate_verdict_id": o.UnmitigateVerdictID, "reputation_removed": o.ReputationRemoved}
 }
 
-// overturn marks v overturned (idempotent: a retry completes what a failed attempt left), labels
+// overturn marks v overturned by d (idempotent: a retry completes what a failed attempt left), labels
 // the player legit for the signal window, removes v's reputation contribution and its cheat label,
 // sends an UNBAN to the server that executed v's ban (if it was executed) and always an UNMITIGATE
-// to the player's open session.
-func (s *Service) overturn(ctx context.Context, v *store.Verdict, by, note string, now time.Time) (overturnResult, error) {
+// to the player's open session. store.ErrConflict when d is a label's and staff decided v.
+func (s *Service) overturn(ctx context.Context, v *store.Verdict, d decision, now time.Time) (overturnResult, error) {
 	var res overturnResult
 	if corrective(v.Action) {
 		return res, conflict("%s verdicts cannot be overturned", actionName(v.Action))
 	}
-	if v.Status != store.StatusOverturned {
-		if err := s.d.Store.SetVerdictStatus(ctx, v.TenantID, v.ID, store.StatusOverturned); err != nil {
+	if v.Status != store.StatusOverturned || v.DecidedBy != d.by {
+		if err := s.d.Store.DecideVerdict(ctx, v.TenantID, v.ID, store.StatusOverturned, d.by); err != nil {
 			return res, err
 		}
 	}
@@ -216,7 +268,7 @@ func (s *Service) overturn(ctx context.Context, v *store.Verdict, by, note strin
 		return res, err
 	}
 	from, to := signalWindow(v)
-	if err := s.insertLabel(ctx, v, store.LabelLegit, store.SourceOverturned, from, to, now); err != nil {
+	if err := s.insertLabel(ctx, v, store.LabelLegit, d.labelSource(store.LabelLegit), from, to, now); err != nil {
 		return res, err
 	}
 	n, err := s.d.Store.RemoveReputationContrib(ctx, v.TenantID, v.ID)
@@ -233,20 +285,20 @@ func (s *Service) overturn(ctx context.Context, v *store.Verdict, by, note strin
 		case err != nil:
 			return res, err
 		case ban.Active || ban.UnbanVerdictID != "":
-			unban, err := s.issueCorrective(ctx, v, pb.Action_ACTION_UNBAN, ban.ServerID, "Ban overturned by staff", now)
+			unban, err := s.issueCorrective(ctx, v, pb.Action_ACTION_UNBAN, ban.ServerID, d.unbanReason(), now)
 			if err != nil {
 				return res, err
 			}
 			res.UnbanVerdictID = unban.ID
 			if ban.Active {
-				err := s.d.Store.OverturnBan(ctx, v.TenantID, v.ID, store.BanOverturn{By: by, Note: note, UnbanVerdictID: unban.ID, At: now})
+				err := s.d.Store.OverturnBan(ctx, v.TenantID, v.ID, store.BanOverturn{By: d.principal, Note: d.note, UnbanVerdictID: unban.ID, At: now})
 				if err != nil && !errors.Is(err, store.ErrConflict) {
 					return res, err
 				}
 			}
 		}
 	}
-	unmit, err := s.issueCorrective(ctx, v, pb.Action_ACTION_UNMITIGATE, s.sessionServer(ctx, v), "Verdict overturned by staff", now)
+	unmit, err := s.issueCorrective(ctx, v, pb.Action_ACTION_UNMITIGATE, s.sessionServer(ctx, v), d.unmitigateReason(), now)
 	if err != nil {
 		return res, err
 	}
@@ -338,13 +390,20 @@ func (s *Service) issueCorrective(ctx context.Context, parent *store.Verdict, ac
 // labelNamespace makes label ids deterministic per (verdict, label), so retries insert one label.
 var labelNamespace = uuid.MustParse("1d0f3c52-7a4e-5b8f-9c21-3e6a8b4d2f10")
 
+// insertLabel writes v's label once. A staff label takes over the verdict's LiteBans label of the same
+// value (staff decide over LiteBans); a LiteBans label never replaces an existing one.
 func (s *Service) insertLabel(ctx context.Context, v *store.Verdict, label, source string, from, to, now time.Time) error {
 	l := &store.Label{
 		ID:       uuid.NewSHA1(labelNamespace, []byte(v.TenantID+"|"+v.ID+"|"+label)).String(),
 		TenantID: v.TenantID, PlayerUUID: v.PlayerUUID, VerdictID: v.ID, Label: label, Source: source,
 		WindowStart: from, WindowEnd: to, CreatedAt: now,
 	}
-	err := s.d.Store.InsertLabel(ctx, l)
+	var err error
+	if source == store.SourceLiteBans {
+		err = s.d.Store.InsertLabel(ctx, l)
+	} else {
+		err = s.d.Store.ReplaceLabel(ctx, l, store.SourceLiteBans)
+	}
 	if errors.Is(err, store.ErrConflict) {
 		return nil
 	}

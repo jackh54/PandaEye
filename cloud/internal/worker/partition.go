@@ -268,7 +268,11 @@ func (p *publisher) take() ([]*unit, []stream.Message) {
 					sig.ClipId = m.clip.clip.ID
 				}
 			}
-			data, err := proto.Marshal(m.env)
+			var payload proto.Message = m.env
+			if m.label != nil {
+				payload = m.label
+			}
+			data, err := proto.Marshal(payload)
 			if err != nil {
 				p.log.Error("signal encoding failed", "msg_id", m.msgID, "err", err)
 				continue
