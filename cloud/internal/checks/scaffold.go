@@ -118,7 +118,7 @@ func (d *scaffoldDetector) judge(c *Ctx, a *blockAction, cand *blockCandidates) 
 			mismatch := best > c.Param(idScaffoldCursor, "max_angle", 3)
 			d.cursor.push(mismatch)
 			o := obs
-			o.Check, o.Value, o.Failed = idScaffoldCursor, best, mismatch
+			o.Check, o.Value, o.Failed, o.RayHit = idScaffoldCursor, best, mismatch, !miss
 			if n := d.cursor.count(int(c.Param(idScaffoldCursor, "of", 10))); mismatch && float64(n) >= c.Param(idScaffoldCursor, "need", 3) {
 				d.cursor.reset()
 				o.Emitted = c.publish(Emission{Check: idScaffoldCursor, Points: 5, Confidence: 0.8, EventTimeUs: a.eventUs,
@@ -211,6 +211,8 @@ type blockAction struct {
 	reach    float64
 	prevFeet geom.Vec3 // position before the last one (eyePath), when hasPrev
 	hasPrev  bool
+	action   pb.BlockDig_Action // dig.ray: START or FINISH
+	gapUs    int64              // time since the queue's previous judged action, -1 for the first (set when judged)
 }
 
 func (a *blockAction) reachOr(v *View) float64 {
@@ -230,6 +232,9 @@ const blockActionWaitUs = 100_000
 type blockQueue struct {
 	items [blockQueueCap]blockAction
 	n     int
+	// lastUs is the time of the last judged action, when judged (the digest's gap)
+	lastUs int64
+	judged bool
 }
 
 // add queues a, filling in the event fields, unless the action must be skipped (CHECKS.md 2.1: not
@@ -295,6 +300,11 @@ func (q *blockQueue) handle(c *Ctx, ev *pb.Event, judge func(*Ctx, *blockAction,
 		}
 		var cand blockCandidates
 		cand.build(v, &a, m)
+		a.gapUs = -1
+		if q.judged {
+			a.gapUs = max(a.atUs-q.lastUs, 0)
+		}
+		q.lastUs, q.judged = a.atUs, true
 		judge(c, &a, &cand)
 	}
 	q.n = keep
@@ -306,6 +316,7 @@ type blockCandidates struct {
 	nEye int
 	rot  [5]geom.Rotation
 	nRot int
+	r1   geom.Rotation // R1 (R0 without one)
 }
 
 func (b *blockCandidates) eyes() []geom.Vec3 { return b.eye[:b.nEye] }
@@ -363,6 +374,7 @@ func (b *blockCandidates) build(v *View, a *blockAction, next *Move) {
 		b.rot[b.nRot] = r
 		b.nRot++
 	}
+	b.r1 = r1
 }
 
 // rayHits reports whether some (eye, rotation) ray hits box within maxDist.
@@ -461,13 +473,19 @@ func boxEdges(box geom.AABB) [12][2]geom.Vec3 {
 	return out
 }
 
-// observation returns what every observation of the action shares, when the digest records (counting the
-// distinct candidates takes a few hundred comparisons).
+// observation returns what every observation of the action shares (its candidates and context), when the
+// digest records (counting the distinct candidates takes a few hundred comparisons).
 func (b *blockCandidates) observation(c *Ctx, a *blockAction) Observation {
 	if !c.observing() {
 		return Observation{}
 	}
-	return Observation{Pose: a.pose, EyePath: a.hasPrev, Eyes: b.distinctEyes(), Rotations: b.distinctRots()}
+	o := Observation{Pose: a.pose, EyePath: a.hasPrev, Eyes: b.distinctEyes(), Rotations: b.distinctRots(),
+		Dist: a.eye.Dist(geom.BlockBox(a.block[0], a.block[1], a.block[2]).Center()), GapUs: a.gapUs, Face: a.face, Action: a.action}
+	o.Turn, _ = geom.AngleBetween(a.rot.Look(), b.r1.Look()) // exactly 0 when R1 is R0
+	if a.hasPrev {
+		o.Step = math.Hypot(a.eye.X-a.prevFeet.X, a.eye.Z-a.prevFeet.Z) // the feet share the eye's x and z
+	}
+	return o
 }
 
 // candidateTolerance: candidates closer than this (blocks, degrees) count once in the digest. A still

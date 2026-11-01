@@ -25,10 +25,11 @@ import (
 
 // Check-health digest (PE_DIGEST_DIR; CHECKS.md 5, OPERATIONS 3): hourly counts per cell of check, server,
 // client protocol and brand family, for the world-interaction checks also tick client, pose and ping
-// class. Each partition engine counts into its own shard without locking; housekeeping hands the shard to
-// the process's writer every second without blocking (a full queue drops it), and the writer appends each
-// hour to digest-YYYYMMDDTHHZ.jsonl a minute after the hour ended. Nothing about a player is written: no
-// name, UUID, session id, IP address, coordinates or check info text.
+// class, and within those cells per bucket of the actions' context (checks.DigestContext). Each partition
+// engine counts into its own shard without locking; housekeeping hands the shard to the process's writer
+// every second without blocking (a full queue drops it), and the writer appends each hour to
+// digest-YYYYMMDDTHHZ.jsonl a minute after the hour ended. Nothing about a player is written: no name,
+// UUID, session id, IP address, coordinates or check info text.
 const (
 	digestMaxCells  = 2048             // cells per hour (and per shard flush); more go to their check's overflow cell
 	digestQueue     = 256              // shard flushes waiting for the writer
@@ -56,7 +57,10 @@ type digestKey struct {
 type digestCounts struct {
 	evaluations, failures, emissions uint64
 	eyePath, eyes, rotations         uint64
+	cursorOnly                       uint64
 	hist                             [checks.DigestBuckets]uint64
+	// evaluations and failures per context bucket
+	ctxEvaluations, ctxFailures [checks.NumDigestContexts][checks.DigestContextBuckets]uint64
 }
 
 func (c *digestCounts) add(o *digestCounts) {
@@ -66,8 +70,15 @@ func (c *digestCounts) add(o *digestCounts) {
 	c.eyePath += o.eyePath
 	c.eyes += o.eyes
 	c.rotations += o.rotations
+	c.cursorOnly += o.cursorOnly
 	for i, n := range o.hist {
 		c.hist[i] += n
+	}
+	for d := range o.ctxEvaluations {
+		for i := range o.ctxEvaluations[d] {
+			c.ctxEvaluations[d][i] += o.ctxEvaluations[d][i]
+			c.ctxFailures[d][i] += o.ctxFailures[d][i]
+		}
 	}
 }
 
@@ -187,6 +198,16 @@ func (s *digestShard) Observe(v *checks.View, o checks.Observation) {
 	c.rotations += uint64(max(o.Rotations, 0))
 	if edges := checks.DigestEdges(o.Check); edges != nil && !math.IsNaN(o.Value) {
 		c.hist[checks.DigestBucket(edges, o.Value)]++
+	}
+	if o.Failed && o.RayHit {
+		c.cursorOnly++
+	}
+	for _, d := range checks.DigestContexts(o.Check) {
+		b := d.Bucket(&o)
+		c.ctxEvaluations[d][b]++
+		if o.Failed {
+			c.ctxFailures[d][b]++
+		}
 	}
 }
 
@@ -441,7 +462,7 @@ func (w *digestWriter) logErr(msg string, err error) {
 }
 
 // digestLine is one line of a digest file. Cells of checks without observations have no evaluations,
-// candidates or histogram; overflow cells have no dimensions.
+// candidates, histogram or context; overflow cells have no dimensions.
 type digestLine struct {
 	Hour        string    `json:"hour"`
 	Check       string    `json:"check"`
@@ -460,6 +481,16 @@ type digestLine struct {
 	Rotations   *uint64   `json:"rotations,omitempty"`
 	LE          []float64 `json:"le,omitempty"`
 	Hist        []uint64  `json:"hist,omitempty"`
+	CursorOnly  *uint64   `json:"cursor_only,omitempty"`
+	// Context is keyed by the checks.DigestContext names.
+	Context map[string]digestContextLine `json:"context,omitempty"`
+}
+
+// digestContextLine breaks a cell's evaluations and failures down by one context of its actions.
+type digestContextLine struct {
+	Buckets     []string `json:"buckets"`
+	Evaluations []uint64 `json:"evaluations"`
+	Failures    []uint64 `json:"failures"`
 }
 
 // digestLines formats the cells of an hour, sorted by their dimensions.
@@ -491,6 +522,17 @@ func digestLines(hour int64, cells digestCells) ([]byte, error) {
 			l.Evaluations, l.Failures, l.EyePath, l.Eyes, l.Rotations = &c.evaluations, &c.failures, &c.eyePath, &c.eyes, &c.rotations
 			if edges := checks.DigestEdges(k.check); edges != nil {
 				l.LE, l.Hist = edges, c.hist[:len(edges)+1]
+			}
+			if checks.DigestCursorOnly(k.check) {
+				l.CursorOnly = &c.cursorOnly
+			}
+			if ctx := checks.DigestContexts(k.check); ctx != nil {
+				l.Context = make(map[string]digestContextLine, len(ctx))
+				for _, d := range ctx {
+					b := d.Buckets()
+					l.Context[d.String()] = digestContextLine{Buckets: b,
+						Evaluations: c.ctxEvaluations[d][:len(b)], Failures: c.ctxFailures[d][:len(b)]}
+				}
 			}
 		}
 		if err := enc.Encode(l); err != nil {

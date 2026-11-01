@@ -3,6 +3,7 @@ package checks_test
 import (
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jackh54/PandaEye/cloud/internal/checks"
@@ -283,5 +284,181 @@ func TestDigestEmissionsAndSilence(t *testing.T) {
 	}
 	if len(silent.obs) != 0 || len(silent.emitted) != 0 {
 		t.Fatalf("silent context recorded %d observations", len(silent.obs))
+	}
+}
+
+// Bucket boundaries of every context: dist, gap and speed include their lower bound, turn its upper one
+// (only no turn is 0); the first action counts as a long gap, no eye path as its own speed bucket.
+func TestDigestContextBuckets(t *testing.T) {
+	names := map[string]string{
+		"dist": "<1.5 1.5-3 3-4.5 >=4.5", "turn": "0 0-5 5-30 >30", "gap": "<60 60-250 250-1000 >=1000",
+		"speed": "none <0.05 0.05-0.2 0.2-0.4 >=0.4", "face": "up down side other", "action": "start finish",
+	}
+	for d := range checks.NumDigestContexts {
+		if b := d.Buckets(); strings.Join(b, " ") != names[d.String()] || len(b) > checks.DigestContextBuckets {
+			t.Errorf("context %d %q: buckets %q", d, d, b)
+		}
+	}
+	type tc struct {
+		v    float64
+		want int
+	}
+	check := func(d checks.DigestContext, set func(*checks.Observation, float64), cases ...tc) {
+		t.Helper()
+		for _, c := range cases {
+			var o checks.Observation
+			set(&o, c.v)
+			if got := d.Bucket(&o); got != c.want || got >= len(d.Buckets()) {
+				t.Errorf("%s %v: bucket %d, want %d", d, c.v, got, c.want)
+			}
+		}
+	}
+	check(checks.DigestDist, func(o *checks.Observation, v float64) { o.Dist = v },
+		tc{0, 0}, tc{1.4999, 0}, tc{1.5, 1}, tc{2.9999, 1}, tc{3, 2}, tc{4.4999, 2}, tc{4.5, 3}, tc{60, 3})
+	check(checks.DigestTurn, func(o *checks.Observation, v float64) { o.Turn = v },
+		tc{0, 0}, tc{1e-9, 1}, tc{5, 1}, tc{5.0001, 2}, tc{30, 2}, tc{30.0001, 3}, tc{180, 3})
+	check(checks.DigestGap, func(o *checks.Observation, v float64) { o.GapUs = int64(v) },
+		tc{-1, 3}, tc{0, 0}, tc{59_999, 0}, tc{60_000, 1}, tc{249_999, 1}, tc{250_000, 2}, tc{999_999, 2}, tc{1_000_000, 3}, tc{3.6e9, 3})
+	check(checks.DigestSpeed, func(o *checks.Observation, v float64) { o.Step = v }, // no eye path, whatever the step
+		tc{0, 0}, tc{0.3, 0})
+	check(checks.DigestSpeed, func(o *checks.Observation, v float64) { o.EyePath, o.Step = true, v },
+		tc{0, 1}, tc{0.0499, 1}, tc{0.05, 2}, tc{0.1999, 2}, tc{0.2, 3}, tc{0.3999, 3}, tc{0.4, 4}, tc{3.9, 4})
+	check(checks.DigestFace, func(o *checks.Observation, v float64) { o.Face = pb.Face(v) },
+		tc{float64(pb.Face_FACE_UP), 0}, tc{float64(pb.Face_FACE_DOWN), 1}, tc{float64(pb.Face_FACE_NORTH), 2},
+		tc{float64(pb.Face_FACE_SOUTH), 2}, tc{float64(pb.Face_FACE_WEST), 2}, tc{float64(pb.Face_FACE_EAST), 2},
+		tc{float64(pb.Face_FACE_OTHER), 3}, tc{99, 3})
+	check(checks.DigestAction, func(o *checks.Observation, v float64) { o.Action = pb.BlockDig_Action(v) },
+		tc{float64(pb.BlockDig_ACTION_START), 0}, tc{float64(pb.BlockDig_ACTION_FINISH), 1})
+
+	contexts := func(check string) (out []string) {
+		for _, d := range checks.DigestContexts(check) {
+			out = append(out, d.String())
+		}
+		return out
+	}
+	for _, id := range []string{"scaffold.face", "scaffold.ray", "scaffold.cursor", "scaffold.reach"} {
+		if got := contexts(id); !slices.Equal(got, []string{"dist", "turn", "gap", "speed", "face"}) ||
+			checks.DigestCursorOnly(id) != (id == "scaffold.cursor") {
+			t.Errorf("%s: contexts %v, cursor only %v", id, got, checks.DigestCursorOnly(id))
+		}
+	}
+	if got := contexts("dig.ray"); !slices.Equal(got, []string{"dist", "turn", "gap", "speed", "action"}) || checks.DigestCursorOnly("dig.ray") {
+		t.Errorf("dig.ray: contexts %v", got)
+	}
+	if checks.DigestContexts("reach.distance") != nil || checks.DigestCursorOnly("reach.distance") {
+		t.Error("checks without observations have no context")
+	}
+}
+
+// Every observation of an action carries its context: the distance from the event eye to the block's
+// centre, the turn from R0 to R1, the time since the session's previous judged placement (dig), the eye
+// path's step, the face or the dig action, and for scaffold.cursor whether the ray hit.
+func TestDigestActionContext(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	r.tick(geom.V(0.5, 64, 0.5), geom.Rotation{})
+	b := [3]int32{0, 64, 2}
+	target := geom.V(0.5, 64.5, 2) // the centre of the north face; the block's centre is 0.5 further south
+	middle := geom.V(0.5, 0.5, 0)
+	type want struct {
+		dist, turn, step float64
+		gapUs            int64
+		eyePath          bool
+		cursorFailed     bool
+		rayHit           bool
+	}
+	var wants []want
+	click := func(cursor geom.Vec3, rot geom.Rotation, w want) {
+		r.place(blockClick{block: b, face: pb.Face_FACE_NORTH, cursor: cursor, eye: r.eyeOf(false), rot: rot})
+		wants = append(wants, w)
+	}
+	still := math.Sqrt(1.12*1.12 + 2*2) // from the eye at 0.5, 65.62, 0.5
+	moved := math.Sqrt(0.3*0.3 + 1.12*1.12 + 2*2)
+
+	// The first placement, before an eye path; R1 of the same tick turns 10 degrees down.
+	r0 := aim(r.eyeOf(false), target)
+	click(middle, r0, want{dist: still, turn: 10, gapUs: -1, rayHit: true})
+	r.tick(r.p.Pos, geom.Rotation{Yaw: r0.Yaw, Pitch: r0.Pitch + 10})
+	// 100 ms later after a 0.3 step: aimed, then a burst in the same tick with the cursor in the corner.
+	r.step(geom.V(0.3, 0, 0))
+	r2 := aim(r.eyeOf(false), target)
+	click(middle, r2, want{dist: moved, step: 0.3, gapUs: 100_000, eyePath: true, rayHit: true})
+	click(geom.V(0.05, 0.95, 0), r2, want{dist: moved, step: 0.3, eyePath: true, cursorFailed: true, rayHit: true})
+	r.tick(r.p.Pos, r2)
+	// Looking away while standing still: the ray misses too.
+	away := geom.Rotation{Yaw: r2.Yaw + 180, Pitch: r2.Pitch}
+	r.tick(r.p.Pos, away)
+	click(middle, away, want{dist: moved, gapUs: 100_000, eyePath: true, cursorFailed: true})
+	r.tick(r.p.Pos, away)
+	mine(r, b, pb.Face_FACE_NORTH, 2, true, nil) // START and FINISH 150 ms apart
+	// A new session starts without a previous placement.
+	r.add(r.p.Join(), r.p.State())
+	r.tick(r.p.Pos, r2)
+	click(middle, r2, want{dist: moved, gapUs: -1, rayHit: true})
+	r.tick(r.p.Pos, r2)
+	r.step(geom.V(0, 0, 0))
+
+	_, d := r.runDigest("scaffold")
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-4 } // float32 rotations
+	for _, id := range []string{"scaffold.face", "scaffold.ray", "scaffold.cursor", "scaffold.reach"} {
+		obs := d.of(id)
+		if len(obs) != len(wants) {
+			t.Fatalf("%s: %d observations, want %d", id, len(obs), len(wants))
+		}
+		for i, o := range obs {
+			w := wants[i]
+			if !near(o.Dist, w.dist) || !near(o.Turn, w.turn) || !near(o.Step, w.step) || o.GapUs != w.gapUs ||
+				o.EyePath != w.eyePath || o.Face != pb.Face_FACE_NORTH || o.RayHit != (id == "scaffold.cursor" && w.rayHit) {
+				t.Errorf("%s #%d: %+v, want %+v", id, i, o, w)
+			}
+			if w.turn == 0 && o.Turn != 0 {
+				t.Errorf("%s #%d: R1 = R0 is no turn at all: %v", id, i, o.Turn)
+			}
+			if id == "scaffold.cursor" && o.Failed != w.cursorFailed || id == "scaffold.ray" && o.Failed == w.rayHit {
+				t.Errorf("%s #%d: failed %v (%+v)", id, i, o.Failed, w)
+			}
+		}
+	}
+
+	_, d = r.runDigest("dig")
+	digs := d.of("dig.ray")
+	if len(digs) != 2 || digs[0].Action != pb.BlockDig_ACTION_START || digs[0].GapUs != -1 ||
+		digs[1].Action != pb.BlockDig_ACTION_FINISH || digs[1].GapUs != 150_000 {
+		t.Fatalf("digs %+v", digs)
+	}
+	for _, o := range digs {
+		if !near(o.Dist, moved) || o.Turn != 0 || o.Face != pb.Face_FACE_NORTH || o.Failed || o.RayHit {
+			t.Errorf("dig %+v", o)
+		}
+	}
+}
+
+// The context follows the judgement: the gap counts from the previous judged placement (one whose next
+// move carries a server-set rotation is not judged), and the turn is that of the R1 the checks used (a
+// tick client's move of a later tick is no R1, however far it turned).
+func TestDigestContextFollowsTheJudgement(t *testing.T) {
+	r := newRig(t, rigProtocol)
+	r.tick(geom.V(0.5, 64, 0.5), geom.Rotation{})
+	b := [3]int32{0, 64, 2}
+	rot := aim(r.eyeOf(false), geom.V(0.5, 64.5, 2))
+	click := func() {
+		r.place(blockClick{block: b, face: pb.Face_FACE_NORTH, cursor: geom.V(0.5, 0.5, 0), eye: r.eyeOf(false), rot: rot})
+	}
+	r.tick(r.p.Pos, rot)
+	click() // judged, the first
+	r.tick(r.p.Pos, rot)
+	click() // 50 ms later, not judged
+	r.flags = uint32(pb.MoveFlag_MOVE_FLAG_SERVER_ROTATION)
+	r.tick(r.p.Pos, rot)
+	r.flags = 0
+	r.tick(r.p.Pos, rot)
+	click() // 150 ms after the first, in a tick without a movement packet
+	r.idle()
+	r.tick(r.p.Pos, geom.Rotation{Yaw: rot.Yaw, Pitch: rot.Pitch + 20})
+
+	_, d := r.runDigest("scaffold")
+	obs := d.of("scaffold.ray")
+	if len(obs) != 2 || obs[0].GapUs != -1 || obs[1].GapUs != 150_000 || obs[0].Turn != 0 || obs[1].Turn != 0 ||
+		obs[0].Rotations != 1 || obs[1].Rotations != 1 {
+		t.Fatalf("observations %+v", obs)
 	}
 }

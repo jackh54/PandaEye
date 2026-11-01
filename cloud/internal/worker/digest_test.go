@@ -91,9 +91,15 @@ func u64(p *uint64) uint64 {
 
 // place is a BlockPlace against the north face of b from the player's standing eye.
 func place(p *testkit.Player, b [3]int32, rot geom.Rotation) *pb.Event {
+	return placeAt(p, b, pb.Face_FACE_NORTH, geom.V(0.5, 0.5, 0), rot)
+}
+
+// placeAt is a BlockPlace against the face of b at cursor from the player's standing eye.
+func placeAt(p *testkit.Player, b [3]int32, face pb.Face, cursor geom.Vec3, rot geom.Rotation) *pb.Event {
 	eye := p.Eye()
 	return &pb.Event{Player: p.UUID, TimeUs: p.TimeUs, Tick: p.Tick, Kind: &pb.Event_Place{Place: &pb.BlockPlace{
-		Block: &pb.Vec3I{X: b[0], Y: b[1], Z: b[2]}, Face: pb.Face_FACE_NORTH, CursorX: 0.5, CursorY: 0.5, CursorZ: 0,
+		Block: &pb.Vec3I{X: b[0], Y: b[1], Z: b[2]}, Face: face,
+		CursorX: float32(cursor.X), CursorY: float32(cursor.Y), CursorZ: float32(cursor.Z),
 		Eye: &pb.Vec3{X: eye.X, Y: eye.Y, Z: eye.Z}, Yaw: float32(rot.Yaw), Pitch: float32(rot.Pitch), BlockReach: 4.5,
 		Item: "minecraft:stone"}}}
 }
@@ -232,6 +238,228 @@ func TestDigestCountsEngineCells(t *testing.T) {
 		if l.Emissions == 0 || l.Emissions != emitted(l.Check) || l.ServerID != srv || l.Protocol == nil || *l.Protocol != 769 ||
 			l.Brand != "lunar" || l.Evaluations != nil || l.TickClient != nil || l.Pose != "" || l.Ping != "" || l.Hist != nil {
 			t.Errorf("%s: emissions-only cell %+v (emitted %d)", l.Check, l, emitted(l.Check))
+		}
+	}
+}
+
+// The world-interaction cells break their evaluations and failures down by the context of the actions: a
+// scripted session of placements and digs (close and far, a burst, turning, moving, pauses, every face,
+// START and FINISH, a cursor-only failure) counts each action in its bucket of every context.
+func TestDigestContextCounts(t *testing.T) {
+	clock := &testClock{t: digestT0}
+	h := newHarness(t, nil)
+	h.env.now = clock.now
+	w := newTestDigest(t, clock)
+	h.env.digest = w
+	h.eng = newEngine(3, h.env, nil)
+	p := testkit.NewPlayer("ContextCarl")
+	p.Protocol = 763 // 1.20.1: R1 is the next move within 100 ms, whatever its tick
+	p.Pos = geom.V(0.5, 64, 0.5)
+	evs := []*pb.Event{p.Join(), p.State()}
+	// An action and its expected buckets: dist, turn, gap, speed and face (placements) or action (digs).
+	type act struct {
+		ctx  [5]int
+		fail []string // the checks it fails
+	}
+	var places, digs []act
+	move := func(d geom.Vec3, rot geom.Rotation) { evs = append(evs, p.Move(d, rot)) }
+	aimAt := func(target geom.Vec3) geom.Rotation { r, _ := geom.Angles(target.Sub(p.Eye())); return r }
+	pitched := func(r geom.Rotation, d float64) geom.Rotation { return geom.Rotation{Yaw: r.Yaw, Pitch: r.Pitch + d} }
+	north, middle := pb.Face_FACE_NORTH, geom.V(0.5, 0.5, 0)
+	faceOf := func(b [3]int32) geom.Vec3 { return geom.V(float64(b[0])+0.5, float64(b[1])+0.5, float64(b[2])) } // north face centre
+	click := func(b [3]int32, face pb.Face, cursor geom.Vec3, rot geom.Rotation, a act) {
+		evs = append(evs, placeAt(p, b, face, cursor, rot))
+		places = append(places, a)
+	}
+	mine := func(action pb.BlockDig_Action, b [3]int32, rot geom.Rotation, a act) {
+		evs = append(evs, dig(p, action, b, rot))
+		digs = append(digs, a)
+	}
+	both := []string{"scaffold.ray", "scaffold.cursor"}
+
+	// Standing at 0.5, 64, 0.5: the first placement, close, before an eye path; 50 ms later two in the
+	// same tick.
+	close, mid := [3]int32{0, 65, 1}, [3]int32{0, 64, 2}
+	rA, rB := aimAt(faceOf(close)), aimAt(faceOf(mid))
+	move(geom.Vec3{}, rA)
+	click(close, north, middle, rA, act{ctx: [5]int{0, 0, 3, 0, 2}})
+	move(geom.Vec3{}, rA)
+	click(mid, north, middle, rB, act{ctx: [5]int{1, 0, 0, 1, 2}})
+	click(mid, north, middle, rB, act{ctx: [5]int{1, 0, 0, 1, 2}})
+	move(geom.Vec3{}, rB)
+	// Every 100 ms, the next move (R1) turning down by 3, 40 and 0 degrees.
+	for _, c := range []struct {
+		deg  float64
+		turn int
+	}{{3, 1}, {40, 3}, {0, 0}} {
+		move(geom.Vec3{}, rB)
+		click(mid, north, middle, rB, act{ctx: [5]int{1, c.turn, 1, 1, 2}})
+		move(geom.Vec3{}, pitched(rB, c.deg))
+	}
+	// The cursor in a corner of the face the ray hits, turning by 15 degrees: a cursor-only failure; 50 ms
+	// later looking away at a farther block: ray and cursor fail. (The engine's shard flushes in between:
+	// the writer adds both parts up.)
+	move(geom.Vec3{}, rB)
+	click(mid, north, geom.V(0.05, 0.95, 0), rB, act{ctx: [5]int{1, 2, 1, 1, 2}, fail: []string{"scaffold.cursor"}})
+	move(geom.Vec3{}, pitched(rB, 15))
+	firstFlush := len(evs)
+	away := geom.Rotation{Yaw: rB.Yaw + 180, Pitch: rB.Pitch}
+	click([3]int32{0, 64, 4}, north, middle, away, act{ctx: [5]int{2, 0, 0, 1, 2}, fail: both})
+	move(geom.Vec3{}, away)
+	// Walking east by 0.1, 0.3 and 0.5 blocks a move, the first 250 ms after the last placement.
+	move(geom.Vec3{}, away)
+	move(geom.Vec3{}, away)
+	move(geom.Vec3{}, away)
+	for _, c := range []struct {
+		step       float64
+		gap, speed int
+	}{{0.1, 2, 2}, {0.3, 1, 3}, {0.5, 1, 4}} {
+		move(geom.V(c.step, 0, 0), away)
+		r := aimAt(faceOf(mid))
+		click(mid, north, middle, r, act{ctx: [5]int{1, 0, c.gap, c.speed, 2}})
+		move(geom.Vec3{}, r)
+	}
+	// At 1.4, 64, 0.5 after a second's pause, a far block; 200 ms later, without a move since (no eye path),
+	// one at the reach limit.
+	p.Advance(time.Second)
+	far, farther := [3]int32{1, 64, 4}, [3]int32{1, 64, 5}
+	r := aimAt(faceOf(far))
+	move(geom.Vec3{}, r)
+	click(far, north, middle, r, act{ctx: [5]int{2, 0, 3, 1, 2}})
+	move(geom.Vec3{}, r)
+	p.Advance(200 * time.Millisecond)
+	r = aimAt(faceOf(farther))
+	click(farther, north, middle, r, act{ctx: [5]int{3, 0, 2, 0, 2}})
+	move(geom.Vec3{}, r)
+	// The other faces: the top of the floor in front, the bottom of a block overhead, a special face
+	// (scaffold.face does not judge it).
+	for _, c := range []struct {
+		b            [3]int32
+		face         pb.Face
+		cursor       geom.Vec3
+		dist, bucket int
+	}{
+		{[3]int32{1, 63, 1}, pb.Face_FACE_UP, geom.V(0.5, 1, 0.5), 1, 0},
+		{[3]int32{1, 66, 1}, pb.Face_FACE_DOWN, geom.V(0.5, 0, 0.5), 0, 1},
+		{[3]int32{1, 64, 2}, pb.Face_FACE_OTHER, middle, 1, 3},
+	} {
+		r := aimAt(geom.BlockBox(c.b[0], c.b[1], c.b[2]).Min.Add(c.cursor))
+		move(geom.Vec3{}, r)
+		click(c.b, c.face, c.cursor, r, act{ctx: [5]int{c.dist, 0, 1, 1, c.bucket}})
+		move(geom.Vec3{}, r)
+	}
+	// Digs: START (the first) and FINISH 150 ms later in view, then START and FINISH looking away 50 ms
+	// apart, the FINISH's R1 turning by 10 degrees.
+	wall := [3]int32{1, 64, 2}
+	r = aimAt(faceOf(wall))
+	move(geom.Vec3{}, r)
+	mine(pb.BlockDig_ACTION_START, wall, r, act{ctx: [5]int{1, 0, 3, 1, 0}})
+	move(geom.Vec3{}, r)
+	move(geom.Vec3{}, r)
+	move(geom.Vec3{}, r)
+	mine(pb.BlockDig_ACTION_FINISH, wall, r, act{ctx: [5]int{1, 0, 1, 1, 1}})
+	move(geom.Vec3{}, r)
+	away = geom.Rotation{Yaw: r.Yaw + 180, Pitch: r.Pitch}
+	move(geom.Vec3{}, away)
+	mine(pb.BlockDig_ACTION_START, wall, away, act{ctx: [5]int{1, 0, 1, 1, 0}, fail: []string{"dig.ray"}})
+	move(geom.Vec3{}, away)
+	mine(pb.BlockDig_ACTION_FINISH, wall, away, act{ctx: [5]int{1, 2, 0, 1, 1}, fail: []string{"dig.ray"}})
+	move(geom.Vec3{}, pitched(away, 10))
+	evs = append(evs, flag(p, "movement.fly", 1)) // an emissions-only cell
+	o := origin(testkit.NewServerID(), pb.Platform_PLATFORM_PAPER)
+	for _, part := range [][]*pb.Event{evs[:firstFlush], evs[firstFlush:]} {
+		h.send(o, h.seq+1, false, part...)
+		h.eng.housekeep(clock.t)
+		w.merge(<-w.in)
+	}
+	w.writeDue(true)
+	lines := readDigest(t, w, digestT0.Truncate(time.Hour))
+	sizes := map[string]int{"dist": 4, "turn": 4, "gap": 4, "speed": 5, "face": 4, "action": 2}
+	for _, c := range []struct {
+		check                 string
+		acts                  []act
+		contexts              []string
+		evaluations, failures uint64
+	}{
+		{"scaffold.face", places, []string{"dist", "turn", "gap", "speed", "face"}, 15, 0},
+		{"scaffold.ray", places, []string{"dist", "turn", "gap", "speed", "face"}, 16, 1},
+		{"scaffold.cursor", places, []string{"dist", "turn", "gap", "speed", "face"}, 16, 2},
+		{"scaffold.reach", places, []string{"dist", "turn", "gap", "speed", "face"}, 16, 0},
+		{"dig.ray", digs, []string{"dist", "turn", "gap", "speed", "action"}, 4, 2},
+	} {
+		l := lineOf(t, lines, c.check)
+		if u64(l.Evaluations) != c.evaluations || u64(l.Failures) != c.failures || l.Protocol == nil || *l.Protocol != 763 ||
+			l.TickClient == nil || *l.TickClient {
+			t.Errorf("%s: %+v", c.check, l)
+		}
+		want := map[string]digestContextLine{}
+		for _, name := range c.contexts {
+			want[name] = digestContextLine{Evaluations: make([]uint64, sizes[name]), Failures: make([]uint64, sizes[name])}
+		}
+		for _, a := range c.acts {
+			if c.check == "scaffold.face" && a.ctx[4] == 3 {
+				continue // a special face
+			}
+			for i, name := range c.contexts {
+				want[name].Evaluations[a.ctx[i]]++
+				if slices.Contains(a.fail, c.check) {
+					want[name].Failures[a.ctx[i]]++
+				}
+			}
+		}
+		if len(l.Context) != len(c.contexts) {
+			t.Errorf("%s: contexts %v", c.check, l.Context)
+		}
+		for _, name := range c.contexts {
+			got := l.Context[name]
+			if len(got.Buckets) != sizes[name] || !slices.Equal(got.Evaluations, want[name].Evaluations) || !slices.Equal(got.Failures, want[name].Failures) {
+				t.Errorf("%s %s: %+v, want evaluations %v, failures %v", c.check, name, got, want[name].Evaluations, want[name].Failures)
+			}
+		}
+		if cursor := c.check == "scaffold.cursor"; cursor != (l.CursorOnly != nil) || cursor && *l.CursorOnly != 1 {
+			t.Errorf("%s: cursor_only %v", c.check, l.CursorOnly)
+		}
+	}
+	if fly := lineOf(t, lines, "movement.fly"); fly.Emissions != 1 || fly.Context != nil || fly.CursorOnly != nil {
+		t.Errorf("an emissions-only cell has no context: %+v", fly)
+	}
+
+	// The JSON: the context and cursor_only follow the earlier fields, which keep their names.
+	raw, err := os.ReadFile(filepath.Join(w.dir, digestName(digestHour(digestT0))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"context":{"action":{"buckets":["start","finish"],"evaluations":[2,2],"failures":[1,1]},` +
+			`"dist":{"buckets":["<1.5","1.5-3","3-4.5",">=4.5"],"evaluations":[0,4,0,0],"failures":[0,2,0,0]},`,
+		`"gap":{"buckets":["<60","60-250","250-1000",">=1000"],"evaluations":[1,2,0,1],"failures":[1,1,0,0]},` +
+			`"speed":{"buckets":["none","<0.05","0.05-0.2","0.2-0.4",">=0.4"],"evaluations":[0,4,0,0,0],"failures":[0,2,0,0,0]},` +
+			`"turn":{"buckets":["0","0-5","5-30",">30"],"evaluations":[3,0,1,0],"failures":[1,0,1,0]}}}`,
+		`"face":{"buckets":["up","down","side","other"],"evaluations":[1,1,13,1],"failures":[0,0,2,0]}`,
+		`"cursor_only":1,"context":{`,
+	} {
+		if !bytes.Contains(raw, []byte(want)) {
+			t.Errorf("the digest lacks %s:\n%s", want, raw)
+		}
+	}
+	for _, private := range []string{p.Name, identity.UUID(p.UUID).String(), p.Session} {
+		if bytes.Contains(raw, []byte(private)) {
+			t.Fatalf("the digest holds %q", private)
+		}
+	}
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(line, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := fields["evaluations"]; !ok {
+			continue // emissions only
+		}
+		for _, name := range []string{"hour", "check", "server_id", "protocol", "brand", "tick_client", "pose", "ping",
+			"evaluations", "failures", "emissions", "eye_path", "eyes", "rotations", "le", "hist", "context"} {
+			if _, ok := fields[name]; !ok {
+				t.Errorf("no %q in %s", name, line)
+			}
 		}
 	}
 }
@@ -483,7 +711,8 @@ func TestDigestCountingDoesNotAllocate(t *testing.T) {
 	s := newDigestShard(&digestWriter{})
 	v := checks.NewView()
 	v.ServerID, v.Protocol, v.PingMs = testkit.NewServerID(), 769, 80
-	o := checks.Observation{Check: "scaffold.cursor", Value: 3.2, Failed: true, Eyes: 18, Rotations: 5, EyePath: true}
+	o := checks.Observation{Check: "scaffold.cursor", Value: 3.2, Failed: true, Eyes: 18, Rotations: 5, EyePath: true,
+		Dist: 2.5, Turn: 12, Step: 0.2, GapUs: 50_000, RayHit: true}
 	s.Observe(v, o)
 	s.Emitted(v, "aim.snap")
 	if n := testing.AllocsPerRun(100, func() {
