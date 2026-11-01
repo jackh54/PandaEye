@@ -10,6 +10,7 @@ import dev.pandascript.pandaeye.protocol.v1.Event;
 import dev.pandascript.pandaeye.protocol.v1.GameMode;
 import dev.pandascript.pandaeye.protocol.v1.Hello;
 import dev.pandascript.pandaeye.protocol.v1.LocalFlag;
+import dev.pandascript.pandaeye.protocol.v1.ModerationLabel;
 import dev.pandascript.pandaeye.protocol.v1.MoveSample;
 import dev.pandascript.pandaeye.protocol.v1.Platform;
 import dev.pandascript.pandaeye.protocol.v1.PlayerJoin;
@@ -70,7 +71,15 @@ public final class FixtureWriter {
                                 .setSeq(3).setSentUnixMs(1_760_000_001_000L)
                                 .addEvents(Event.newBuilder().setPlayer(ByteString.copyFrom(PLAYER))
                                         .setTimeUs(1_760_000_001_000_000L).setTick(400)
-                                        .setFlag(flag()))).build()));
+                                        .setFlag(flag()))).build()),
+                new Fixture("batch_label", "Batch seq 4 with two LiteBans ModerationLabels: a cheat ban and its wrongful unban",
+                        ClientFrame.newBuilder().setBatch(Batch.newBuilder()
+                                .setSeq(4).setSentUnixMs(1_760_000_002_000L)
+                                .addEvents(label(ModerationLabel.Kind.KIND_BAN_ADDED,
+                                        ModerationLabel.Classification.CLASSIFICATION_CHEAT, 0))
+                                .addEvents(label(ModerationLabel.Kind.KIND_BAN_REMOVED,
+                                        ModerationLabel.Classification.CLASSIFICATION_LEGIT, 1_760_000_001_500L)))
+                                .build()));
     }
 
     public static void main(String[] args) throws Exception {
@@ -116,6 +125,15 @@ public final class FixtureWriter {
         return MoveSample.newBuilder().setX(i * 0.25).setY(64).setZ(-12.5).setYaw(90.5f).setPitch(-10)
                 .setOnGround(true).setHasPos(true).setHasRot(i % 2 == 0).setFlags(1).setTicksSinceLast(1)
                 .setFocus(true).setPacketsSinceLast(1).build();
+    }
+
+    private static Event label(ModerationLabel.Kind kind, ModerationLabel.Classification classification, long removed) {
+        return Event.newBuilder().setPlayer(ByteString.copyFrom(PLAYER)).setTimeUs(1_760_000_002_000_000L)
+                .setLabel(ModerationLabel.newBuilder().setSource("litebans").setEntryId(1234).setKind(kind)
+                        .setClassification(classification).setBanStartUnixMs(1_759_900_000_000L)
+                        .setRemovedUnixMs(removed).setPermanent(true)
+                        .setExecutor(ModerationLabel.Executor.EXECUTOR_STAFF))
+                .build();
     }
 
     private static LocalFlag flag() {

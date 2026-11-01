@@ -92,6 +92,8 @@ func validateEvent(e *pb.Event) error {
 		}
 	case *pb.Event_CheckStats:
 		trunc(&k.CheckStats.CheckId, MaxStringBytes)
+	case *pb.Event_Label:
+		trunc(&k.Label.Source, MaxStringBytes)
 	}
 	return nil
 }

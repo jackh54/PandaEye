@@ -335,11 +335,17 @@ func TestFieldLimitsAndSanitising(t *testing.T) {
 	f := &pb.ClientFrame{Kind: &pb.ClientFrame_Batch{Batch: &pb.Batch{Events: []*pb.Event{
 		{Player: player, Kind: &pb.Event_Flag{Flag: flag}},
 		{Player: player, Kind: &pb.Event_Join{Join: &pb.PlayerJoin{Name: strings.Repeat("a", 1000)}}},
+		{Player: player, Kind: &pb.Event_Label{Label: &pb.ModerationLabel{Source: strings.Repeat("s", 300), EntryId: 7,
+			Kind: pb.ModerationLabel_KIND_BAN_ADDED, Classification: pb.ModerationLabel_CLASSIFICATION_CHEAT}}},
 	}}}}
 	msg, _ := EncodeClientFrame(f, Raw)
 	out, err := d.Decode(ctx, msg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if label := out.GetBatch().Events[2].GetLabel(); len(label.Source) != MaxStringBytes || label.EntryId != 7 ||
+		label.Classification != pb.ModerationLabel_CLASSIFICATION_CHEAT {
+		t.Fatalf("label %v", label)
 	}
 	got := out.GetBatch().Events[0].GetFlag()
 	if len(got.Info) > MaxInfoBytes || len(got.Info) < MaxInfoBytes-1 || !utf8Valid(got.Info) {

@@ -247,6 +247,7 @@ message Event {
     ServerSwitch server_switch = 26;  // sent by the proxy plugin only
     ServerStall stall = 27;           // server-level (player empty): the plugin saw a server-side stall
     CheckStats check_stats = 28;      // per player per local check, every 5 min: test statistics for tuning
+    ModerationLabel label = 29;       // a staff decision from a punishment plugin (not gameplay; player may be offline)
   }
 }
 
@@ -528,6 +529,38 @@ message ServerSwitch {
   string from_server = 1;
   string to_server = 2;
   string network_session = 3;
+}
+
+// A ban recorded by a punishment plugin, classified by the plugin from the ban and unban reasons (labels for
+// verdict accuracy and model training; no check runs on it). Sent by the backend and the proxy plugin when the
+// punishment plugin is installed: live, and on enable for the bans of the last days (the same entry again).
+// Event.player is the banned player (offline and Bedrock players included), Event.time_us when it was sent.
+// Only CHEAT and LEGIT are sent. It never carries reason texts, names or ids of the staff involved, or IPs.
+// Every server of a network may send the same entry: receivers de-duplicate by (tenant, source, entry_id, kind).
+message ModerationLabel {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_BAN_ADDED = 1;
+    KIND_BAN_REMOVED = 2;
+  }
+  enum Classification {
+    CLASSIFICATION_UNSPECIFIED = 0;
+    CLASSIFICATION_CHEAT = 1;         // BAN_ADDED: a ban for cheating by a counted executor
+    CLASSIFICATION_LEGIT = 2;         // BAN_REMOVED: a ban for cheating lifted as wrong (false ban, appeal accepted)
+  }
+  enum Executor {
+    EXECUTOR_UNSPECIFIED = 0;
+    EXECUTOR_STAFF = 1;               // a player (staff member) issued the ban
+    EXECUTOR_CONSOLE = 2;             // the console or a plugin (another anticheat, PandaEye's own ban-command)
+  }
+  string source = 1;                  // "litebans"
+  uint64 entry_id = 2;                // the source's id of the ban (LiteBans: the id in its bans table)
+  Kind kind = 3;
+  Classification classification = 4;
+  uint64 ban_start_unix_ms = 5;       // when the ban was issued
+  uint64 removed_unix_ms = 6;         // BAN_REMOVED: when it was lifted (0 = unknown)
+  bool permanent = 7;
+  Executor executor = 8;              // who issued the ban (BAN_REMOVED: the original ban's issuer)
 }
 
 // ---------------------------------------------------------------------------------------------

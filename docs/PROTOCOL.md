@@ -227,12 +227,21 @@ Every `Event` carries `player` (16 bytes, empty for server-level events), `time_
 | `server_switch` | proxy | backend switch |
 | `stall` (ServerStall) | backend | server-level stall: >= 20% of active players (min 3) silent for 400 ms, or the global-region heartbeat > 400 ms late |
 | `check_stats` (CheckStats) | backend | per player per local check every 5 min: test statistic peaks for threshold tuning |
+| `label` (ModerationLabel) | backend, proxy | a LiteBans ban the plugin classified CHEAT, or its removal classified LEGIT (ARCHITECTURE 4.12): live, and on enable for the bans of the last `backfill-days` |
 
 Focus (full-rate `MoveSample`): the player attacked or was attacked in the last 5 s, took velocity or
 explosion knockback in the last 3 s, placed or dug a block in the last 3 s, clicked in a window or had a
 container open in the last 3 s, had a local flag in the last 30 s, has an active `WatchRequest`, or
 `telemetry.full` is set. Bedrock players produce only PlayerJoin (`bedrock = true`), PlayerQuit and
 StateChange.
+
+`label` is not gameplay: no check uses it, and its player (a Bedrock player too) is usually not online on the
+sending server. `ModerationLabel` carries only `source` (`litebans`), `entry_id`, `kind` (BAN_ADDED,
+BAN_REMOVED), `classification` (CHEAT on BAN_ADDED, LEGIT on BAN_REMOVED; NONE is never sent),
+`ban_start_unix_ms`, `removed_unix_ms` (0 = unknown), `permanent` and `executor` (STAFF or CONSOLE, of the ban);
+the plugin never sends reason texts, staff names or ids, or IPs. The proxy and every backend of a network may
+send the same entry and each enable resends the backfill: receivers de-duplicate by
+(tenant, `source`, `entry_id`, `kind`) and treat a LEGIT as superseding the entry's CHEAT.
 
 ## 6. Event clock and normalisation
 

@@ -148,14 +148,39 @@ func TestJavaFixturesThroughTheGateway(t *testing.T) {
 		n++
 	}
 	stored := 0
+	var labels []*pb.Event
 	for _, sb := range testkit.EventBatches(t, e.d.Bus) {
 		stored += len(sb.Batch.Events)
 		if sb.Batch.Origin.ServerId != hello.GetHello().ServerId || sb.Batch.Origin.Platform != hello.GetHello().Platform {
 			t.Fatalf("origin %+v", sb.Batch.Origin)
 		}
+		for _, ev := range sb.Batch.Events {
+			if ev.GetLabel() != nil {
+				labels = append(labels, ev)
+			}
+		}
 	}
 	if stored != events {
 		t.Fatalf("stored %d of %d fixture events", stored, events)
+	}
+	// LiteBans labels are not gameplay, but they travel like every event: stored exactly as the plugin sent them.
+	for _, x := range fx {
+		if x.Name != "batch_label" {
+			continue
+		}
+		var sent pb.ClientFrame
+		if err := proto.Unmarshal(readFixture(t, x.Name+".pb"), &sent); err != nil {
+			t.Fatal(err)
+		}
+		want := sent.GetBatch().GetEvents()
+		if len(labels) != len(want) {
+			t.Fatalf("stored %d of %d label events", len(labels), len(want))
+		}
+		for i := range want {
+			if !proto.Equal(labels[i], want[i]) {
+				t.Fatalf("label %d stored as %v, sent as %v", i, labels[i], want[i])
+			}
+		}
 	}
 }
 

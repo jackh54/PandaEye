@@ -850,6 +850,153 @@ func (LatencySample_Kind) EnumDescriptor() ([]byte, []int) {
 	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{24, 0}
 }
 
+type ModerationLabel_Kind int32
+
+const (
+	ModerationLabel_KIND_UNSPECIFIED ModerationLabel_Kind = 0
+	ModerationLabel_KIND_BAN_ADDED   ModerationLabel_Kind = 1
+	ModerationLabel_KIND_BAN_REMOVED ModerationLabel_Kind = 2
+)
+
+// Enum value maps for ModerationLabel_Kind.
+var (
+	ModerationLabel_Kind_name = map[int32]string{
+		0: "KIND_UNSPECIFIED",
+		1: "KIND_BAN_ADDED",
+		2: "KIND_BAN_REMOVED",
+	}
+	ModerationLabel_Kind_value = map[string]int32{
+		"KIND_UNSPECIFIED": 0,
+		"KIND_BAN_ADDED":   1,
+		"KIND_BAN_REMOVED": 2,
+	}
+)
+
+func (x ModerationLabel_Kind) Enum() *ModerationLabel_Kind {
+	p := new(ModerationLabel_Kind)
+	*p = x
+	return p
+}
+
+func (x ModerationLabel_Kind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ModerationLabel_Kind) Descriptor() protoreflect.EnumDescriptor {
+	return file_pandaeye_v1_wire_proto_enumTypes[13].Descriptor()
+}
+
+func (ModerationLabel_Kind) Type() protoreflect.EnumType {
+	return &file_pandaeye_v1_wire_proto_enumTypes[13]
+}
+
+func (x ModerationLabel_Kind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ModerationLabel_Kind.Descriptor instead.
+func (ModerationLabel_Kind) EnumDescriptor() ([]byte, []int) {
+	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{37, 0}
+}
+
+type ModerationLabel_Classification int32
+
+const (
+	ModerationLabel_CLASSIFICATION_UNSPECIFIED ModerationLabel_Classification = 0
+	ModerationLabel_CLASSIFICATION_CHEAT       ModerationLabel_Classification = 1 // BAN_ADDED: a ban for cheating by a counted executor
+	ModerationLabel_CLASSIFICATION_LEGIT       ModerationLabel_Classification = 2 // BAN_REMOVED: a ban for cheating lifted as wrong (false ban, appeal accepted)
+)
+
+// Enum value maps for ModerationLabel_Classification.
+var (
+	ModerationLabel_Classification_name = map[int32]string{
+		0: "CLASSIFICATION_UNSPECIFIED",
+		1: "CLASSIFICATION_CHEAT",
+		2: "CLASSIFICATION_LEGIT",
+	}
+	ModerationLabel_Classification_value = map[string]int32{
+		"CLASSIFICATION_UNSPECIFIED": 0,
+		"CLASSIFICATION_CHEAT":       1,
+		"CLASSIFICATION_LEGIT":       2,
+	}
+)
+
+func (x ModerationLabel_Classification) Enum() *ModerationLabel_Classification {
+	p := new(ModerationLabel_Classification)
+	*p = x
+	return p
+}
+
+func (x ModerationLabel_Classification) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ModerationLabel_Classification) Descriptor() protoreflect.EnumDescriptor {
+	return file_pandaeye_v1_wire_proto_enumTypes[14].Descriptor()
+}
+
+func (ModerationLabel_Classification) Type() protoreflect.EnumType {
+	return &file_pandaeye_v1_wire_proto_enumTypes[14]
+}
+
+func (x ModerationLabel_Classification) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ModerationLabel_Classification.Descriptor instead.
+func (ModerationLabel_Classification) EnumDescriptor() ([]byte, []int) {
+	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{37, 1}
+}
+
+type ModerationLabel_Executor int32
+
+const (
+	ModerationLabel_EXECUTOR_UNSPECIFIED ModerationLabel_Executor = 0
+	ModerationLabel_EXECUTOR_STAFF       ModerationLabel_Executor = 1 // a player (staff member) issued the ban
+	ModerationLabel_EXECUTOR_CONSOLE     ModerationLabel_Executor = 2 // the console or a plugin (another anticheat, PandaEye's own ban-command)
+)
+
+// Enum value maps for ModerationLabel_Executor.
+var (
+	ModerationLabel_Executor_name = map[int32]string{
+		0: "EXECUTOR_UNSPECIFIED",
+		1: "EXECUTOR_STAFF",
+		2: "EXECUTOR_CONSOLE",
+	}
+	ModerationLabel_Executor_value = map[string]int32{
+		"EXECUTOR_UNSPECIFIED": 0,
+		"EXECUTOR_STAFF":       1,
+		"EXECUTOR_CONSOLE":     2,
+	}
+)
+
+func (x ModerationLabel_Executor) Enum() *ModerationLabel_Executor {
+	p := new(ModerationLabel_Executor)
+	*p = x
+	return p
+}
+
+func (x ModerationLabel_Executor) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ModerationLabel_Executor) Descriptor() protoreflect.EnumDescriptor {
+	return file_pandaeye_v1_wire_proto_enumTypes[15].Descriptor()
+}
+
+func (ModerationLabel_Executor) Type() protoreflect.EnumType {
+	return &file_pandaeye_v1_wire_proto_enumTypes[15]
+}
+
+func (x ModerationLabel_Executor) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ModerationLabel_Executor.Descriptor instead.
+func (ModerationLabel_Executor) EnumDescriptor() ([]byte, []int) {
+	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{37, 2}
+}
+
 type ClientFrame struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Kind:
@@ -2118,6 +2265,7 @@ type Event struct {
 	//	*Event_ServerSwitch
 	//	*Event_Stall
 	//	*Event_CheckStats
+	//	*Event_Label
 	Kind          isEvent_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2352,6 +2500,15 @@ func (x *Event) GetCheckStats() *CheckStats {
 	return nil
 }
 
+func (x *Event) GetLabel() *ModerationLabel {
+	if x != nil {
+		if x, ok := x.Kind.(*Event_Label); ok {
+			return x.Label
+		}
+	}
+	return nil
+}
+
 type isEvent_Kind interface {
 	isEvent_Kind()
 }
@@ -2432,6 +2589,10 @@ type Event_CheckStats struct {
 	CheckStats *CheckStats `protobuf:"bytes,28,opt,name=check_stats,json=checkStats,proto3,oneof"` // per player per local check, every 5 min: test statistics for tuning
 }
 
+type Event_Label struct {
+	Label *ModerationLabel `protobuf:"bytes,29,opt,name=label,proto3,oneof"` // a staff decision from a punishment plugin (not gameplay; player may be offline)
+}
+
 func (*Event_Join) isEvent_Kind() {}
 
 func (*Event_Quit) isEvent_Kind() {}
@@ -2469,6 +2630,8 @@ func (*Event_ServerSwitch) isEvent_Kind() {}
 func (*Event_Stall) isEvent_Kind() {}
 
 func (*Event_CheckStats) isEvent_Kind() {}
+
+func (*Event_Label) isEvent_Kind() {}
 
 type PlayerJoin struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
@@ -4445,6 +4608,112 @@ func (x *ServerSwitch) GetNetworkSession() string {
 	return ""
 }
 
+// A ban recorded by a punishment plugin, classified by the plugin from the ban and unban reasons (labels for
+// verdict accuracy and model training; no check runs on it). Sent by the backend and the proxy plugin when the
+// punishment plugin is installed: live, and on enable for the bans of the last days (the same entry again).
+// Event.player is the banned player (offline and Bedrock players included), Event.time_us when it was sent.
+// Only CHEAT and LEGIT are sent. It never carries reason texts, names or ids of the staff involved, or IPs.
+// Every server of a network may send the same entry: receivers de-duplicate by (tenant, source, entry_id, kind).
+type ModerationLabel struct {
+	state          protoimpl.MessageState         `protogen:"open.v1"`
+	Source         string                         `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`                   // "litebans"
+	EntryId        uint64                         `protobuf:"varint,2,opt,name=entry_id,json=entryId,proto3" json:"entry_id,omitempty"` // the source's id of the ban (LiteBans: the id in its bans table)
+	Kind           ModerationLabel_Kind           `protobuf:"varint,3,opt,name=kind,proto3,enum=pandaeye.v1.ModerationLabel_Kind" json:"kind,omitempty"`
+	Classification ModerationLabel_Classification `protobuf:"varint,4,opt,name=classification,proto3,enum=pandaeye.v1.ModerationLabel_Classification" json:"classification,omitempty"`
+	BanStartUnixMs uint64                         `protobuf:"varint,5,opt,name=ban_start_unix_ms,json=banStartUnixMs,proto3" json:"ban_start_unix_ms,omitempty"` // when the ban was issued
+	RemovedUnixMs  uint64                         `protobuf:"varint,6,opt,name=removed_unix_ms,json=removedUnixMs,proto3" json:"removed_unix_ms,omitempty"`      // BAN_REMOVED: when it was lifted (0 = unknown)
+	Permanent      bool                           `protobuf:"varint,7,opt,name=permanent,proto3" json:"permanent,omitempty"`
+	Executor       ModerationLabel_Executor       `protobuf:"varint,8,opt,name=executor,proto3,enum=pandaeye.v1.ModerationLabel_Executor" json:"executor,omitempty"` // who issued the ban (BAN_REMOVED: the original ban's issuer)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ModerationLabel) Reset() {
+	*x = ModerationLabel{}
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModerationLabel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModerationLabel) ProtoMessage() {}
+
+func (x *ModerationLabel) ProtoReflect() protoreflect.Message {
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModerationLabel.ProtoReflect.Descriptor instead.
+func (*ModerationLabel) Descriptor() ([]byte, []int) {
+	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *ModerationLabel) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *ModerationLabel) GetEntryId() uint64 {
+	if x != nil {
+		return x.EntryId
+	}
+	return 0
+}
+
+func (x *ModerationLabel) GetKind() ModerationLabel_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return ModerationLabel_KIND_UNSPECIFIED
+}
+
+func (x *ModerationLabel) GetClassification() ModerationLabel_Classification {
+	if x != nil {
+		return x.Classification
+	}
+	return ModerationLabel_CLASSIFICATION_UNSPECIFIED
+}
+
+func (x *ModerationLabel) GetBanStartUnixMs() uint64 {
+	if x != nil {
+		return x.BanStartUnixMs
+	}
+	return 0
+}
+
+func (x *ModerationLabel) GetRemovedUnixMs() uint64 {
+	if x != nil {
+		return x.RemovedUnixMs
+	}
+	return 0
+}
+
+func (x *ModerationLabel) GetPermanent() bool {
+	if x != nil {
+		return x.Permanent
+	}
+	return false
+}
+
+func (x *ModerationLabel) GetExecutor() ModerationLabel_Executor {
+	if x != nil {
+		return x.Executor
+	}
+	return ModerationLabel_EXECUTOR_UNSPECIFIED
+}
+
 type Verdict struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VerdictId     string                 `protobuf:"bytes,1,opt,name=verdict_id,json=verdictId,proto3" json:"verdict_id,omitempty"` // UUID string, unique
@@ -4470,7 +4739,7 @@ type Verdict struct {
 
 func (x *Verdict) Reset() {
 	*x = Verdict{}
-	mi := &file_pandaeye_v1_wire_proto_msgTypes[37]
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4482,7 +4751,7 @@ func (x *Verdict) String() string {
 func (*Verdict) ProtoMessage() {}
 
 func (x *Verdict) ProtoReflect() protoreflect.Message {
-	mi := &file_pandaeye_v1_wire_proto_msgTypes[37]
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4495,7 +4764,7 @@ func (x *Verdict) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Verdict.ProtoReflect.Descriptor instead.
 func (*Verdict) Descriptor() ([]byte, []int) {
-	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{37}
+	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *Verdict) GetVerdictId() string {
@@ -4628,7 +4897,7 @@ type VerdictAck struct {
 
 func (x *VerdictAck) Reset() {
 	*x = VerdictAck{}
-	mi := &file_pandaeye_v1_wire_proto_msgTypes[38]
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4640,7 +4909,7 @@ func (x *VerdictAck) String() string {
 func (*VerdictAck) ProtoMessage() {}
 
 func (x *VerdictAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pandaeye_v1_wire_proto_msgTypes[38]
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4653,7 +4922,7 @@ func (x *VerdictAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerdictAck.ProtoReflect.Descriptor instead.
 func (*VerdictAck) Descriptor() ([]byte, []int) {
-	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{38}
+	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *VerdictAck) GetVerdictId() string {
@@ -4688,7 +4957,7 @@ type WatchRequest struct {
 
 func (x *WatchRequest) Reset() {
 	*x = WatchRequest{}
-	mi := &file_pandaeye_v1_wire_proto_msgTypes[39]
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4700,7 +4969,7 @@ func (x *WatchRequest) String() string {
 func (*WatchRequest) ProtoMessage() {}
 
 func (x *WatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pandaeye_v1_wire_proto_msgTypes[39]
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4713,7 +4982,7 @@ func (x *WatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchRequest.ProtoReflect.Descriptor instead.
 func (*WatchRequest) Descriptor() ([]byte, []int) {
-	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{39}
+	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *WatchRequest) GetPlayer() []byte {
@@ -4743,7 +5012,7 @@ type PlayerRisk struct {
 
 func (x *PlayerRisk) Reset() {
 	*x = PlayerRisk{}
-	mi := &file_pandaeye_v1_wire_proto_msgTypes[40]
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4755,7 +5024,7 @@ func (x *PlayerRisk) String() string {
 func (*PlayerRisk) ProtoMessage() {}
 
 func (x *PlayerRisk) ProtoReflect() protoreflect.Message {
-	mi := &file_pandaeye_v1_wire_proto_msgTypes[40]
+	mi := &file_pandaeye_v1_wire_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4768,7 +5037,7 @@ func (x *PlayerRisk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlayerRisk.ProtoReflect.Descriptor instead.
 func (*PlayerRisk) Descriptor() ([]byte, []int) {
-	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{40}
+	return file_pandaeye_v1_wire_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *PlayerRisk) GetPlayer() []byte {
@@ -4914,7 +5183,7 @@ const file_pandaeye_v1_wire_proto_rawDesc = "" +
 	"\atime_us\x18\x01 \x01(\x04R\x06timeUs\x12\f\n" +
 	"\x01x\x18\x02 \x01(\x01R\x01x\x12\f\n" +
 	"\x01y\x18\x03 \x01(\x01R\x01y\x12\f\n" +
-	"\x01z\x18\x04 \x01(\x01R\x01z\"\x98\b\n" +
+	"\x01z\x18\x04 \x01(\x01R\x01z\"\xce\b\n" +
 	"\x05Event\x12\x16\n" +
 	"\x06player\x18\x01 \x01(\fR\x06player\x12\x17\n" +
 	"\atime_us\x18\x02 \x01(\x04R\x06timeUs\x12\x12\n" +
@@ -4939,7 +5208,8 @@ const file_pandaeye_v1_wire_proto_rawDesc = "" +
 	"\rserver_switch\x18\x1a \x01(\v2\x19.pandaeye.v1.ServerSwitchH\x00R\fserverSwitch\x120\n" +
 	"\x05stall\x18\x1b \x01(\v2\x18.pandaeye.v1.ServerStallH\x00R\x05stall\x12:\n" +
 	"\vcheck_stats\x18\x1c \x01(\v2\x17.pandaeye.v1.CheckStatsH\x00R\n" +
-	"checkStatsB\x06\n" +
+	"checkStats\x124\n" +
+	"\x05label\x18\x1d \x01(\v2\x1c.pandaeye.v1.ModerationLabelH\x00R\x05labelB\x06\n" +
 	"\x04kind\"\x94\x03\n" +
 	"\n" +
 	"PlayerJoin\x12\x12\n" +
@@ -5148,7 +5418,28 @@ const file_pandaeye_v1_wire_proto_rawDesc = "" +
 	"\vfrom_server\x18\x01 \x01(\tR\n" +
 	"fromServer\x12\x1b\n" +
 	"\tto_server\x18\x02 \x01(\tR\btoServer\x12'\n" +
-	"\x0fnetwork_session\x18\x03 \x01(\tR\x0enetworkSession\"\xc8\x04\n" +
+	"\x0fnetwork_session\x18\x03 \x01(\tR\x0enetworkSession\"\x82\x05\n" +
+	"\x0fModerationLabel\x12\x16\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\x12\x19\n" +
+	"\bentry_id\x18\x02 \x01(\x04R\aentryId\x125\n" +
+	"\x04kind\x18\x03 \x01(\x0e2!.pandaeye.v1.ModerationLabel.KindR\x04kind\x12S\n" +
+	"\x0eclassification\x18\x04 \x01(\x0e2+.pandaeye.v1.ModerationLabel.ClassificationR\x0eclassification\x12)\n" +
+	"\x11ban_start_unix_ms\x18\x05 \x01(\x04R\x0ebanStartUnixMs\x12&\n" +
+	"\x0fremoved_unix_ms\x18\x06 \x01(\x04R\rremovedUnixMs\x12\x1c\n" +
+	"\tpermanent\x18\a \x01(\bR\tpermanent\x12A\n" +
+	"\bexecutor\x18\b \x01(\x0e2%.pandaeye.v1.ModerationLabel.ExecutorR\bexecutor\"F\n" +
+	"\x04Kind\x12\x14\n" +
+	"\x10KIND_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eKIND_BAN_ADDED\x10\x01\x12\x14\n" +
+	"\x10KIND_BAN_REMOVED\x10\x02\"d\n" +
+	"\x0eClassification\x12\x1e\n" +
+	"\x1aCLASSIFICATION_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14CLASSIFICATION_CHEAT\x10\x01\x12\x18\n" +
+	"\x14CLASSIFICATION_LEGIT\x10\x02\"N\n" +
+	"\bExecutor\x12\x18\n" +
+	"\x14EXECUTOR_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eEXECUTOR_STAFF\x10\x01\x12\x14\n" +
+	"\x10EXECUTOR_CONSOLE\x10\x02\"\xc8\x04\n" +
 	"\aVerdict\x12\x1d\n" +
 	"\n" +
 	"verdict_id\x18\x01 \x01(\tR\tverdictId\x12\x16\n" +
@@ -5293,134 +5584,142 @@ func file_pandaeye_v1_wire_proto_rawDescGZIP() []byte {
 	return file_pandaeye_v1_wire_proto_rawDescData
 }
 
-var file_pandaeye_v1_wire_proto_enumTypes = make([]protoimpl.EnumInfo, 13)
-var file_pandaeye_v1_wire_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
+var file_pandaeye_v1_wire_proto_enumTypes = make([]protoimpl.EnumInfo, 16)
+var file_pandaeye_v1_wire_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_pandaeye_v1_wire_proto_goTypes = []any{
-	(Platform)(0),               // 0: pandaeye.v1.Platform
-	(Hand)(0),                   // 1: pandaeye.v1.Hand
-	(GameMode)(0),               // 2: pandaeye.v1.GameMode
-	(Face)(0),                   // 3: pandaeye.v1.Face
-	(Category)(0),               // 4: pandaeye.v1.Category
-	(MoveFlag)(0),               // 5: pandaeye.v1.MoveFlag
-	(EnvFlag)(0),                // 6: pandaeye.v1.EnvFlag
-	(Action)(0),                 // 7: pandaeye.v1.Action
-	(Mitigation)(0),             // 8: pandaeye.v1.Mitigation
-	(Error_Code)(0),             // 9: pandaeye.v1.Error.Code
-	(BlockDig_Action)(0),        // 10: pandaeye.v1.BlockDig.Action
-	(VelocityApplied_Source)(0), // 11: pandaeye.v1.VelocityApplied.Source
-	(LatencySample_Kind)(0),     // 12: pandaeye.v1.LatencySample.Kind
-	(*ClientFrame)(nil),         // 13: pandaeye.v1.ClientFrame
-	(*ServerFrame)(nil),         // 14: pandaeye.v1.ServerFrame
-	(*Hello)(nil),               // 15: pandaeye.v1.Hello
-	(*Welcome)(nil),             // 16: pandaeye.v1.Welcome
-	(*RemoteConfig)(nil),        // 17: pandaeye.v1.RemoteConfig
-	(*Goodbye)(nil),             // 18: pandaeye.v1.Goodbye
-	(*Error)(nil),               // 19: pandaeye.v1.Error
-	(*Ping)(nil),                // 20: pandaeye.v1.Ping
-	(*Pong)(nil),                // 21: pandaeye.v1.Pong
-	(*Batch)(nil),               // 22: pandaeye.v1.Batch
-	(*BatchAck)(nil),            // 23: pandaeye.v1.BatchAck
-	(*Vec3)(nil),                // 24: pandaeye.v1.Vec3
-	(*Vec3I)(nil),               // 25: pandaeye.v1.Vec3i
-	(*TimedPos)(nil),            // 26: pandaeye.v1.TimedPos
-	(*Event)(nil),               // 27: pandaeye.v1.Event
-	(*PlayerJoin)(nil),          // 28: pandaeye.v1.PlayerJoin
-	(*PlayerQuit)(nil),          // 29: pandaeye.v1.PlayerQuit
-	(*MoveSample)(nil),          // 30: pandaeye.v1.MoveSample
-	(*Attack)(nil),              // 31: pandaeye.v1.Attack
-	(*Swing)(nil),               // 32: pandaeye.v1.Swing
-	(*BlockPlace)(nil),          // 33: pandaeye.v1.BlockPlace
-	(*BlockDig)(nil),            // 34: pandaeye.v1.BlockDig
-	(*InventoryClick)(nil),      // 35: pandaeye.v1.InventoryClick
-	(*VelocityApplied)(nil),     // 36: pandaeye.v1.VelocityApplied
-	(*LatencySample)(nil),       // 37: pandaeye.v1.LatencySample
-	(*LocalFlag)(nil),           // 38: pandaeye.v1.LocalFlag
-	(*CheckStats)(nil),          // 39: pandaeye.v1.CheckStats
-	(*ContextMove)(nil),         // 40: pandaeye.v1.ContextMove
-	(*ServerStall)(nil),         // 41: pandaeye.v1.ServerStall
-	(*TeleportApplied)(nil),     // 42: pandaeye.v1.TeleportApplied
-	(*EnvSample)(nil),           // 43: pandaeye.v1.EnvSample
-	(*PotionLevel)(nil),         // 44: pandaeye.v1.PotionLevel
-	(*StateChange)(nil),         // 45: pandaeye.v1.StateChange
-	(*Probe)(nil),               // 46: pandaeye.v1.Probe
-	(*ProbeResult)(nil),         // 47: pandaeye.v1.ProbeResult
-	(*UseItem)(nil),             // 48: pandaeye.v1.UseItem
-	(*ServerSwitch)(nil),        // 49: pandaeye.v1.ServerSwitch
-	(*Verdict)(nil),             // 50: pandaeye.v1.Verdict
-	(*VerdictAck)(nil),          // 51: pandaeye.v1.VerdictAck
-	(*WatchRequest)(nil),        // 52: pandaeye.v1.WatchRequest
-	(*PlayerRisk)(nil),          // 53: pandaeye.v1.PlayerRisk
-	nil,                         // 54: pandaeye.v1.LocalFlag.DataEntry
+	(Platform)(0),                       // 0: pandaeye.v1.Platform
+	(Hand)(0),                           // 1: pandaeye.v1.Hand
+	(GameMode)(0),                       // 2: pandaeye.v1.GameMode
+	(Face)(0),                           // 3: pandaeye.v1.Face
+	(Category)(0),                       // 4: pandaeye.v1.Category
+	(MoveFlag)(0),                       // 5: pandaeye.v1.MoveFlag
+	(EnvFlag)(0),                        // 6: pandaeye.v1.EnvFlag
+	(Action)(0),                         // 7: pandaeye.v1.Action
+	(Mitigation)(0),                     // 8: pandaeye.v1.Mitigation
+	(Error_Code)(0),                     // 9: pandaeye.v1.Error.Code
+	(BlockDig_Action)(0),                // 10: pandaeye.v1.BlockDig.Action
+	(VelocityApplied_Source)(0),         // 11: pandaeye.v1.VelocityApplied.Source
+	(LatencySample_Kind)(0),             // 12: pandaeye.v1.LatencySample.Kind
+	(ModerationLabel_Kind)(0),           // 13: pandaeye.v1.ModerationLabel.Kind
+	(ModerationLabel_Classification)(0), // 14: pandaeye.v1.ModerationLabel.Classification
+	(ModerationLabel_Executor)(0),       // 15: pandaeye.v1.ModerationLabel.Executor
+	(*ClientFrame)(nil),                 // 16: pandaeye.v1.ClientFrame
+	(*ServerFrame)(nil),                 // 17: pandaeye.v1.ServerFrame
+	(*Hello)(nil),                       // 18: pandaeye.v1.Hello
+	(*Welcome)(nil),                     // 19: pandaeye.v1.Welcome
+	(*RemoteConfig)(nil),                // 20: pandaeye.v1.RemoteConfig
+	(*Goodbye)(nil),                     // 21: pandaeye.v1.Goodbye
+	(*Error)(nil),                       // 22: pandaeye.v1.Error
+	(*Ping)(nil),                        // 23: pandaeye.v1.Ping
+	(*Pong)(nil),                        // 24: pandaeye.v1.Pong
+	(*Batch)(nil),                       // 25: pandaeye.v1.Batch
+	(*BatchAck)(nil),                    // 26: pandaeye.v1.BatchAck
+	(*Vec3)(nil),                        // 27: pandaeye.v1.Vec3
+	(*Vec3I)(nil),                       // 28: pandaeye.v1.Vec3i
+	(*TimedPos)(nil),                    // 29: pandaeye.v1.TimedPos
+	(*Event)(nil),                       // 30: pandaeye.v1.Event
+	(*PlayerJoin)(nil),                  // 31: pandaeye.v1.PlayerJoin
+	(*PlayerQuit)(nil),                  // 32: pandaeye.v1.PlayerQuit
+	(*MoveSample)(nil),                  // 33: pandaeye.v1.MoveSample
+	(*Attack)(nil),                      // 34: pandaeye.v1.Attack
+	(*Swing)(nil),                       // 35: pandaeye.v1.Swing
+	(*BlockPlace)(nil),                  // 36: pandaeye.v1.BlockPlace
+	(*BlockDig)(nil),                    // 37: pandaeye.v1.BlockDig
+	(*InventoryClick)(nil),              // 38: pandaeye.v1.InventoryClick
+	(*VelocityApplied)(nil),             // 39: pandaeye.v1.VelocityApplied
+	(*LatencySample)(nil),               // 40: pandaeye.v1.LatencySample
+	(*LocalFlag)(nil),                   // 41: pandaeye.v1.LocalFlag
+	(*CheckStats)(nil),                  // 42: pandaeye.v1.CheckStats
+	(*ContextMove)(nil),                 // 43: pandaeye.v1.ContextMove
+	(*ServerStall)(nil),                 // 44: pandaeye.v1.ServerStall
+	(*TeleportApplied)(nil),             // 45: pandaeye.v1.TeleportApplied
+	(*EnvSample)(nil),                   // 46: pandaeye.v1.EnvSample
+	(*PotionLevel)(nil),                 // 47: pandaeye.v1.PotionLevel
+	(*StateChange)(nil),                 // 48: pandaeye.v1.StateChange
+	(*Probe)(nil),                       // 49: pandaeye.v1.Probe
+	(*ProbeResult)(nil),                 // 50: pandaeye.v1.ProbeResult
+	(*UseItem)(nil),                     // 51: pandaeye.v1.UseItem
+	(*ServerSwitch)(nil),                // 52: pandaeye.v1.ServerSwitch
+	(*ModerationLabel)(nil),             // 53: pandaeye.v1.ModerationLabel
+	(*Verdict)(nil),                     // 54: pandaeye.v1.Verdict
+	(*VerdictAck)(nil),                  // 55: pandaeye.v1.VerdictAck
+	(*WatchRequest)(nil),                // 56: pandaeye.v1.WatchRequest
+	(*PlayerRisk)(nil),                  // 57: pandaeye.v1.PlayerRisk
+	nil,                                 // 58: pandaeye.v1.LocalFlag.DataEntry
 }
 var file_pandaeye_v1_wire_proto_depIdxs = []int32{
-	15, // 0: pandaeye.v1.ClientFrame.hello:type_name -> pandaeye.v1.Hello
-	22, // 1: pandaeye.v1.ClientFrame.batch:type_name -> pandaeye.v1.Batch
-	20, // 2: pandaeye.v1.ClientFrame.ping:type_name -> pandaeye.v1.Ping
-	51, // 3: pandaeye.v1.ClientFrame.verdict_ack:type_name -> pandaeye.v1.VerdictAck
-	18, // 4: pandaeye.v1.ClientFrame.goodbye:type_name -> pandaeye.v1.Goodbye
-	16, // 5: pandaeye.v1.ServerFrame.welcome:type_name -> pandaeye.v1.Welcome
-	23, // 6: pandaeye.v1.ServerFrame.batch_ack:type_name -> pandaeye.v1.BatchAck
-	21, // 7: pandaeye.v1.ServerFrame.pong:type_name -> pandaeye.v1.Pong
-	50, // 8: pandaeye.v1.ServerFrame.verdict:type_name -> pandaeye.v1.Verdict
-	19, // 9: pandaeye.v1.ServerFrame.error:type_name -> pandaeye.v1.Error
-	47, // 10: pandaeye.v1.ServerFrame.probe_result:type_name -> pandaeye.v1.ProbeResult
-	52, // 11: pandaeye.v1.ServerFrame.watch:type_name -> pandaeye.v1.WatchRequest
-	53, // 12: pandaeye.v1.ServerFrame.player_risk:type_name -> pandaeye.v1.PlayerRisk
-	17, // 13: pandaeye.v1.ServerFrame.config_update:type_name -> pandaeye.v1.RemoteConfig
+	18, // 0: pandaeye.v1.ClientFrame.hello:type_name -> pandaeye.v1.Hello
+	25, // 1: pandaeye.v1.ClientFrame.batch:type_name -> pandaeye.v1.Batch
+	23, // 2: pandaeye.v1.ClientFrame.ping:type_name -> pandaeye.v1.Ping
+	55, // 3: pandaeye.v1.ClientFrame.verdict_ack:type_name -> pandaeye.v1.VerdictAck
+	21, // 4: pandaeye.v1.ClientFrame.goodbye:type_name -> pandaeye.v1.Goodbye
+	19, // 5: pandaeye.v1.ServerFrame.welcome:type_name -> pandaeye.v1.Welcome
+	26, // 6: pandaeye.v1.ServerFrame.batch_ack:type_name -> pandaeye.v1.BatchAck
+	24, // 7: pandaeye.v1.ServerFrame.pong:type_name -> pandaeye.v1.Pong
+	54, // 8: pandaeye.v1.ServerFrame.verdict:type_name -> pandaeye.v1.Verdict
+	22, // 9: pandaeye.v1.ServerFrame.error:type_name -> pandaeye.v1.Error
+	50, // 10: pandaeye.v1.ServerFrame.probe_result:type_name -> pandaeye.v1.ProbeResult
+	56, // 11: pandaeye.v1.ServerFrame.watch:type_name -> pandaeye.v1.WatchRequest
+	57, // 12: pandaeye.v1.ServerFrame.player_risk:type_name -> pandaeye.v1.PlayerRisk
+	20, // 13: pandaeye.v1.ServerFrame.config_update:type_name -> pandaeye.v1.RemoteConfig
 	0,  // 14: pandaeye.v1.Hello.platform:type_name -> pandaeye.v1.Platform
-	17, // 15: pandaeye.v1.Welcome.config:type_name -> pandaeye.v1.RemoteConfig
+	20, // 15: pandaeye.v1.Welcome.config:type_name -> pandaeye.v1.RemoteConfig
 	9,  // 16: pandaeye.v1.Error.code:type_name -> pandaeye.v1.Error.Code
-	17, // 17: pandaeye.v1.Pong.config:type_name -> pandaeye.v1.RemoteConfig
-	27, // 18: pandaeye.v1.Batch.events:type_name -> pandaeye.v1.Event
-	28, // 19: pandaeye.v1.Event.join:type_name -> pandaeye.v1.PlayerJoin
-	29, // 20: pandaeye.v1.Event.quit:type_name -> pandaeye.v1.PlayerQuit
-	30, // 21: pandaeye.v1.Event.move:type_name -> pandaeye.v1.MoveSample
-	31, // 22: pandaeye.v1.Event.attack:type_name -> pandaeye.v1.Attack
-	32, // 23: pandaeye.v1.Event.swing:type_name -> pandaeye.v1.Swing
-	33, // 24: pandaeye.v1.Event.place:type_name -> pandaeye.v1.BlockPlace
-	34, // 25: pandaeye.v1.Event.dig:type_name -> pandaeye.v1.BlockDig
-	35, // 26: pandaeye.v1.Event.click:type_name -> pandaeye.v1.InventoryClick
-	36, // 27: pandaeye.v1.Event.velocity:type_name -> pandaeye.v1.VelocityApplied
-	37, // 28: pandaeye.v1.Event.latency:type_name -> pandaeye.v1.LatencySample
-	38, // 29: pandaeye.v1.Event.flag:type_name -> pandaeye.v1.LocalFlag
-	42, // 30: pandaeye.v1.Event.teleport:type_name -> pandaeye.v1.TeleportApplied
-	43, // 31: pandaeye.v1.Event.env:type_name -> pandaeye.v1.EnvSample
-	45, // 32: pandaeye.v1.Event.state:type_name -> pandaeye.v1.StateChange
-	46, // 33: pandaeye.v1.Event.probe:type_name -> pandaeye.v1.Probe
-	48, // 34: pandaeye.v1.Event.use_item:type_name -> pandaeye.v1.UseItem
-	49, // 35: pandaeye.v1.Event.server_switch:type_name -> pandaeye.v1.ServerSwitch
-	41, // 36: pandaeye.v1.Event.stall:type_name -> pandaeye.v1.ServerStall
-	39, // 37: pandaeye.v1.Event.check_stats:type_name -> pandaeye.v1.CheckStats
-	2,  // 38: pandaeye.v1.PlayerJoin.game_mode:type_name -> pandaeye.v1.GameMode
-	24, // 39: pandaeye.v1.Attack.eye:type_name -> pandaeye.v1.Vec3
-	26, // 40: pandaeye.v1.Attack.target_history:type_name -> pandaeye.v1.TimedPos
-	2,  // 41: pandaeye.v1.Attack.game_mode:type_name -> pandaeye.v1.GameMode
-	1,  // 42: pandaeye.v1.Swing.hand:type_name -> pandaeye.v1.Hand
-	25, // 43: pandaeye.v1.BlockPlace.block:type_name -> pandaeye.v1.Vec3i
-	3,  // 44: pandaeye.v1.BlockPlace.face:type_name -> pandaeye.v1.Face
-	1,  // 45: pandaeye.v1.BlockPlace.hand:type_name -> pandaeye.v1.Hand
-	24, // 46: pandaeye.v1.BlockPlace.eye:type_name -> pandaeye.v1.Vec3
-	10, // 47: pandaeye.v1.BlockDig.action:type_name -> pandaeye.v1.BlockDig.Action
-	25, // 48: pandaeye.v1.BlockDig.block:type_name -> pandaeye.v1.Vec3i
-	3,  // 49: pandaeye.v1.BlockDig.face:type_name -> pandaeye.v1.Face
-	24, // 50: pandaeye.v1.BlockDig.eye:type_name -> pandaeye.v1.Vec3
-	11, // 51: pandaeye.v1.VelocityApplied.source:type_name -> pandaeye.v1.VelocityApplied.Source
-	12, // 52: pandaeye.v1.LatencySample.kind:type_name -> pandaeye.v1.LatencySample.Kind
-	4,  // 53: pandaeye.v1.LocalFlag.category:type_name -> pandaeye.v1.Category
-	54, // 54: pandaeye.v1.LocalFlag.data:type_name -> pandaeye.v1.LocalFlag.DataEntry
-	40, // 55: pandaeye.v1.LocalFlag.context:type_name -> pandaeye.v1.ContextMove
-	30, // 56: pandaeye.v1.ContextMove.move:type_name -> pandaeye.v1.MoveSample
-	2,  // 57: pandaeye.v1.StateChange.game_mode:type_name -> pandaeye.v1.GameMode
-	44, // 58: pandaeye.v1.StateChange.effects:type_name -> pandaeye.v1.PotionLevel
-	1,  // 59: pandaeye.v1.UseItem.hand:type_name -> pandaeye.v1.Hand
-	7,  // 60: pandaeye.v1.Verdict.action:type_name -> pandaeye.v1.Action
-	8,  // 61: pandaeye.v1.Verdict.mitigations:type_name -> pandaeye.v1.Mitigation
-	4,  // 62: pandaeye.v1.Verdict.category:type_name -> pandaeye.v1.Category
-	63, // [63:63] is the sub-list for method output_type
-	63, // [63:63] is the sub-list for method input_type
-	63, // [63:63] is the sub-list for extension type_name
-	63, // [63:63] is the sub-list for extension extendee
-	0,  // [0:63] is the sub-list for field type_name
+	20, // 17: pandaeye.v1.Pong.config:type_name -> pandaeye.v1.RemoteConfig
+	30, // 18: pandaeye.v1.Batch.events:type_name -> pandaeye.v1.Event
+	31, // 19: pandaeye.v1.Event.join:type_name -> pandaeye.v1.PlayerJoin
+	32, // 20: pandaeye.v1.Event.quit:type_name -> pandaeye.v1.PlayerQuit
+	33, // 21: pandaeye.v1.Event.move:type_name -> pandaeye.v1.MoveSample
+	34, // 22: pandaeye.v1.Event.attack:type_name -> pandaeye.v1.Attack
+	35, // 23: pandaeye.v1.Event.swing:type_name -> pandaeye.v1.Swing
+	36, // 24: pandaeye.v1.Event.place:type_name -> pandaeye.v1.BlockPlace
+	37, // 25: pandaeye.v1.Event.dig:type_name -> pandaeye.v1.BlockDig
+	38, // 26: pandaeye.v1.Event.click:type_name -> pandaeye.v1.InventoryClick
+	39, // 27: pandaeye.v1.Event.velocity:type_name -> pandaeye.v1.VelocityApplied
+	40, // 28: pandaeye.v1.Event.latency:type_name -> pandaeye.v1.LatencySample
+	41, // 29: pandaeye.v1.Event.flag:type_name -> pandaeye.v1.LocalFlag
+	45, // 30: pandaeye.v1.Event.teleport:type_name -> pandaeye.v1.TeleportApplied
+	46, // 31: pandaeye.v1.Event.env:type_name -> pandaeye.v1.EnvSample
+	48, // 32: pandaeye.v1.Event.state:type_name -> pandaeye.v1.StateChange
+	49, // 33: pandaeye.v1.Event.probe:type_name -> pandaeye.v1.Probe
+	51, // 34: pandaeye.v1.Event.use_item:type_name -> pandaeye.v1.UseItem
+	52, // 35: pandaeye.v1.Event.server_switch:type_name -> pandaeye.v1.ServerSwitch
+	44, // 36: pandaeye.v1.Event.stall:type_name -> pandaeye.v1.ServerStall
+	42, // 37: pandaeye.v1.Event.check_stats:type_name -> pandaeye.v1.CheckStats
+	53, // 38: pandaeye.v1.Event.label:type_name -> pandaeye.v1.ModerationLabel
+	2,  // 39: pandaeye.v1.PlayerJoin.game_mode:type_name -> pandaeye.v1.GameMode
+	27, // 40: pandaeye.v1.Attack.eye:type_name -> pandaeye.v1.Vec3
+	29, // 41: pandaeye.v1.Attack.target_history:type_name -> pandaeye.v1.TimedPos
+	2,  // 42: pandaeye.v1.Attack.game_mode:type_name -> pandaeye.v1.GameMode
+	1,  // 43: pandaeye.v1.Swing.hand:type_name -> pandaeye.v1.Hand
+	28, // 44: pandaeye.v1.BlockPlace.block:type_name -> pandaeye.v1.Vec3i
+	3,  // 45: pandaeye.v1.BlockPlace.face:type_name -> pandaeye.v1.Face
+	1,  // 46: pandaeye.v1.BlockPlace.hand:type_name -> pandaeye.v1.Hand
+	27, // 47: pandaeye.v1.BlockPlace.eye:type_name -> pandaeye.v1.Vec3
+	10, // 48: pandaeye.v1.BlockDig.action:type_name -> pandaeye.v1.BlockDig.Action
+	28, // 49: pandaeye.v1.BlockDig.block:type_name -> pandaeye.v1.Vec3i
+	3,  // 50: pandaeye.v1.BlockDig.face:type_name -> pandaeye.v1.Face
+	27, // 51: pandaeye.v1.BlockDig.eye:type_name -> pandaeye.v1.Vec3
+	11, // 52: pandaeye.v1.VelocityApplied.source:type_name -> pandaeye.v1.VelocityApplied.Source
+	12, // 53: pandaeye.v1.LatencySample.kind:type_name -> pandaeye.v1.LatencySample.Kind
+	4,  // 54: pandaeye.v1.LocalFlag.category:type_name -> pandaeye.v1.Category
+	58, // 55: pandaeye.v1.LocalFlag.data:type_name -> pandaeye.v1.LocalFlag.DataEntry
+	43, // 56: pandaeye.v1.LocalFlag.context:type_name -> pandaeye.v1.ContextMove
+	33, // 57: pandaeye.v1.ContextMove.move:type_name -> pandaeye.v1.MoveSample
+	2,  // 58: pandaeye.v1.StateChange.game_mode:type_name -> pandaeye.v1.GameMode
+	47, // 59: pandaeye.v1.StateChange.effects:type_name -> pandaeye.v1.PotionLevel
+	1,  // 60: pandaeye.v1.UseItem.hand:type_name -> pandaeye.v1.Hand
+	13, // 61: pandaeye.v1.ModerationLabel.kind:type_name -> pandaeye.v1.ModerationLabel.Kind
+	14, // 62: pandaeye.v1.ModerationLabel.classification:type_name -> pandaeye.v1.ModerationLabel.Classification
+	15, // 63: pandaeye.v1.ModerationLabel.executor:type_name -> pandaeye.v1.ModerationLabel.Executor
+	7,  // 64: pandaeye.v1.Verdict.action:type_name -> pandaeye.v1.Action
+	8,  // 65: pandaeye.v1.Verdict.mitigations:type_name -> pandaeye.v1.Mitigation
+	4,  // 66: pandaeye.v1.Verdict.category:type_name -> pandaeye.v1.Category
+	67, // [67:67] is the sub-list for method output_type
+	67, // [67:67] is the sub-list for method input_type
+	67, // [67:67] is the sub-list for extension type_name
+	67, // [67:67] is the sub-list for extension extendee
+	0,  // [0:67] is the sub-list for field type_name
 }
 
 func init() { file_pandaeye_v1_wire_proto_init() }
@@ -5466,14 +5765,15 @@ func file_pandaeye_v1_wire_proto_init() {
 		(*Event_ServerSwitch)(nil),
 		(*Event_Stall)(nil),
 		(*Event_CheckStats)(nil),
+		(*Event_Label)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pandaeye_v1_wire_proto_rawDesc), len(file_pandaeye_v1_wire_proto_rawDesc)),
-			NumEnums:      13,
-			NumMessages:   42,
+			NumEnums:      16,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

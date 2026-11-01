@@ -25,6 +25,7 @@ batches the seq and event count:
 | `batch_small` | Batch seq 1: a PlayerJoin (`Fixture_1`, protocol 774, entity id 42) and one MoveSample |
 | `batch_moves` | Batch seq 2, `replayed = true`: 200 MoveSamples, event i has `tick = i + 1`, `x = i * 0.25` |
 | `batch_flag` | Batch seq 3: one LocalFlag `movement.speed` with `data = {excess: 0.15, bound: 0.31}` and 40 context moves |
+| `batch_label` | Batch seq 4: two ModerationLabels of LiteBans ban 1234 (permanent, by staff): BAN_ADDED CHEAT, then BAN_REMOVED LEGIT |
 
 The player of every event is the 16 bytes `0123456789abcdef0123456789abcdef` (hex).
 
