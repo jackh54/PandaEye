@@ -4613,8 +4613,9 @@ func (x *ServerSwitch) GetNetworkSession() string {
 // punishment plugin is installed: live, and on enable for the bans of the last days (the same entry again).
 // Event.player is the banned player (offline and Bedrock players included), Event.time_us when it was sent.
 // Only CHEAT and LEGIT are sent. It never carries reason texts, names or ids of the staff involved, or IPs.
-// Every server of a network may send the same entry: receivers de-duplicate by (tenant, network_id of the
-// sender's Hello, source, entry_id, kind), as entry ids are those of the network's punishment database.
+// Every server of a network may send the same entry: receivers de-duplicate by (tenant, scope, source,
+// entry_id, kind), the scope being the network_id of the sender's Hello or, without one, the sending server,
+// as entry ids are those of one punishment database (a network's, or a standalone server's local one).
 type ModerationLabel struct {
 	state          protoimpl.MessageState         `protogen:"open.v1"`
 	Source         string                         `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`                   // "litebans"

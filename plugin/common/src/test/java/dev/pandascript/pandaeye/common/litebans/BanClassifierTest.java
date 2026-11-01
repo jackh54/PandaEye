@@ -176,6 +176,53 @@ class BanClassifierTest {
         assertEquals(expected, classifier.removed(ban("ban", "Hacking / Blacklisted Modifications", STAFF, removal)));
     }
 
+    /** Hyphens and underscores count as spaces, in the reason and in the entry. */
+    @ParameterizedTest(name = "{0} -> {1}")
+    @CsvSource(delimiter = '|', value = {
+            "Anti-Knockback        | CHEAT",
+            "Aim-bot               | CHEAT",
+            "Auto-clicker          | CHEAT",
+            "No-fall               | CHEAT",
+            "kill_aura             | CHEAT",
+            "Hacking (X Ray)       | NONE",
+            "Hacking (ban evasion) | NONE",
+            "hacking-alt           | NONE",
+            "Breach-of-trust       | NONE",
+    })
+    void hyphensAndUnderscoresAreSpaces(String reason, Label expected) {
+        assertEquals(expected, classifier.added(ban("ban", reason, STAFF, null)));
+    }
+
+    @ParameterizedTest(name = "lifted with {0} -> {1}")
+    @CsvSource(delimiter = '|', value = {
+            "false-ban                 | LEGIT",
+            "False positive            | LEGIT",
+            "Wrongly banned            | LEGIT",
+            "Wrong ban                 | LEGIT",
+            "Accepted appeal           | LEGIT",
+            "Appeal approved (#ab12)   | LEGIT",
+            "Appeal denied             | NONE",
+            "Time served               | NONE",
+    })
+    void otherWaysStaffSayABanWasWrong(String removal, Label expected) {
+        assertEquals(expected, classifier.removed(ban("ban", "Hacking / Blacklisted Modifications", STAFF, removal)));
+    }
+
+    /** A URL is not part of the reason: PandaEye's ban reason carries the appeal link, whatever the owner set. */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {
+            "Unfair advantage. Appeal at https://appeal.esportsmc.net/appeal with code AB12CD",
+            "Unfair advantage. Appeal at https://test.example/appeal with code AB12CD",
+            "Unfair advantage. Appeal at http://alt-appeals.example with code AB12CD",
+            "Unfair advantage. Appeal at www.xray-free.example/appeal with code AB12CD",
+    })
+    void urlsInTheReasonAreSkipped(String reason) {
+        assertEquals(Label.LEGIT, classifier.removed(ban("ban", reason, "CONSOLE", "false ban")));
+        assertEquals(Label.CHEAT, classifier.added(ban("ban", reason, STAFF, null)));
+        assertFalse(BanClassifier.matches("see https://hack.example/x", List.of("hack")));
+        assertTrue(BanClassifier.matches("see https://example.org/x, hacking", List.of("hack")), "text after the URL");
+    }
+
     @Test
     void pandaEyesOwnConsoleBanIsOnlyLabelledWhenLiftedAsWrong() {
         String reason = "Unfair advantage. Appeal at https://eye-dash.pandascript.dev/appeal with code AB12CD";
@@ -221,7 +268,7 @@ class BanClassifierTest {
             "Blacklisted Modifications | blacklisted mod | true",
             "unblacklisted mods        | blacklisted mod | false",
             "(anti-kb)                 | anti-kb         | true",
-            "anti-kb                   | anti kb         | false",
+            "anti-kb                   | anti kb         | true",
             "an alt account            | 'alt '          | true",
             "alts                      | 'alt '          | false",
             // an entry that starts with a space or punctuation brings its own word start

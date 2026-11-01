@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Turns a LiteBans ban into a label (ARCHITECTURE 4.12). Only entries of type {@code ban} count. A reason is a
@@ -86,13 +87,17 @@ public final class BanClassifier {
      * not a word character (see {@code wordChar}) or after a colour code ({@code "&cHacking"}). Every occurrence is
      * tried ("reach" matches "breach, reach"); the end is free. An entry that does not start with a word character
      * ({@code "#30d"}, a quoted {@code " alt"}, {@code "外挂"}) brings its own word start and matches anywhere.
+     * Hyphens and underscores count as spaces in both ({@code "anti knockback"} matches "Anti-Knockback",
+     * {@code "x-ray"} matches "X Ray"), and URLs in the text are skipped: an appeal link
+     * ({@code "https://test.example/appeal"}) is not a reason.
      */
     static boolean matches(String text, List<String> entries) {
         if (text == null || text.isEmpty()) {
             return false;
         }
-        String lower = text.toLowerCase(Locale.ROOT);
-        for (String entry : entries) {
+        String lower = fold(URL.matcher(text).replaceAll(" "));
+        for (String raw : entries) {
+            String entry = fold(raw);
             boolean word = !entry.isEmpty() && wordChar(entry.codePointAt(0));
             for (int at = lower.indexOf(entry); at >= 0; at = lower.indexOf(entry, at + 1)) {
                 if (!word || at == 0 || !wordChar(lower.codePointBefore(at)) || colourCodeBefore(lower, at)) {
@@ -101,6 +106,14 @@ public final class BanClassifier {
             }
         }
         return false;
+    }
+
+    /** A URL (scheme or "www." up to the next space), as PandaEye's own ban reason carries its appeal link. */
+    private static final Pattern URL = Pattern.compile("(?i)(?:\\b[a-z][a-z0-9+.-]*://|\\bwww\\.)\\S*");
+
+    /** Lowercase (Locale.ROOT), with hyphens and underscores as spaces. */
+    private static String fold(String text) {
+        return text.toLowerCase(Locale.ROOT).replace('-', ' ').replace('_', ' ');
     }
 
     /**

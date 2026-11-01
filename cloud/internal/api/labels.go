@@ -138,7 +138,8 @@ func moderationLabel(rec *pb.LabelRecord, subjectTenant string) (*store.Moderati
 	if l.GetEntryId() == 0 || l.GetBanStartUnixMs() == 0 {
 		return nil, errors.New("no entry id or ban start")
 	}
-	m := &store.ModerationLabel{TenantID: tenant, NetworkID: rec.GetOrigin().GetNetworkId(), Source: l.GetSource(),
+	scope := stream.LabelScope(rec.GetOrigin().GetNetworkId(), rec.GetOrigin().GetServerId())
+	m := &store.ModerationLabel{TenantID: tenant, NetworkID: scope, Source: l.GetSource(),
 		EntryID: strconv.FormatUint(l.GetEntryId(), 10), PlayerUUID: player.String(), BanStart: time.UnixMilli(int64(l.GetBanStartUnixMs())).UTC(),
 		Permanent: l.GetPermanent()}
 	switch {

@@ -3,7 +3,8 @@
 -- A ban of a punishment plugin that the plugin classified as for cheating (kind 'ban_added', label
 -- 'cheat') or lifted as wrong (kind 'ban_removed', label 'legit'). One row per entry and kind: the proxy
 -- and every backend may report the same entry, and every plugin enable resends a backfill. Entry ids are
--- those of one punishment database, so the entry is scoped to the sending server's network id ('' = none).
+-- those of one punishment database, so the entry is scoped to the sending server's network id, or to that
+-- server ('server/<server id>') when it has none.
 CREATE TABLE moderation_labels (
 	tenant_id   TEXT NOT NULL REFERENCES tenants (id),
 	network_id  TEXT NOT NULL DEFAULT '',

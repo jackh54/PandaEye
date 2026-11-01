@@ -132,9 +132,9 @@ message AckRecord {
 }
 
 // Subject pe.labels.<tenant_id> (stream PE_VERDICTS): a ModerationLabel event the worker took out of the
-// event stream, for the api's label consumer, which de-duplicates it by (tenant, origin network_id, source,
-// entry id, kind) and confirms or overturns the player's verdicts (ARCHITECTURE 5.8). The player may be
-// offline.
+// event stream, for the api's label consumer, which de-duplicates it by (tenant, scope, source, entry id,
+// kind), the scope being the origin's network_id or, without one, "server/<origin server_id>", and
+// confirms or overturns the player's verdicts (ARCHITECTURE 5.8). The player may be offline.
 message LabelRecord {
   Origin origin = 1;                  // the server or proxy that sent it
   bytes player = 2;

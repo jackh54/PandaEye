@@ -83,7 +83,8 @@ class VelocityConfigTest {
                 labels:
                   litebans:
                     cheat-reasons: hack
-                    legit-unban-reasons: [false ban, {nested: map}, falsely, wrongful, mistake, appeal accepted]
+                    legit-unban-reasons: [false ban, {nested: map}, falsely, wrongful, mistake, appeal accepted, false positive,
+                      wrongly, wrong ban, accepted appeal, appeal approved]
                     backfill-days: 1000
                 """, invalid).litebans());
         assertEquals(3, invalid.size(), invalid.toString());

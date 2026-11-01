@@ -28,7 +28,8 @@ punishments:
   max-kicks-per-10min: 5
 # LiteBans (optional, on this proxy): its bans become labels for the cloud, so verdict accuracy can be measured
 # from what staff already do. Only "ban" entries count. Each reason below matches where it starts a word,
-# case-insensitively: "hack" matches "hacking", "reach" does not match "breach" (hence killaura next to aura).
+# case-insensitively: "hack" matches "hacking", "reach" does not match "breach" (hence killaura next to aura);
+# hyphens and underscores count as spaces and URLs in a reason are skipped.
 # A ban is CHEAT when its reason has a cheat-reason and no ignore-reason (ignore wins) and staff issued it (the
 # console too with count-console: console bans come from other anticheats or PandaEye's own ban-command). The
 # removal of such a ban with a legit-unban-reason is LEGIT, PandaEye's own included ("unfair advantage" is its
@@ -42,8 +43,9 @@ labels:
       killaura, kill aura, aimbot, aim bot, aim assist, aimassist, triggerbot, trigger bot, antikb, anti kb, anti-kb,
       antiknockback, anti knockback, auto crystal, autocrystal, auto anchor, autoanchor, auto armor, autoarmor,
       nofall, no fall, noslow, no slow, fast place, fastplace, hitbox, criticals, baritone, flight, unfair advantage]
-    ignore-reasons: [x-ray, xray, esp, bot account, evad, alt, test]
-    legit-unban-reasons: [false ban, falsely, wrongful, mistake, appeal accepted]
+    ignore-reasons: [x-ray, xray, esp, bot account, evad, evasion, alt, test]
+    legit-unban-reasons: [false ban, falsely, wrongful, mistake, appeal accepted, false positive, wrongly,
+      wrong ban, accepted appeal, appeal approved]
     count-console: false
     backfill-days: 30        # on enable, label the bans of the last N days once (0 = off)
 debug: false

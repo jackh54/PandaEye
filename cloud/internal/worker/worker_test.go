@@ -208,7 +208,8 @@ func TestWorkerPublishesLabelRecords(t *testing.T) {
 			if err := proto.Unmarshal(m.Data(), &r); err != nil {
 				t.Fatal(err)
 			}
-			if m.Headers().Get(jetstream.MsgIDHeader) != stream.LabelRecordMsgID(testTenant, "", "litebans", 77, int32(pb.ModerationLabel_KIND_BAN_ADDED)) {
+			if m.Headers().Get(jetstream.MsgIDHeader) != stream.LabelRecordMsgID(testTenant, stream.LabelScope("", r.GetOrigin().GetServerId()),
+				"litebans", 77, int32(pb.ModerationLabel_KIND_BAN_ADDED)) || r.GetOrigin().GetServerId() == "" {
 				t.Errorf("msg id %q", m.Headers().Get(jetstream.MsgIDHeader))
 			}
 			recs = append(recs, &r)

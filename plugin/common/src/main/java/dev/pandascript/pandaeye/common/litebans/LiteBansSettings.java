@@ -27,9 +27,9 @@ public record LiteBansSettings(boolean enabled, List<String> cheatReasons, List<
             "fast place", "fastplace", "hitbox", "criticals", "baritone", "flight", "unfair advantage");
     /** Checked before the cheat reasons: x-ray is not something PandaEye detects, bot and alt bans are not cheating. */
     public static final List<String> DEFAULT_IGNORE_REASONS = List.of("x-ray", "xray", "esp", "bot account", "evad",
-            "alt", "test");
+            "evasion", "alt", "test");
     public static final List<String> DEFAULT_LEGIT_UNBAN_REASONS = List.of("false ban", "falsely", "wrongful",
-            "mistake", "appeal accepted");
+            "mistake", "appeal accepted", "false positive", "wrongly", "wrong ban", "accepted appeal", "appeal approved");
     public static final int DEFAULT_BACKFILL_DAYS = 30;
     public static final int MAX_BACKFILL_DAYS = 365;
 

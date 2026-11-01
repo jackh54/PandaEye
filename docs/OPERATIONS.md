@@ -539,7 +539,7 @@ licence key and the regional endpoint.
 **1. Install in shadow mode.** Put the PandaEye jar in `plugins/` and prepare
 `plugins/PandaEye/config.yml` before the first enable (defaults: ARCHITECTURE 4.11): keep `mode: shadow`,
 set `cloud.license-key`, `cloud.endpoint` (`wss://<regional host>/v1/connect`), `server-name` and, on a
-network, `network-id` (also on a standalone server with its own LiteBans database, 8.9). Shadow mode
+network, `network-id` (the same on the proxy and every backend; LiteBans labels rely on it, 8.9). Shadow mode
 guarantees (ARCHITECTURE 1.1): no packet is sent to any client, no packet or event is cancelled or
 modified, no teleports or velocity changes, no punishment or mitigation (except UNBAN of a ban this server
 executed), bounded queues, files and logs, every callback catches every Throwable.
@@ -678,7 +678,9 @@ With LiteBans on a backend or the proxy, PandaEye sends its cheating bans and th
   "breach", `esp` not "disrespect", `test` not "fastest"; a colour code starts a word, as in "&cHacking"), and the
   word may go on (`hack` matches "hacking", `alt` "alts"), so list every spelling staff use (`killaura` and
   `kill aura` besides `aura`); an entry that starts with a space or punctuation (`#30d`) matches anywhere, and
-  Chinese, Japanese and Thai letters (no spaces between words) never continue a word. Keep `count-console: false`:
+  Chinese, Japanese and Thai letters (no spaces between words) never continue a word. Hyphens and
+  underscores count as spaces (`auto click` matches "Auto-clicker", `false ban` "false-ban"), and URLs in a
+  reason are skipped, so an appeal link (`https://test.example/appeal`) never matches `test`. Keep `count-console: false`:
   console bans come from other anticheats and from PandaEye's own `ban-command`, whose default reason ("Unfair
   advantage. Appeal at ...") is a cheat reason, so they would label PandaEye's own verdicts. `unfair advantage` is
   listed for the other direction: a PandaEye ban lifted with a legit-unban reason is LEGIT and overturns its
@@ -688,13 +690,13 @@ With LiteBans on a backend or the proxy, PandaEye sends its cheating bans and th
 In the cloud (ARCHITECTURE 5.8 "LiteBans labels"), the api's label consumer (lease `labels`) applies each ban
 and wrongful unban once per network, whichever proxy or backend of the network sent it:
 
-- LiteBans numbers the bans of each database from 1, so the cloud keeps the bans of each `network-id` apart
-  (servers without one count as one network). Networks of one tenant that share one LiteBans database should
-  use the same `network-id`; networks with their own database and different `network-id`s are kept apart. Two
-  networks (or standalone servers, whose LiteBans uses its own local database by default) with their own
-  databases and the same (or no) `network-id` mix up their bans (the api warns when a ban and its wrongful
-  unban name different players, 9.3): give each its own `network-id`, the same on its proxy and every backend
-  (8.8). Networks sharing one database under different `network-id`s report every ban once per `network-id`:
+- LiteBans numbers the bans of each database from 1, so the cloud keeps the bans of each `network-id` apart,
+  and those of each server without one (a standalone server, whose LiteBans uses its own local database by
+  default, needs no setting). Networks of one tenant that share one LiteBans database should use the same
+  `network-id`, as should standalone servers that share one (one MySQL); networks with their own database and
+  different `network-id`s are kept apart. Two networks with their own databases and the same `network-id` mix
+  up their bans (the api warns when a ban and its wrongful unban name different players, 9.3): give each its
+  own `network-id`, the same on its proxy and every backend (8.8). Networks sharing one database under different `network-id`s report every ban once per `network-id`:
   verdicts are decided once and the unflagged window label is written once (a ban lifted as wrong keeps its
   legit labels when another `network-id` reports the ban later), but the agreement statistics count such a ban
   (and its wrongful unban) once per `network-id` that reports it. Setting or changing a `network-id` later
@@ -802,7 +804,7 @@ Logs are JSON lines on stderr. These lines carry diagnostics without personal da
   `verdicts_overturned`. Aggregate counts and the tenant id only (8.9).
 - `labels: ban and wrongful unban of one entry have different players; applied as unrelated` (api, warn): a
   LiteBans entry id of one `network-id` named two players, so two LiteBans databases report under that
-  `network-id` (or without one; 8.9). `tenant_id`, `network_id`, `entry_id` and the `kind` being applied; no
+  `network-id` (8.9). `tenant_id`, `network_id`, `entry_id` and the `kind` being applied; no
   player ids. The unban only overturns its own player's verdicts, and the other player's ban stays.
 
 ## 10. Security checklist

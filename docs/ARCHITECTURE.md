@@ -442,8 +442,9 @@ labels:                    # 4.12; without LiteBans this does nothing
       killaura, kill aura, aimbot, aim bot, aim assist, aimassist, triggerbot, trigger bot, antikb, anti kb, anti-kb,
       antiknockback, anti knockback, auto crystal, autocrystal, auto anchor, autoanchor, auto armor, autoarmor,
       nofall, no fall, noslow, no slow, fast place, fastplace, hitbox, criticals, baritone, flight, unfair advantage]
-    ignore-reasons: [x-ray, xray, esp, bot account, evad, alt, test]   # checked first; ignore wins
-    legit-unban-reasons: [false ban, falsely, wrongful, mistake, appeal accepted]
+    ignore-reasons: [x-ray, xray, esp, bot account, evad, evasion, alt, test]   # checked first; ignore wins
+    legit-unban-reasons: [false ban, falsely, wrongful, mistake, appeal accepted, false positive, wrongly,
+      wrong ban, accepted appeal, appeal approved]
     count-console: false
     backfill-days: 30
 debug: false
@@ -463,7 +464,9 @@ loaded.
   character that is not a letter or digit (a Chinese, Japanese or Thai letter, written without spaces, does not
   count) or after a colour code (`&c`, `§c`, `&#rrggbb`), ending anywhere (`hack` matches "hacking", `reach`
   does not match "breach", so `killaura` is listed apart from `aura`); an entry that starts with another
-  character (`#30d`, a quoted `" alt"`, `外挂`) matches anywhere:
+  character (`#30d`, a quoted `" alt"`, `外挂`) matches anywhere. Hyphens and underscores count as spaces in
+  the text and the entries (`anti knockback` matches "Anti-Knockback"), and URLs in the text are skipped (an
+  appeal link in PandaEye's own ban reason is not a reason):
   - CHEAT: a ban added with a cheat reason by staff (by the console only with `count-console`: console bans are
     other anticheats' and PandaEye's own `ban-command`);
   - LEGIT: a ban with a cheat reason removed with a `legit-unban-reasons` reason, whoever issued it
@@ -480,10 +483,10 @@ loaded.
   50 000 rows), labelled the same way; a lifted ban may give a CHEAT and a LEGIT. It stops at the next row on
   disable.
 - One network can run LiteBans on the proxy and every backend, LiteBans may fire on more than one of them, and
-  every enable resends the backfill: receivers de-duplicate by (tenant, network id, source, entry id, kind),
-  the network id being the sending server's `network-id`. Entry ids are those of one LiteBans database, so the
-  bans of another network of the tenant with its own database (and `network-id`) stay apart even with the same
-  ids. The cloud applies the labels in the api (5.8 "LiteBans labels").
+  every enable resends the backfill: receivers de-duplicate by (tenant, scope, source, entry id, kind), the
+  scope being the sending server's `network-id` or, for a server without one, that server. Entry ids are those
+  of one LiteBans database, so the bans of another network of the tenant with its own database (and
+  `network-id`), or of a standalone server with LiteBans' local database, stay apart even with the same ids. The cloud applies the labels in the api (5.8 "LiteBans labels").
 - LiteBans' API not up at enable: one retry 10 s later. An incompatible API turns labels off with one warning;
   callbacks never throw into LiteBans. `/pandaeye status` and `/pandaeyeproxy status` show the state, the labels
   sent and the backfill result. Changes need a restart.
@@ -669,7 +672,8 @@ internal/testkit           fake plugin client, event builders, helpers
   events are buffered for at most 5 s (bounded) and otherwise dropped — checks never run without session
   info, and never for bedrock/exempt sessions. ModerationLabel events (4.12) are not gameplay: before any
   session handling they are validated and published as `LabelRecord` to `pe.labels.<tenant>` (msg id
-  `label:<tenant>:<network id>:<source>:<entry id>:<kind>`, the origin's network id, empty without one) for the
+  `label:<tenant>:<scope>:<source>:<entry id>:<kind>`, the scope being the origin's network id, else
+  `server/<server id>`) for the
   api; the player may be offline or never seen.
 - Dedup: last stream sequence per consumer + last batch seq per (tenant, server, partition).
 - Warm start: on lease acquisition the worker first replays the last 60 s of `pe.events.<NN>` before its
@@ -780,7 +784,7 @@ it. Tables:
 | `bans` | verdict_id pk, tenant_id, server_id, player_uuid, active, reason, created_at, overturned_at, overturned_by, overturn_note, unban_verdict_id, unban_state ('none','pending','done') |
 | `appeals` | id pk, tenant_id, verdict_id, player_uuid, message (<= 2000), contact (<= 200), status, created_at, decided_at, decided_by, decision_note |
 | `labels` | id pk, tenant_id, player_uuid, verdict_id, label ('cheat','legit'), source ('confirmed','overturned','manual','litebans','litebans_unflagged'), window_start, window_end, created_at |
-| `moderation_labels` | (tenant_id, network_id (the sending server's, '' = none), source, entry_id, kind ('ban_added','ban_removed')) pk, label ('cheat','legit'), player_uuid, ban_start, removed_at, permanent, executor ('staff','console'), received_at, applied_at, verdicts (how many it decided) |
+| `moderation_labels` | (tenant_id, network_id (the scope: the sending server's network id, else `server/<server id>`), source, entry_id, kind ('ban_added','ban_removed')) pk, label ('cheat','legit'), player_uuid, ban_start, removed_at, permanent, executor ('staff','console'), received_at, applied_at, verdicts (how many it decided) |
 | `clips` | id pk, tenant_id, server_id, player_uuid, start_us, end_us, codec, data, created_at |
 | `clip_subjects` | (clip_id, player_uuid) pk, tenant_id (players appearing in a clip, e.g. attack targets) |
 | `api_keys` | id pk, tenant_id, name, key_hash unique, scopes (json), created_at, last_used_at, revoked_at |
@@ -844,9 +848,10 @@ Free tier: 30 peak players. Over the limit for 3 days, the tenant's verdicts are
 dashboard shows a banner; players are never affected by billing state.
 
 LiteBans labels (label consumer: one leased `api` instance, lease `labels`, durable consumer on
-`pe.labels.*`). Each `LabelRecord` is recorded once per (tenant, network id of its origin, source, entry id,
-kind) in `moderation_labels` (a LiteBans entry id is only unique within its database, and networks with their
-own database have their own network id) and then applied with the same functions as the confirm and overturn
+`pe.labels.*`). Each `LabelRecord` is recorded once per (tenant, scope, source, entry id, kind) in
+`moderation_labels`, the scope being its origin's network id or, for a server without one, `server/<server
+id>` (a LiteBans entry id is only unique within its database: networks with their own database have their own
+network id, and a standalone server usually has its own local database) and then applied with the same functions as the confirm and overturn
 endpoints, as decision `litebans` (`verdicts.decided_by`), audit principal `litebans`:
 - cheat ban: every non-corrective verdict of the player created in [ban start - `PE_LABELS_LOOKBACK`, ban
   start] (7 d) is confirmed (`litebans` cheat label over its signal window, reputation contribution if
@@ -862,7 +867,7 @@ endpoints, as decision `litebans` (`verdicts.decided_by`), audit principal `lite
   time) must not run the unban command, which would lift any newer ban of the player; the ban record stays
   active until staff overturn the verdict.
 - A ban and a wrongful unban of one entry (same network id) that name different players are not each other's:
-  two LiteBans databases behind one network id (or none). The api logs a warning (tenant, network and entry
+  two LiteBans databases behind one network id. The api logs a warning (tenant, network and entry
   id), applies the unban to its own player as one whose ban was never seen (only that player's labels and
   verdicts), keeps the other player's ban (also when it arrives after the unban) and counts it as not lifted.
 - A `litebans_unflagged` label is not written when the player already has the same one (value, source and

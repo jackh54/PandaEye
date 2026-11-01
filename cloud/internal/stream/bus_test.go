@@ -141,6 +141,9 @@ func TestSubjects(t *testing.T) {
 		LabelRecordMsgID(tenant, "", "litebans", 4521, 2) == LabelRecordMsgID(tenant, "net-a", "litebans", 4521, 2) {
 		t.Error("label msg ids of two networks collide")
 	}
+	if LabelScope("net-a", "s1") != "net-a" || LabelScope("", "s1") != "server/s1" || LabelScope("", "s1") == LabelScope("", "s2") {
+		t.Error("label scope")
+	}
 	if p, err := PartitionOf("pe.signals.11"); err != nil || p != 11 {
 		t.Error("PartitionOf")
 	}

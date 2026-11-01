@@ -124,9 +124,20 @@ func VerdictRecordMsgID(verdictID string) string { return verdictID }
 // AckRecordMsgID returns the msg id of an AckRecord: ack:<verdict id>.
 func AckRecordMsgID(verdictID string) string { return "ack:" + verdictID }
 
-// LabelRecordMsgID returns the msg id of a LabelRecord: label:<tenant>:<network>:<source>:<entry id>:<kind>
-// (network = the origin's network id, empty when it has none), the key the api de-duplicates labels by
-// (the proxy and every backend of a network may send the same entry).
-func LabelRecordMsgID(tenantID, networkID, source string, entryID uint64, kind int32) string {
-	return "label:" + tenantID + ":" + networkID + ":" + source + ":" + strconv.FormatUint(entryID, 10) + ":" + strconv.Itoa(int(kind))
+// LabelScope is the scope a moderation entry id is unique in (a punishment plugin's database): the
+// origin's network id, or "server/<server id>" for a server without one (a standalone server, whose
+// punishment plugin usually keeps its own local database). The proxy and every backend of a network share
+// the network id, so they report an entry under one scope.
+func LabelScope(networkID, serverID string) string {
+	if networkID != "" {
+		return networkID
+	}
+	return "server/" + serverID
+}
+
+// LabelRecordMsgID returns the msg id of a LabelRecord: label:<tenant>:<scope>:<source>:<entry id>:<kind>
+// (scope = LabelScope of the origin), the key the api de-duplicates labels by (the proxy and every
+// backend of a network may send the same entry).
+func LabelRecordMsgID(tenantID, scope, source string, entryID uint64, kind int32) string {
+	return "label:" + tenantID + ":" + scope + ":" + source + ":" + strconv.FormatUint(entryID, 10) + ":" + strconv.Itoa(int(kind))
 }

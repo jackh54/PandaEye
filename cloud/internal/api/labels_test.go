@@ -654,12 +654,20 @@ func TestModerationLabelRecords(t *testing.T) {
 	check(t, err)
 	if m.EntryID != "12" || m.Kind != store.ModerationBanRemoved || m.Label != store.LabelLegit || m.PlayerUUID != player1 ||
 		!m.BanStart.Equal(fixedNow) || !m.RemovedAt.Equal(fixedNow.Add(time.Hour)) || m.Executor != store.ExecutorConsole || m.Permanent ||
-		m.NetworkID != "" {
+		m.NetworkID != "server/"+srv1 {
 		t.Fatalf("label %+v", m)
 	}
-	// The entry belongs to the sending server's network.
-	if m, err := moderationLabel(rec(func(r *pb.LabelRecord) { r.Origin.NetworkId = "net-a" }), tenantA); err != nil || m.NetworkID != "net-a" {
-		t.Fatalf("network id: %+v %v", m, err)
+	// The entry belongs to the sending server's network: the proxy and every backend of it share the scope.
+	for _, server := range []string{srv1, srv2} {
+		if m, err := moderationLabel(rec(func(r *pb.LabelRecord) { r.Origin.NetworkId, r.Origin.ServerId = "net-a", server }), tenantA); err != nil ||
+			m.NetworkID != "net-a" {
+			t.Fatalf("network id: %+v %v", m, err)
+		}
+	}
+	// A server without a network id (standalone, usually with its own local LiteBans database) is its own
+	// scope, so two such servers never mix up their entry ids.
+	if m, err := moderationLabel(rec(func(r *pb.LabelRecord) { r.Origin.ServerId = srv2 }), tenantA); err != nil || m.NetworkID != "server/"+srv2 {
+		t.Fatalf("standalone scope: %+v %v", m, err)
 	}
 	for name, mut := range map[string]func(r *pb.LabelRecord){
 		"other subject":   nil,
@@ -717,7 +725,7 @@ func TestLabelConsumer(t *testing.T) {
 	publish(tenantA, &pb.LabelRecord{Origin: &pb.Origin{TenantId: tenantA, ServerId: srv1}, Player: uuidBytes(player1), Label: label}, "c")
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		row, err := e.d.Store.GetModerationLabel(context.Background(), tenantA, "", sourceLiteBans, "4521", store.ModerationBanAdded)
+		row, err := e.d.Store.GetModerationLabel(context.Background(), tenantA, "server/"+srv1, sourceLiteBans, "4521", store.ModerationBanAdded)
 		if err == nil && !row.AppliedAt.IsZero() {
 			break
 		}
@@ -730,7 +738,7 @@ func TestLabelConsumer(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	wantDecision(t, e, vBan, store.StatusConfirmed, store.DecidedByLiteBans)
-	if _, err := e.d.Store.GetModerationLabel(context.Background(), tenantB, "", sourceLiteBans, "4521", store.ModerationBanAdded); !errors.Is(err, store.ErrNotFound) {
+	if _, err := e.d.Store.GetModerationLabel(context.Background(), tenantB, "server/", sourceLiteBans, "4521", store.ModerationBanAdded); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("a record on another tenant's subject was applied: %v", err)
 	}
 	if !strings.Contains(e.logs.String(), `unknown label source`) {

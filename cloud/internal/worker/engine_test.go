@@ -793,7 +793,7 @@ func TestModerationLabelsForwarded(t *testing.T) {
 	if len(ls) != 1 || len(out) != 1 {
 		t.Fatalf("label out %+v", out)
 	}
-	if ls[0].subject != "pe.labels."+testTenant || ls[0].msgID != stream.LabelRecordMsgID(testTenant, "", "litebans", 4521, int32(pb.ModerationLabel_KIND_BAN_ADDED)) {
+	if ls[0].subject != "pe.labels."+testTenant || ls[0].msgID != stream.LabelRecordMsgID(testTenant, "server/"+srv, "litebans", 4521, int32(pb.ModerationLabel_KIND_BAN_ADDED)) {
 		t.Fatalf("subject %s msg id %s", ls[0].subject, ls[0].msgID)
 	}
 	rec := ls[0].label
@@ -812,6 +812,15 @@ func TestModerationLabelsForwarded(t *testing.T) {
 	if len(ls) != 1 || ls[0].msgID != stream.LabelRecordMsgID(testTenant, "net-b", "litebans", 4521, int32(pb.ModerationLabel_KIND_BAN_ADDED)) ||
 		ls[0].label.Origin.GetNetworkId() != "net-b" {
 		t.Fatalf("label of network net-b: %+v", ls)
+	}
+	// Another server without a network id (a standalone server, usually with its own local database) is
+	// its own scope too.
+	alone := origin(testkit.NewServerID(), pb.Platform_PLATFORM_PAPER)
+	ls = labels(h.send(alone, 1, false, labelEvent(testkit.NewPlayer("alone"), 4521, pb.ModerationLabel_KIND_BAN_ADDED,
+		pb.ModerationLabel_CLASSIFICATION_CHEAT)))
+	if len(ls) != 1 || ls[0].msgID != stream.LabelRecordMsgID(testTenant, "server/"+alone.GetServerId(), "litebans", 4521,
+		int32(pb.ModerationLabel_KIND_BAN_ADDED)) {
+		t.Fatalf("label of a standalone server: %+v", ls)
 	}
 
 	// A backend without the player's session forwards it at once (nothing buffered or dropped).
