@@ -97,3 +97,22 @@ def test_select_threshold_respects_fpr_and_sits_between_scores():
         assert fpr <= max_fpr + 1e-12
         assert not np.any(np.isclose(p, t, rtol=0, atol=1e-9)), "threshold must not coincide with a score"
     assert select_threshold(y, p, 1.0) <= p.min()
+
+
+def test_fpr_by_label_source_includes_litebans_sources():
+    import pandas as pd
+
+    from pandaeye_ml.evaluate import _fpr_by_source
+
+    df = pd.DataFrame(
+        {
+            "y": [0, 0, 0, 0, 0, 1],
+            "label_source": ["overturned", "litebans", "litebans", "litebans_unflagged", None, "litebans_unflagged"],
+        }
+    )
+    flag_m = np.array([True, False, True, False, False, True])
+    flag_b = np.array([True, True, True, False, True, True])
+    out = _fpr_by_source(df, flag_m, flag_b)
+    assert set(out) == {"overturned", "litebans", "litebans_unflagged", "unknown"}
+    assert out["litebans"] == {"windows": 2, "model_fpr": 0.5, "baseline_fpr": 1.0}
+    assert out["litebans_unflagged"] == {"windows": 1, "model_fpr": 0.0, "baseline_fpr": 0.0}

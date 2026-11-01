@@ -265,7 +265,7 @@ The pipeline reads these fields and ignores the rest:
 | `player_uuid` (alias `player`) | yes | player UUID |
 | `label` | yes | `cheat` or `legit`; other values are skipped |
 | `window_start`, `window_end` | yes | the labelled verdict's signal window; integer Unix time (s, ms or us, by magnitude) or RFC 3339 |
-| `source` | no | `confirmed`, `overturned`, `manual` |
+| `source` | no | `confirmed`, `overturned`, `manual` (staff on the dashboard), `litebans` (a verdict a LiteBans cheat ban confirmed or a wrongful unban overturned, over its signal window), `litebans_unflagged` (a LiteBans ban or wrongful unban of a player without a verdict in the lookback before it: the 2 h before the ban, no verdict or category); lower-cased, unknown values are kept with a warning |
 | `verdict_id`, `created_at` | no | provenance |
 | `category` (or `evidence.category`) | no | the verdict's dominant category (`HEURISTICS`, `CATEGORY_HEURISTICS` or the enum number); used for the per-category gate breakdown |
 
@@ -298,7 +298,10 @@ has any cheat window, so no player contributes windows to both sides.
 **Bias warning.** Labels come from verdicts (confirmed = cheat, overturned = legit) plus manual labels, so
 labelled windows over-represent players the heuristics already flagged. The gate's false-positive rate is
 measured on this set, not on the whole population. Manual `legit` labels on randomly chosen players are
-needed before the FPR means "rate among all players".
+needed before the FPR means "rate among all players". LiteBans labels (ARCHITECTURE 5.8) add staff decisions
+made outside the dashboard; `litebans_unflagged` cheat labels are cheaters the heuristics missed (recall),
+but they come from keyword-matched ban reasons, so the gate reports the FPR per source
+(`fpr_by_label_source`) and the dataset statistics count labels per source (`labels_by_source`).
 
 ## 8. Model contract (Go scorer)
 

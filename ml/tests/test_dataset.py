@@ -333,3 +333,28 @@ def test_fetch_labels_api_refuses_plain_http_and_missing_key():
         D.fetch_labels_api("http://api.example.invalid", "pe_x_y")
     with pytest.raises(ValueError):
         D.fetch_labels_api("https://api.example.invalid", "")
+
+
+# --- label sources --------------------------------------------------------------------------
+
+
+def test_label_sources_litebans(caplog):
+    recs = [
+        label("t1", P1, "cheat", T0, T0 + W, source="LiteBans", verdict_id="v1", category="MOVEMENT"),
+        label("t1", P2, "cheat", T0, T0 + W, source="litebans_unflagged"),  # no verdict: no category
+        label("t1", P3, "legit", T0, T0 + W, source=" litebans_unflagged "),
+        label("t1", P3, "legit", T0 + 2 * W, T0 + 3 * W, source="future_source"),
+    ]
+    with caplog.at_level("WARNING"):
+        df = D.parse_label_records(recs)
+    assert list(df["source"]) == ["litebans", "litebans_unflagged", "litebans_unflagged", "future_source"]
+    assert df.loc[1, "category"] == D.UNKNOWN_CATEGORY and df.loc[1, "verdict_id"] == ""
+    assert "future_source" in caplog.text and "litebans" not in caplog.text
+    assert set(D.LABEL_SOURCES) >= {"confirmed", "overturned", "manual", "litebans", "litebans_unflagged"}
+
+    windows = make_windows([("t1", P1, 0), ("t1", P2, 0), ("t1", P3, 0), ("t1", P3, 2)])
+    ds = D.build_dataset(windows, df, {"t1"})
+    assert ds.stats["labels_by_source"] == {"future_source": 1, "litebans": 1, "litebans_unflagged": 2}
+    by_player = ds.frame.groupby("player")["label_source"].first().to_dict()
+    assert by_player == {P1: "litebans", P2: "litebans_unflagged", P3: "litebans_unflagged"}
+    assert ds.stats["positives"] == 2 and ds.stats["negatives"] == 2

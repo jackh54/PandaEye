@@ -129,10 +129,11 @@ booleans into tree attributes that protobuf 7 rejects.
      least `--min-positives`/`--min-negatives` windows (50) and `--min-players` players per class (5).
 
    `gate_report.json` adds ROC-AUC and PR-AUC for both, TPR per category (the verdict's dominant
-   category), FPR per label source (`overturned` vs `manual`), both operating points, and a player-level
-   bootstrap of the TPR/FPR differences. `deployable` is true only if the gate passed, the data was real,
-   and the deploy threshold itself kept FPR at or below the baseline's on the held-out players. If only
-   the last condition fails, set a new threshold (0 < p <= 1) with
+   category), FPR per label source (`overturned`, `manual`, `litebans`, `litebans_unflagged`), both
+   operating points, and a player-level bootstrap of the TPR/FPR differences. `deployable` is true only
+   if the gate passed, the data was real, and the deploy threshold itself kept FPR at or below the
+   baseline's on the held-out players. If only the last condition fails, set a new threshold
+   (0 < p <= 1) with
    `python -m pandaeye_ml onnx --model-dir models/gbm1 --threshold <p>` and evaluate again with
    `--threshold-mode fixed`. `model_sha256` is the SHA-256 of the `model.onnx` that was scored (null with
    `--sklearn`); a re-export changes it, so only the report of the last evaluation matches the file.

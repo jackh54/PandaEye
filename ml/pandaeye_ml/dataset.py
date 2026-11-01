@@ -55,6 +55,10 @@ SYNTHETIC_TENANT_PREFIX = "synthetic-"
 WINDOW_FILE_GLOBS = ("windows-*.csv", "windows-*.csv.gz")
 ERASURE_JOURNAL = "erasures.jsonl"
 
+# Label sources of the API export (FEATURES.md section 7): staff decisions on the dashboard, and LiteBans
+# bans / wrongful unbans that decided a verdict ("litebans") or labelled the window before a ban of a
+# player without a verdict ("litebans_unflagged", no verdict id or category).
+LABEL_SOURCES = ("confirmed", "overturned", "manual", "litebans", "litebans_unflagged")
 KEY_COLUMNS = ("tenant_id", "player", "session_id", "window_start_us")
 LABEL_COLUMNS = (
     "tenant_id",
@@ -426,6 +430,7 @@ def parse_label_records(records: Iterable[dict[str, Any]]) -> pd.DataFrame:
     """Normalise label export records (FEATURES.md section 7) into a frame with LABEL_COLUMNS."""
     rows = []
     skipped = 0
+    unknown_sources: set[str] = set()
     for rec in records:
         try:
             label = str(rec.get("label", "")).strip().lower()
@@ -440,13 +445,16 @@ def parse_label_records(records: Iterable[dict[str, Any]]) -> pd.DataFrame:
             if end < start:
                 start, end = end, start
             created = rec.get("created_at")
+            source = str(rec.get("source") or "").strip().lower()
+            if source and source not in LABEL_SOURCES:
+                unknown_sources.add(source[:64])
             rows.append(
                 {
                     "tenant_id": str(rec["tenant_id"]),
                     "player": normalize_uuid(player),
                     "y": 1 if label == "cheat" else 0,
                     "label": label,
-                    "source": str(rec.get("source") or ""),
+                    "source": source,
                     "start_us": start,
                     "end_us": end,
                     "category": normalize_category(category) if label == "cheat" else "",
@@ -462,6 +470,8 @@ def parse_label_records(records: Iterable[dict[str, Any]]) -> pd.DataFrame:
             log.warning("skipping malformed label record: %s", exc)
     if skipped:
         log.info("skipped %d label records", skipped)
+    if unknown_sources:
+        log.warning("label sources not in FEATURES.md (kept): %s", ", ".join(sorted(unknown_sources)))
     df = pd.DataFrame(rows, columns=list(LABEL_COLUMNS))
     for c in ("y", "start_us", "end_us", "created_us"):
         df[c] = df[c].astype(np.int64)
@@ -865,6 +875,7 @@ def build_dataset(
         windows = windows[~non_tick]
     windows, labels, ex = apply_exclusions(windows, labels, trusted_tenants, erased)
     stats.update(ex)
+    stats["labels_by_source"] = {str(k or "unknown"): int(v) for k, v in labels["source"].value_counts().sort_index().items()}
     labelled, js = join_labels(windows, labels)
     stats.update(js)
     stats["positives"] = int((labelled["y"] == 1).sum()) if len(labelled) else 0
