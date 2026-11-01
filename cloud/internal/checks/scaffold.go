@@ -13,7 +13,8 @@ import (
 // A placement waits for the next movement packet (at most 100 ms) to get its R1 rotation and the next
 // eye position; then every check runs over the candidate eyes (event eye, the standing/sneaking
 // alternative and 0.4 for a swimming/gliding pose, the next move's eyes) and rotations (R0, R1 and the
-// 0.25-step interpolations). The machinery (blockAction, blockQueue) is shared with dig.ray.
+// 0.25-step interpolations). The machinery (blockAction, blockQueue) is shared with dig.ray. Every judged
+// placement is also reported to the check-health digest (digest.go), once per check.
 
 const (
 	idScaffoldFace   = "scaffold.face"
@@ -67,32 +68,43 @@ func (d *scaffoldDetector) judge(c *Ctx, a *blockAction, cand *blockCandidates) 
 	v := c.View
 	bx, by, bz := a.block[0], a.block[1], a.block[2]
 	cube := geom.BlockBox(bx, by, bz)
+	obs := cand.observation(c, a)
 
 	// scaffold.face: the clicked face must be visible from some eye (superset over block shapes).
 	if a.face != pb.Face_FACE_OTHER {
 		u := c.Param(idScaffoldFace, "margin", 0.03) + geom.EyeUncertainty(v.Protocol)
-		visible := false
+		margin := math.Inf(-1)
 		for _, e := range cand.eyes() {
-			visible = visible || faceVisible(a.face, e, cube.Min, u)
+			margin = math.Max(margin, faceMargin(a.face, e, cube.Min, u))
 		}
-		if !visible {
+		o := obs
+		o.Check, o.Value, o.Failed = idScaffoldFace, margin, !(margin > 0)
+		if o.Failed {
 			e := cand.eyes()[0]
-			c.Emit(Emission{Check: idScaffoldFace, Points: 8, Confidence: 0.95, EventTimeUs: a.eventUs,
+			o.Emitted = c.publish(Emission{Check: idScaffoldFace, Points: 8, Confidence: 0.95, EventTimeUs: a.eventUs,
 				Info: fmt.Sprintf("clicked the %s face of %d,%d,%d from an eye that cannot see it", faceName(a.face), bx, by, bz),
 				Data: map[string]float64{"face": float64(a.face), "eye_x": e.X - float64(bx), "eye_y": e.Y - float64(by), "eye_z": e.Z - float64(bz)}})
 		}
+		c.observe(o)
 	}
 
 	// scaffold.ray: some (eye, rotation) ray must hit the expanded cube within reach + 1.5.
 	reach := a.reachOr(v)
-	miss := !cand.rayHits(cube.Expand(c.Param(idScaffoldRay, "expand", 0.05)), reach+c.Param(idScaffoldRay, "extra_reach", 1.5))
+	box := cube.Expand(c.Param(idScaffoldRay, "expand", 0.05))
+	miss := !cand.rayHits(box, reach+c.Param(idScaffoldRay, "extra_reach", 1.5))
 	d.ray.push(miss)
+	o := obs
+	o.Check, o.Failed = idScaffoldRay, miss
+	if miss && c.observing() {
+		o.Value = cand.rayAngle(box)
+	}
 	if n := d.ray.count(int(c.Param(idScaffoldRay, "of", 10))); miss && float64(n) >= c.Param(idScaffoldRay, "need", 3) {
 		d.ray.reset()
-		c.Emit(Emission{Check: idScaffoldRay, Points: 6, Confidence: 0.85, EventTimeUs: a.eventUs,
+		o.Emitted = c.publish(Emission{Check: idScaffoldRay, Points: 6, Confidence: 0.85, EventTimeUs: a.eventUs,
 			Info: fmt.Sprintf("%d of the last placements were not in view of any rotation", n),
 			Data: map[string]float64{"missed": float64(n), "rotations": float64(cand.nRot)}})
 	}
+	c.observe(o)
 
 	// scaffold.cursor: the click position must lie on some look ray (3 degrees).
 	if v.Protocol >= protocol1_11 && cursorInRange(a.cursor) {
@@ -105,12 +117,15 @@ func (d *scaffoldDetector) judge(c *Ctx, a *blockAction, cand *blockCandidates) 
 			best := cand.minAngleTo(p)
 			mismatch := best > c.Param(idScaffoldCursor, "max_angle", 3)
 			d.cursor.push(mismatch)
+			o := obs
+			o.Check, o.Value, o.Failed = idScaffoldCursor, best, mismatch
 			if n := d.cursor.count(int(c.Param(idScaffoldCursor, "of", 10))); mismatch && float64(n) >= c.Param(idScaffoldCursor, "need", 3) {
 				d.cursor.reset()
-				c.Emit(Emission{Check: idScaffoldCursor, Points: 5, Confidence: 0.8, EventTimeUs: a.eventUs,
+				o.Emitted = c.publish(Emission{Check: idScaffoldCursor, Points: 5, Confidence: 0.8, EventTimeUs: a.eventUs,
 					Info: fmt.Sprintf("click position %.1f degrees off every look ray (%d of the last placements)", best, n),
 					Data: map[string]float64{"angle": best, "mismatched": float64(n)}})
 			}
+			c.observe(o)
 		}
 	}
 
@@ -120,30 +135,36 @@ func (d *scaffoldDetector) judge(c *Ctx, a *blockAction, cand *blockCandidates) 
 		dist = math.Min(dist, cube.DistanceTo(e))
 	}
 	limit := reach + c.Param(idScaffoldReach, "extra_reach", 0.6)
-	if excess := dist - limit; excess > 0 {
-		c.Emit(Emission{Check: idScaffoldReach, Points: 3 + 5*math.Min(excess, 1), Confidence: 0.8, EventTimeUs: a.eventUs,
+	excess := dist - limit
+	o = obs
+	o.Check, o.Value, o.Failed = idScaffoldReach, excess, excess > 0
+	if excess > 0 {
+		o.Emitted = c.publish(Emission{Check: idScaffoldReach, Points: 3 + 5*math.Min(excess, 1), Confidence: 0.8, EventTimeUs: a.eventUs,
 			Info: fmt.Sprintf("placed %.2f blocks away (limit %.2f)", dist, limit),
 			Data: map[string]float64{"distance": dist, "limit": limit, "excess": excess}})
 	}
+	c.observe(o)
 }
 
-// faceVisible applies the face inequalities of CHECKS.md 2.12 for the block whose minimum corner is b.
-func faceVisible(face pb.Face, e, b geom.Vec3, u float64) bool {
+// faceMargin is how far the eye e lies on the visible side of the clicked face of the block whose minimum
+// corner is b, by the face inequalities of CHECKS.md 2.12: the face is visible when the margin is > 0 (for
+// finite floats x - y > 0 exactly when x > y, so this is the inequality itself).
+func faceMargin(face pb.Face, e, b geom.Vec3, u float64) float64 {
 	switch face {
 	case pb.Face_FACE_UP:
-		return e.Y > b.Y-u
+		return e.Y - (b.Y - u)
 	case pb.Face_FACE_DOWN:
-		return e.Y < b.Y+1+u
+		return b.Y + 1 + u - e.Y
 	case pb.Face_FACE_EAST:
-		return e.X > b.X-u
+		return e.X - (b.X - u)
 	case pb.Face_FACE_WEST:
-		return e.X < b.X+1+u
+		return b.X + 1 + u - e.X
 	case pb.Face_FACE_SOUTH:
-		return e.Z > b.Z-u
+		return e.Z - (b.Z - u)
 	case pb.Face_FACE_NORTH:
-		return e.Z < b.Z+1+u
+		return b.Z + 1 + u - e.Z
 	}
-	return true
+	return math.Inf(1)
 }
 
 func faceName(f pb.Face) string {
@@ -368,4 +389,115 @@ func (b *blockCandidates) minAngleTo(p geom.Vec3) float64 {
 		}
 	}
 	return best
+}
+
+// rayAngle is the smallest angle (degrees) between a candidate look vector and the direction from its eye
+// to a point of box: 0 when some candidate ray points into the box, at any distance. For a ray that misses
+// the box the nearest direction lies on one of the box's 12 edges (from any other point, a move within the
+// box or within its face turns the direction towards the look vector), and each edge is minimised exactly.
+func (b *blockCandidates) rayAngle(box geom.AABB) float64 {
+	edges := boxEdges(box)
+	best := -1.0 // the largest cosine
+	for _, e := range b.eyes() {
+		for _, r := range b.rots() {
+			look := r.Look()
+			if _, hit := box.IntersectRay(e, look, math.Inf(1)); hit {
+				return 0
+			}
+			for _, ed := range edges {
+				best = math.Max(best, maxCosOnSegment(look, ed[0].Sub(e), ed[1].Sub(ed[0])))
+			}
+		}
+	}
+	return math.Acos(math.Min(1, best)) * 180 / math.Pi
+}
+
+// maxCosOnSegment is the largest cosine between the unit vector d and a + s*w for s in [0, 1]. The cosine
+// (al + be*s) / |a + s*w| has at most one interior extremum: its derivative is zero where the linear
+// (be*aa - al*aw) + (be*aw - al*ww)*s is, with al = d.a, be = d.w, aa = a.a, aw = a.w and ww = w.w.
+func maxCosOnSegment(d, a, w geom.Vec3) float64 {
+	cos := func(s float64) float64 {
+		v := a.Add(w.Scale(s))
+		if n := v.Len(); n > 0 {
+			return d.Dot(v) / n
+		}
+		return 1 // the eye lies on the edge
+	}
+	best := math.Max(cos(0), cos(1))
+	al, be, aa, aw, ww := d.Dot(a), d.Dot(w), a.LenSq(), a.Dot(w), w.LenSq()
+	if den := be*aw - al*ww; den != 0 {
+		if s := (al*aw - be*aa) / den; s > 0 && s < 1 {
+			best = math.Max(best, cos(s))
+		}
+	}
+	return best
+}
+
+// boxEdges returns the 12 edges of box as pairs of corners.
+func boxEdges(box geom.AABB) [12][2]geom.Vec3 {
+	var corner [8]geom.Vec3
+	for i := range corner {
+		corner[i] = box.Min
+		if i&1 != 0 {
+			corner[i].X = box.Max.X
+		}
+		if i&2 != 0 {
+			corner[i].Y = box.Max.Y
+		}
+		if i&4 != 0 {
+			corner[i].Z = box.Max.Z
+		}
+	}
+	var out [12][2]geom.Vec3
+	n := 0
+	for i := range corner {
+		for _, bit := range [3]int{1, 2, 4} {
+			if i&bit == 0 {
+				out[n] = [2]geom.Vec3{corner[i], corner[i|bit]}
+				n++
+			}
+		}
+	}
+	return out
+}
+
+// observation returns what every observation of the action shares, when the digest records (counting the
+// distinct candidates takes a few hundred comparisons).
+func (b *blockCandidates) observation(c *Ctx, a *blockAction) Observation {
+	if !c.observing() {
+		return Observation{}
+	}
+	return Observation{Pose: a.pose, EyePath: a.hasPrev, Eyes: b.distinctEyes(), Rotations: b.distinctRots()}
+}
+
+// candidateTolerance: candidates closer than this (blocks, degrees) count once in the digest. A still
+// player's path and next-move eyes repeat the event eyes, and without R1 the five rotations are R0.
+const candidateTolerance = 1e-6
+
+func (b *blockCandidates) distinctEyes() int {
+	n := 0
+	for i, e := range b.eyes() {
+		dup := false
+		for _, p := range b.eye[:i] {
+			dup = dup || e.DistSq(p) < candidateTolerance*candidateTolerance
+		}
+		if !dup {
+			n++
+		}
+	}
+	return n
+}
+
+func (b *blockCandidates) distinctRots() int {
+	n := 0
+	for i, r := range b.rots() {
+		dup := false
+		for _, p := range b.rot[:i] {
+			dup = dup || math.Abs(r.Yaw-p.Yaw) < candidateTolerance && math.Abs(r.Pitch-p.Pitch) < candidateTolerance
+		}
+		if !dup {
+			n++
+		}
+	}
+	return n
 }

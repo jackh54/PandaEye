@@ -510,3 +510,73 @@ The same table lives in code: `cloud/internal/checks/catalog.go` (authoritative 
 local checks for scoring) and `plugin/paper/src/main/java/dev/pandascript/pandaeye/paper/check/CheckCatalog.java`
 (local checks only). A test on each side parses this table (`docs/CHECKS.md`, section 4) and asserts the
 code matches it.
+
+## 5. Check-health digest
+
+With `PE_DIGEST_DIR` set ([OPERATIONS 3](OPERATIONS.md#3-configuration-reference)) the workers count how
+every check behaves, per UTC hour and in aggregate, so thresholds can be tuned and false positives traced
+without access to evidence. Each hour is one file `digest-YYYYMMDDTHHZ.jsonl` with one JSON line per cell.
+Lines carry no player names, UUIDs, session ids, IP addresses, coordinates or info texts
+([PRIVACY](PRIVACY.md) A8). Code: `cloud/internal/checks/digest.go` (observations, brand families,
+histogram edges) and `cloud/internal/worker/digest.go` (cells, files).
+
+**Cells.** The world-interaction checks (`scaffold.face`, `scaffold.ray`, `scaffold.cursor`,
+`scaffold.reach`, `dig.ray`) report every judged placement or dig, one cell per (check, server, protocol,
+brand, tick client, pose, ping). Every other cloud check and every forwarded local flag counts emissions
+only, one cell per (check, server, protocol, brand).
+
+| Field | Meaning |
+|---|---|
+| `hour` | start of the UTC hour in which the worker judged the events (a backlog after an outage counts when it is processed) |
+| `server_id` | the game server's id (`Origin.server_id`), not a player's |
+| `protocol` | client protocol number (`PlayerJoin.protocol_version`, `-1` unknown) |
+| `brand` | brand family of `PlayerJoin.brand`, including the later update that carries the brand (rules below) |
+| `tick_client` | protocol >= 768 (section 0) |
+| `pose` | the eye the plugin reported for the action: `standing`, `sneaking`, `swim-glide` (swimming, gliding and crawling: the 0.4 eye) |
+| `ping` | the player's ping at the judgement: `<50`, `50-150`, `150-300`, `>300` ms (lower bound included; no round-trip sample yet counts as `<50`) |
+| `evaluations` | judged placements or digs, legit or not (the skips of 2.1 and 2.12 are not judged) |
+| `failures` | the per-event result before the "k of the last n" rule: face not visible, ray missed, cursor off, reach exceeded |
+| `emissions` | signals actually emitted (a check the tenant disabled emits none; a worker's warm start counts nothing) |
+| `eye_path` | evaluations whose eye candidates included the path from the previous position (2.1: the last position arrived within 150 ms, the step was under 4 blocks) |
+| `eyes`, `rotations` | distinct eye and rotation candidates, summed (divide by `evaluations`); candidates within 1e-6 count once, so a still standing player has 2 eyes, and the rotations are 1 without an R1 and 5 with one. `scaffold.face` and `scaffold.reach` use the eyes only |
+| `le`, `hist` | histogram of the decisive value: `hist[i]` counts values in (`le[i-1]`, `le[i]`], the last element the values above the last edge |
+| `overflow` | `true` on the line that sums a check's cells beyond 2 048 cells in the hour (it has no dimensions) |
+
+Brand families: the brand is trimmed and lower-cased; empty is `unknown`; otherwise the first rule whose
+text it contains decides: `lunar`, `badlion`, `feather`, `labymod`, `forge` (also `neoforge` and
+`fml,forge`), `fabric`, `vanilla`; anything else is `other` (Quilt, for example). Clients come before the
+loaders they run on: `Feather Fabric` is `feather`.
+
+Decisive values, with the tenant's thresholds applied:
+
+| Check | Value | Failure |
+|---|---|---|
+| `scaffold.cursor` | best angle in degrees between a candidate look vector and the click position | > 3 |
+| `scaffold.ray`, `dig.ray` | angle in degrees from the nearest candidate ray to the expanded cube; 0 when a ray hits it | a miss; one in the 0 bucket hit the cube only beyond `block_reach + 1.5` |
+| `scaffold.face` | visibility margin in blocks: how far the best eye is on the visible side of the clicked face's plane, plus `u` (2.12) | <= 0 |
+| `scaffold.reach` | distance to the cube minus `block_reach + 0.6`, in blocks | > 0 |
+
+The cloud has no dig reach check (`dig.speed` is local). Lines with the same hour and dimensions add up: a
+restart writes the hour so far and the next process the rest, and counts a partition reported late are
+appended. An hour is written a minute after it ends; a crash loses the counts of the hour in progress.
+
+**Reading it for tuning.** Failure rates per check, server and brand family over all files:
+
+```sh
+cat data/digests/digest-*.jsonl | jq -s 'map(select(.evaluations)) | group_by([.check, .server_id, .brand])
+  | map({check: .[0].check, server: .[0].server_id, brand: .[0].brand,
+         n: (map(.evaluations) | add), failures: (map(.failures) | add), emissions: (map(.emissions) | add)})
+  | map(.rate = .failures / .n) | sort_by(-.rate)'
+```
+
+- A rate that depends on `brand` or `protocol` points at the client (a mod that changes the pick, a
+  ViaVersion translation); one that depends on `server_id` at the server (Folia, a plugin that rewrites
+  rotations or teleports); one that grows with `ping` at timing (R1 or the next move not found); one tied to
+  a `pose` at the eye heights.
+- `eye_path / evaluations` low where failures are high: moving players are judged without their
+  interpolated eye. `rotations / evaluations` near 1 for tick clients: the same tick's movement packet (R1)
+  is rarely found.
+- The histogram tells a threshold problem from a candidate problem: failures just past the threshold
+  (cursor 3-5 degrees, ray up to a degree or two, face margin -0.1..0) are precision or tolerance; failures
+  far past it (tens of degrees, whole blocks) mean a wrong eye or rotation, or cheating.
+- `emissions / failures` shows how much the "k of the last n" rule filters isolated failures.

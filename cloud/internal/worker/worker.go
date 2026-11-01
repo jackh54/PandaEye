@@ -134,5 +134,12 @@ func (s *Service) newEnv(tenants tenantSource, erasures erasureSource) (*env, er
 	} else {
 		en.wm.MLLoaded.Set(0)
 	}
+	if d.Config != nil && d.Config.Digest.Dir != "" {
+		w, err := sharedDigest(d, now)
+		if err != nil {
+			return nil, err
+		}
+		en.digest = w
+	}
 	return en, nil
 }

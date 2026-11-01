@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -106,6 +107,13 @@ func (c *Config) Validate() error {
 		if !c.ClickHouseDSN.IsZero() {
 			bad("set only one of PE_FEATURES_DIR and PE_CLICKHOUSE_DSN")
 		}
+	}
+	if c.Digest.Retention < time.Hour {
+		bad("PE_DIGEST_RETENTION must be at least 1h")
+	}
+	if c.Digest.Dir != "" && c.Features.Dir != "" && filepath.Clean(c.Digest.Dir) == filepath.Clean(c.Features.Dir) {
+		// The feature files keep their directory at 0700, the digest at 0750.
+		bad("PE_DIGEST_DIR needs a directory of its own, not PE_FEATURES_DIR")
 	}
 
 	errs = append(errs, c.validateLicense()...)
