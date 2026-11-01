@@ -9,12 +9,14 @@ import {
   CategoryTag,
   CheckName,
   Csrf,
+  decisionText,
   EmptyRow,
   ExecState,
   Notice,
   PageHeader,
   Pager,
   PlayerLink,
+  LiteBansBadge,
   Pct,
   ShadowBadge,
   StatusBadge,
@@ -414,7 +416,9 @@ export function ReplayViewer(props: { verdictId: string; clipIds: string[]; clip
 export function VerdictPage(props: { nonce: string; session: Session; verdict: Verdict; clip: string; flash?: Flash | null }) {
   const v = props.verdict;
   const staff = can(props.session.user.role, "verdicts:decide");
-  const canConfirm = staff && v.status === "open" && v.action !== "unban" && v.action !== "unmitigate";
+  // Staff may confirm what LiteBans confirmed: it becomes their decision, which a later LiteBans unban leaves alone.
+  const byLiteBans = v.decidedBy === "litebans";
+  const canConfirm = staff && (v.status === "open" || (v.status === "confirmed" && byLiteBans)) && v.action !== "unban" && v.action !== "unmitigate";
   const canOverturn = staff && (v.status === "open" || v.status === "confirmed") && v.action !== "unban" && v.action !== "unmitigate";
   return (
     <Layout title={`Verdict ${shortId(v.id)}`} nonce={props.nonce} session={props.session} active="verdicts" flash={props.flash} scripts={["/static/replay.js"]}>
@@ -424,6 +428,7 @@ export function VerdictPage(props: { nonce: string; session: Session; verdict: V
         </h1>
         <div class="page-actions">
           <StatusBadge status={v.status} />
+          <LiteBansBadge v={v} />
           {v.shadow ? <ShadowBadge /> : null}
         </div>
       </div>
@@ -507,6 +512,12 @@ export function VerdictPage(props: { nonce: string; session: Session; verdict: V
                 </dd>
               </>
             ) : null}
+            {decisionText(v) ? (
+              <>
+                <dt>Decision</dt>
+                <dd>{decisionText(v)}</dd>
+              </>
+            ) : null}
             <dt>Session</dt>
             <dd class="mono small">{v.sessionId || "—"}</dd>
           </dl>
@@ -521,6 +532,12 @@ export function VerdictPage(props: { nonce: string; session: Session; verdict: V
                 result). Overturning labels the player legit, removes mitigations and, if the ban was executed, sends an unban to the
                 server that executed it.
               </p>
+              {byLiteBans && v.status === "confirmed" ? (
+                <p class="muted small">
+                  LiteBans confirmed this verdict. Confirming it here makes it a staff decision, which a later LiteBans unban does not
+                  change; overturning it here is final.
+                </p>
+              ) : null}
               <form method="post" action={`/verdicts/${seg(v.id)}/confirm`} class="stack">
                 <Csrf token={props.session.csrf} />
                 <label>

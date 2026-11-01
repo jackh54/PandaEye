@@ -1,6 +1,6 @@
 import { CATEGORIES, CATEGORY_LABEL } from "../../lib/checks";
-import { ACTION_LABEL, formatMsFromUs, formatNumber, seg, shortId, type ActionName } from "../../lib/format";
-import type { CountWindow, Latency, Server, Tenant, Usage, Verdict } from "../../lib/pandaeye";
+import { ACTION_LABEL, formatDuration, formatMsFromUs, formatNumber, formatPercent, seg, shortId, type ActionName } from "../../lib/format";
+import type { CountWindow, Latency, LiteBansStats, Server, Tenant, Usage, Verdict } from "../../lib/pandaeye";
 import type { Session } from "../../lib/session";
 import { PeakPlayersChart } from "../chart";
 import {
@@ -8,6 +8,7 @@ import {
   CategoryTag,
   EmptyRow,
   ExecState,
+  LiteBansBadge,
   Notice,
   OverLimitBanner,
   PageHeader,
@@ -62,7 +63,7 @@ export function VerdictRows(props: { verdicts: Verdict[]; showServer?: boolean }
             <PlayerLink uuid={v.playerUuid} name={v.playerName} />
           </td>
           <td>
-            <ActionBadge action={v.action} /> {v.shadow ? <ShadowBadge /> : null}
+            <ActionBadge action={v.action} /> {v.shadow ? <ShadowBadge /> : null} <LiteBansBadge v={v} />
           </td>
           <td>
             <CategoryTag category={v.category} />
@@ -103,6 +104,89 @@ export function VerdictTableHead(props: { showServer?: boolean }) {
 
 const MAIN_ACTIONS: ActionName[] = ["alert", "mitigate", "kick", "ban"];
 
+function days(seconds: number): string {
+  return seconds % 86400 === 0 ? `${seconds / 86400} days` : formatDuration(seconds);
+}
+
+/** "Accuracy (LiteBans)": the cheat bans staff issued in LiteBans compared with PandaEye's verdicts. */
+export function LiteBansCard(props: { stats: Section<LiteBansStats> }) {
+  if (!props.stats.ok) {
+    return (
+      <section class="card">
+        <h2>Accuracy (LiteBans)</h2>
+        <SectionError what="The LiteBans comparison" />
+      </section>
+    );
+  }
+  const st = props.stats.value;
+  const lookback = days(st.lookbackS);
+  const any = st.windows.some((w) => w.cheatBans > 0 || w.overturns > 0);
+  return (
+    <section class="card">
+      <h2>Accuracy (LiteBans)</h2>
+      {any ? (
+        <TableWrap label="PandaEye compared with LiteBans bans">
+          <table class="table compact">
+            <thead>
+              <tr>
+                <th scope="col">Window</th>
+                <th scope="col" class="num">
+                  Cheat bans
+                </th>
+                <th scope="col" class="num">
+                  Flagged by PandaEye first
+                </th>
+                <th scope="col" class="num">
+                  Median lead time
+                </th>
+                <th scope="col" class="num">
+                  {`Would kick/ban, banned within ${lookback}`}
+                </th>
+                <th scope="col" class="num">
+                  Wrongful unbans
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {st.windows.map((w) => {
+                const flagged = MAIN_ACTIONS.reduce((a, x) => a + (w.flaggedBefore[x] ?? 0), 0);
+                return (
+                  <tr>
+                    <th scope="row">{w.label}</th>
+                    <td class="num">
+                      {formatNumber(w.cheatBans)}
+                      <div class="muted small">{`${formatNumber(w.players)} players`}</div>
+                    </td>
+                    <td class="num">
+                      {`${formatNumber(flagged)} / ${formatNumber(w.players)}`}
+                      {w.players ? ` (${formatPercent(flagged / w.players)})` : ""}
+                      <div class="muted small">{MAIN_ACTIONS.map((a) => `${formatNumber(w.flaggedBefore[a] ?? 0)} ${ACTION_LABEL[a].toLowerCase()}`).join(" · ")}</div>
+                    </td>
+                    <td class="num">{w.medianLeadTimeS === null ? "—" : formatDuration(w.medianLeadTimeS)}</td>
+                    <td class="num">{`${formatNumber(w.wouldKickOrBanBanned)} / ${formatNumber(w.wouldKickOrBan)}`}</td>
+                    <td class="num">
+                      {formatNumber(w.overturns)}
+                      <div class="muted small">{`${formatNumber(w.verdictsOverturned)} verdicts overturned`}</div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </TableWrap>
+      ) : (
+        <p class="muted">
+          No LiteBans bans for cheating yet. With LiteBans on your servers or proxy, PandaEye reads the bans your staff issue there and
+          compares them with its verdicts here.
+        </p>
+      )}
+      <p class="muted small">
+        {`Cheat bans issued by staff in LiteBans (bans later lifted as a false ban or an accepted appeal do not count), compared with PandaEye's verdicts, shadow ones included, in the ${lookback} before each ban. These bans confirm those verdicts and wrongful unbans overturn them automatically, marked "LiteBans"; a decision made here by staff always wins.`}
+      </p>
+    </section>
+  );
+}
+
 export function OverviewPage(props: {
   nonce: string;
   session: Session;
@@ -113,6 +197,7 @@ export function OverviewPage(props: {
   servers: Section<Server[]>;
   recent: Section<Verdict[]>;
   openAppeals: Section<{ count: number; more: boolean }>;
+  liteBans: Section<LiteBansStats>;
 }) {
   const servers = props.servers.ok ? props.servers.value : [];
   const online = servers.filter((s) => s.online);
@@ -210,6 +295,8 @@ export function OverviewPage(props: {
           </details>
         ) : null}
       </section>
+
+      <LiteBansCard stats={props.liteBans} />
 
       <section class="card">
         <div class="card-header">

@@ -450,6 +450,11 @@ th.num {
   color: var(--ok-ink);
   border-color: transparent;
 }
+.badge-litebans {
+  background: var(--info-bg);
+  color: var(--info-ink);
+  border: 1px dashed currentColor;
+}
 .status-confirmed {
   background: var(--bad-bg);
   color: var(--bad-ink);

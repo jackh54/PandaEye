@@ -37,6 +37,33 @@ export function StatusBadge(props: { status: string }) {
   return <span class={`badge status-${/^[a-z]+$/.test(s) ? s : "other"}`}>{s}</span>;
 }
 
+/** Marks a verdict a LiteBans ban or wrongful unban confirmed or overturned (not staff on the dashboard). */
+export function LiteBansBadge(props: { v: Verdict }) {
+  const v = props.v;
+  if (v.decidedBy !== "litebans" || (v.status !== "confirmed" && v.status !== "overturned")) return null;
+  const confirmed = v.status === "confirmed";
+  return (
+    <span
+      class="badge badge-litebans"
+      title={confirmed ? "Confirmed by a LiteBans ban for cheating, not by staff on the dashboard." : "Overturned by a LiteBans unban (false ban or accepted appeal), not by staff on the dashboard."}
+    >
+      {confirmed ? "LiteBans: confirmed" : "LiteBans: overturned"}
+    </span>
+  );
+}
+
+/** Who decided a confirmed or overturned verdict, in words ("" while it is undecided). */
+export function decisionText(v: Verdict): string {
+  if (v.status !== "confirmed" && v.status !== "overturned") return "";
+  if (v.decidedBy === "litebans") {
+    return v.status === "confirmed"
+      ? "Confirmed by a LiteBans ban for cheating (no staff decision on the dashboard)"
+      : "Overturned by a LiteBans unban (false ban or accepted appeal)";
+  }
+  if (v.decidedBy === "staff") return v.status === "confirmed" ? "Confirmed by staff" : "Overturned by staff";
+  return v.status === "confirmed" ? "Confirmed" : "Overturned";
+}
+
 /** Delivery / execution state of a verdict. */
 export function ExecState(props: { v: Verdict }) {
   const v = props.v;

@@ -99,13 +99,14 @@ export function dashboardRoutes(): Hono<AppEnv> {
 
   r.get("/", async (c) => {
     const api = c.get("api");
-    const [tenant, stats, latency, servers, recent, appeals] = await Promise.all([
+    const [tenant, stats, latency, servers, recent, appeals, liteBans] = await Promise.all([
       settle(api.tenant()),
       settle(api.overview()),
       settle(api.latency()),
       settle(api.servers()),
       settle(api.verdicts({ limit: 10 }).then((p) => p.items)),
       settle(api.appeals("open").then((p) => ({ count: p.items.length, more: p.nextCursor !== null }))),
+      settle(api.liteBansStats()),
     ]);
     return c.html(
       <OverviewPage
@@ -118,6 +119,7 @@ export function dashboardRoutes(): Hono<AppEnv> {
         servers={servers}
         recent={recent}
         openAppeals={appeals}
+        liteBans={liteBans}
       />,
     );
   });

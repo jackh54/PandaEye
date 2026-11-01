@@ -126,6 +126,14 @@ export function toServer(v: unknown): Server {
 export type VerdictStatus = "open" | "confirmed" | "overturned" | "expired" | "superseded";
 export const VERDICT_STATUSES: readonly VerdictStatus[] = ["open", "confirmed", "overturned", "expired", "superseded"];
 
+/** Who confirmed or overturned a verdict: staff (dashboard or API key) or a LiteBans ban / wrongful unban. */
+export type DecidedBy = "staff" | "litebans";
+
+function toDecidedBy(v: unknown): DecidedBy | null {
+  const s = str(v, 32).toLowerCase();
+  return s === "staff" || s === "litebans" ? s : null;
+}
+
 export interface Verdict {
   id: string;
   serverId: string;
@@ -142,6 +150,8 @@ export interface Verdict {
   checks: string[];
   shadow: boolean;
   status: string;
+  /** null while undecided (or from an API that predates the field). */
+  decidedBy: DecidedBy | null;
   supersedes: string;
   createdAt: string | null;
   deliveredAt: string | null;
@@ -174,6 +184,7 @@ export function toVerdict(v: unknown): Verdict {
     checks: strings(jsonish(o.checks)),
     shadow: bool(o.shadow),
     status: str(o.status, 32) || "open",
+    decidedBy: toDecidedBy(pick(o, "decided_by", "decidedBy")),
     supersedes: str(o.supersedes, 128),
     createdAt: strOrNull(pick(o, "created_at", "createdAt", "created_unix_ms")),
     deliveredAt: strOrNull(pick(o, "delivered_at", "deliveredAt")),
@@ -503,6 +514,60 @@ export function toLatency(v: unknown): Latency {
   };
 }
 
+export interface Agreement {
+  label: string;
+  /** LiteBans cheat bans of the window (not lifted as wrong) and their players. */
+  cheatBans: number;
+  players: number;
+  /** Players by the highest PandaEye action in the lookback before their ban. */
+  flaggedBefore: Partial<Record<ActionName, number>>;
+  notFlagged: number;
+  medianLeadTimeS: number | null;
+  /** Players with a (shadow) KICK/BAN verdict, and how many of them got a LiteBans cheat ban within the lookback. */
+  wouldKickOrBan: number;
+  wouldKickOrBanBanned: number;
+  overturns: number;
+  verdictsOverturned: number;
+}
+
+export interface LiteBansStats {
+  lookbackS: number;
+  windows: Agreement[];
+}
+
+function toAgreement(label: string, v: unknown): Agreement {
+  const o = obj(v);
+  const flaggedBefore: Partial<Record<ActionName, number>> = {};
+  for (const [k, x] of Object.entries(obj(pick(o, "flagged_before", "flaggedBefore")))) {
+    const a = normalizeAction(k);
+    if (a) flaggedBefore[a] = (flaggedBefore[a] ?? 0) + num(x);
+  }
+  return {
+    label,
+    cheatBans: num(pick(o, "cheat_bans", "cheatBans")),
+    players: num(o.players),
+    flaggedBefore,
+    notFlagged: num(pick(o, "not_flagged", "notFlagged")),
+    medianLeadTimeS: numOrNull(pick(o, "median_lead_time_s", "medianLeadTimeS")),
+    wouldKickOrBan: num(pick(o, "would_kick_or_ban", "wouldKickOrBan")),
+    wouldKickOrBanBanned: num(pick(o, "would_kick_or_ban_banned", "wouldKickOrBanBanned")),
+    overturns: num(o.overturns),
+    verdictsOverturned: num(pick(o, "verdicts_overturned", "verdictsOverturned")),
+  };
+}
+
+/**
+ * GET /api/v1/stats/litebans: {lookback_s, last_7d: {cheat_bans, players, flagged_before: {alert, mitigate, kick, ban},
+ * not_flagged, median_lead_time_s, would_kick_or_ban, would_kick_or_ban_banned, overturns, verdicts_overturned}, last_30d: {...}}
+ */
+export function toLiteBansStats(v: unknown): LiteBansStats {
+  const o = obj(v);
+  return {
+    lookbackS: num(pick(o, "lookback_s", "lookbackS"), 7 * 86400),
+    windows: [toAgreement("7 d", pick(o, "last_7d", "7d")), toAgreement("30 d", pick(o, "last_30d", "30d"))],
+  };
+}
+
 export interface Usage {
   plan: string;
   freeTierLimit: number;
@@ -703,6 +768,9 @@ export class PandaEyeApi {
   }
   async latency(): Promise<Latency> {
     return toLatency(await this.client.get("/api/v1/stats/latency"));
+  }
+  async liteBansStats(): Promise<LiteBansStats> {
+    return toLiteBansStats(await this.client.get("/api/v1/stats/litebans"));
   }
   async usage(): Promise<Usage> {
     return toUsage(await this.client.get("/api/v1/usage"));
