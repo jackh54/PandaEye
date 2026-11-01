@@ -499,9 +499,9 @@ has `range` (10 points) and `redundant` (0 points).
 
 Experimental checks are not yet validated on live traffic: they count towards the score (ALERT, MITIGATE)
 but KICK and the BAN ladder also need a stable family (two families over 5 points, at least one of them over
-5 from non-experimental checks). The certain-check BAN path never uses them. The first live shadow run
-showed these firing on legit players (eye interpolation, plugins that rewrite velocity packets or hide
-pongs); they stay experimental until shadow data clears them:
+5 from stable checks: neither experimental nor non-corroborating, 4.2). The certain-check BAN path never
+uses them. The first live shadow run showed these firing on legit players (eye interpolation, plugins that
+rewrite velocity packets or hide pongs); they stay experimental until shadow data clears them:
 
 Experimental: `dig.speed`, `dig.ray`, `scaffold.face`, `scaffold.ray`, `scaffold.cursor`, `scaffold.reach`,
 `velocity.vertical`, `velocity.horizontal`, `latency.pingspoof`, `latency.blink`.
@@ -510,3 +510,37 @@ The same table lives in code: `cloud/internal/checks/catalog.go` (authoritative 
 local checks for scoring) and `plugin/paper/src/main/java/dev/pandascript/pandaeye/paper/check/CheckCatalog.java`
 (local checks only). A test on each side parses this table (`docs/CHECKS.md`, section 4) and asserts the
 code matches it.
+
+### 4.2 Non-corroborating checks
+
+Non-corroborating checks can fire on legitimate players through lag, packet batching, protocol translation
+or other plugins. They count towards the score and towards the two families of KICK and the BAN ladder, but
+a family is stable (4.1) only through its other checks, so they never lift experimental checks to KICK or
+BAN (a live shadow run had a would-have KICK from `scaffold.*` with `protocol.flood` as the stable family).
+A certain check is never non-corroborating, and the certain-check BAN path does not use stable families.
+The reasons:
+
+- `protocol.flood` (lag, plugins): a packet-rate rule. A server PLAYER_ROTATION raises the allowance of the
+  tick in which the server sent it, while the client's answering rotation arrives a round trip later, so
+  with latency, plugins that rotate players give excess ticks.
+- `protocol.cursor` (client mods): building mods encode data in the cursor (1.11), and builders are the
+  players the world-interaction checks flag.
+- `velocity.vertical`, `velocity.horizontal` (plugins): knockback plugins that rewrite velocity packets
+  make a legitimate player ignore or shorten the velocity PandaEye recorded.
+- `latency.pingspoof` (plugins): plugins that send their own keep-alives or hide pongs (OPERATIONS 11
+  item 14) change the keep-alive and pong round trips it compares.
+- `latency.blink` (lag, packet batching): a network stall followed by the queued packets arriving at once
+  is the blink pattern; only server stalls are excluded.
+
+Non-corroborating: `protocol.cursor`, `protocol.flood`, `velocity.vertical`, `velocity.horizontal`,
+`latency.pingspoof`, `latency.blink`.
+
+The other checks corroborate: they bound their own timing (round-trip windows for combat geometry, passive
+acknowledgement for server state, the network-delay floor of `timer.balance`, client ticks for movement,
+rotations, clicks and swings), or flag packets that neither vanilla clients, ViaVersion/ViaBackwards nor
+plugins send (`protocol.pitch`, `protocol.position`, `protocol.selfhit`, `protocol.slot`,
+`protocol.abilities`, `killaura.multi`). Clients before 1.21.2 that join through ViaVersion are judged with
+their version's geometry (2.1) and without the tick-based checks (section 0). `dig.*` and `scaffold.*` stay
+off this list until the cause of their live flags is known; as experimental checks they do not corroborate
+anyway. The stable non-corroborating checks are all in the protocol family, so a verdict without
+experimental checks that has two families over 5 always has a stable one.

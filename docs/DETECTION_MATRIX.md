@@ -15,10 +15,10 @@ clients; aliases are given where they differ.
   checks and every tick-based check to tick clients.
 - **Max alone (L4)**: the highest action the module's checks can reach on their own at the default
   leniency 4 (thresholds x1.3: ALERT 19.5, MITIGATE 39, KICK 91, BAN 156), from the check and family caps
-  of CHECKS.md section 4. KICK always needs two families contributing >= 5 each; BAN needs two families or
-  one `certain` check with `acc >= BAN/2` (ARCHITECTURE 5.6), plus confidence and clip conditions. A
-  verdict above ALERT therefore usually comes from a combination of modules, which is how cheat clients
-  are normally used.
+  of CHECKS.md section 4. KICK always needs two families contributing >= 5 each, one of them stable
+  (CHECKS 4.1, 4.2); BAN needs those two families or one `certain` check with `acc >= BAN/2`
+  (ARCHITECTURE 5.6), plus confidence and clip conditions. A verdict above ALERT therefore usually comes
+  from a combination of modules, which is how cheat clients are normally used.
 
 ### 1.1 Older clients (ViaVersion)
 

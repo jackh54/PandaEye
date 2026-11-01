@@ -58,7 +58,7 @@ overturn them; overturns feed back into tuning). When you are satisfied:
 Both switches are needed: the local `mode: live` and the dashboard's enforcement. A circuit breaker
 (3 bans per hour, 5 kicks per 10 minutes by default) stops runaway punishments until `/pandaeye breaker
 reset`. Experimental checks ([CHECKS 4.1](CHECKS.md)) can alert and mitigate but never kick or ban on
-their own.
+their own, nor together with checks that lag or other plugins can trigger ([CHECKS 4.2](CHECKS.md)).
 
 ## Networks (Velocity)
 

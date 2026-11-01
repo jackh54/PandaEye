@@ -152,34 +152,95 @@ func TestCatalogHelpers(t *testing.T) {
 	}
 }
 
-func TestExperimentalListMatchesTheDoc(t *testing.T) {
+func readChecksDoc(t *testing.T) string {
+	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "CHECKS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	return string(data)
+}
+
+// quoted returns the `code spans` of a markdown text.
+func quoted(text string) []string {
+	var out []string
+	for i, f := range strings.Split(text, "`") {
+		if i%2 == 1 {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// docCheckList returns the check ids of the CHECKS.md paragraph that starts with label.
+func docCheckList(t *testing.T, label string) map[string]bool {
+	t.Helper()
+	data := readChecksDoc(t)
 	var line string
-	for _, l := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(l, "Experimental: ") {
+	for _, l := range strings.Split(data, "\n") {
+		if strings.HasPrefix(l, label) {
 			line = l
 		}
 	}
-	idx := strings.Index(string(data), line)
-	rest := string(data)[idx:]
+	if line == "" {
+		t.Fatalf("no %q list in CHECKS.md", label)
+	}
+	rest := data[strings.Index(data, line):]
 	if end := strings.Index(rest, "\n\n"); end > 0 {
 		rest = rest[:end]
 	}
-	doc := map[string]bool{}
-	for _, f := range strings.Split(strings.TrimPrefix(rest, "Experimental: "), "`") {
-		if strings.Contains(f, ".") && !strings.ContainsAny(f, " ,\n") {
-			doc[f] = true
+	ids := map[string]bool{}
+	for _, f := range quoted(strings.TrimPrefix(rest, label)) {
+		if _, ok := Lookup(f); !ok {
+			t.Errorf("%q list: %s is not a check", label, f)
 		}
+		ids[f] = true
 	}
+	if len(ids) == 0 {
+		t.Fatalf("empty %q list in CHECKS.md", label)
+	}
+	return ids
+}
+
+func TestExperimentalListMatchesTheDoc(t *testing.T) {
+	doc := docCheckList(t, "Experimental: ")
 	for _, s := range Catalog() {
 		if s.Experimental != doc[s.ID] {
 			t.Errorf("%s: experimental %v in code, %v in CHECKS.md 4.1", s.ID, s.Experimental, doc[s.ID])
 		}
 	}
-	if len(doc) == 0 {
-		t.Fatal("no experimental list found in CHECKS.md 4.1")
+}
+
+func TestNonCorroboratingListMatchesTheDoc(t *testing.T) {
+	doc := docCheckList(t, "Non-corroborating: ")
+	for _, s := range Catalog() {
+		if s.NonCorroborating != doc[s.ID] {
+			t.Errorf("%s: non-corroborating %v in code, %v in CHECKS.md 4.2", s.ID, s.NonCorroborating, doc[s.ID])
+		}
+	}
+	// Each one has its reason: a bullet of 4.2 that names it before the colon.
+	text := readChecksDoc(t)
+	i := strings.Index(text, "### 4.2 ")
+	if i < 0 {
+		t.Fatal("CHECKS.md has no section 4.2")
+	}
+	section := text[i+1:]
+	if j := strings.Index(section, "\n#"); j >= 0 {
+		section = section[:j]
+	}
+	reasons := map[string]bool{}
+	for _, l := range strings.Split(section, "\n") {
+		subject, _, ok := strings.Cut(l, ": ")
+		if !ok || !strings.HasPrefix(subject, "- ") {
+			continue
+		}
+		for _, f := range quoted(subject) {
+			reasons[f] = true
+		}
+	}
+	for id := range doc {
+		if !reasons[id] {
+			t.Errorf("%s: no reason in CHECKS.md 4.2", id)
+		}
 	}
 }

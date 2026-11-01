@@ -626,3 +626,45 @@ func TestExperimentalFamiliesAloneStopAtMitigate(t *testing.T) {
 	}
 	expect(t, "a stable family corroborates", h.apply(tp.signal("aim.snap", 10)), aK, aB)
 }
+
+// The live would-have KICK: scaffold checks (experimental) with protocol.flood as the second family.
+// protocol.flood and protocol.cursor fire on legit players (lag, plugins, building mods), so they never
+// make a family stable: the experimental checks stop at MITIGATE until a corroborating check joins,
+// here protocol.slot in the same family.
+func TestNonCorroboratingChecksDoNotLiftExperimental(t *testing.T) {
+	h := newHarness(t)
+	tp := h.player(h.tenant())
+	h.apply(tp.marker(pb.SessionMarker_KIND_JOIN))
+	expect(t, "scaffold", h.apply(tp.signal("scaffold.ray", 40, withClip("clip-s"))), aA, aM)
+	expect(t, "more scaffold", h.apply(tp.signal("scaffold.face", 40)))
+	expect(t, "flood: two families, S 100 >= KICK", h.apply(tp.signal("protocol.flood", 20, local())))
+	expect(t, "cursor", h.apply(tp.signal("protocol.cursor", 15, local())))
+	expect(t, "dig: S >= BAN", h.apply(tp.signal("dig.ray", 60)))
+	if sc := h.score(tp); sc.FamiliesOver5 != 3 || sc.StableOver5 != 0 || sc.S < ThresholdsFor(4).Ban || sc.C < banConfidence {
+		t.Fatalf("setup: %+v", sc)
+	}
+	expect(t, "a corroborating check", h.apply(tp.signal("protocol.slot", 10, local())), aK, aB)
+}
+
+// A stable, corroborating family still lifts experimental checks: killaura.multi (certain) with
+// scaffold reaches KICK through the ladder, then its own certain-check BAN.
+func TestCorroboratingCheckLiftsExperimental(t *testing.T) {
+	h := newHarness(t)
+	tp := h.player(h.tenant())
+	h.apply(tp.marker(pb.SessionMarker_KIND_JOIN))
+	expect(t, "scaffold", h.apply(tp.signal("scaffold.ray", 60, withClip("clip-s"))), aA, aM)
+	expect(t, "multi: S 100, two families, one stable", h.apply(tp.signal("killaura.multi", 40)), aK)
+	expect(t, "multi acc 80 >= BAN/2: certain BAN", h.apply(tp.signal("killaura.multi", 40)), aB)
+}
+
+// Without experimental checks, non-corroborating checks count as a family like any other:
+// protocol.flood and protocol.cursor with killaura.hitbox are two families and KICK.
+func TestNonCorroboratingChecksWithoutExperimental(t *testing.T) {
+	h := newHarness(t)
+	tp := h.player(h.tenant())
+	h.apply(tp.marker(pb.SessionMarker_KIND_JOIN))
+	expect(t, "hitbox", h.apply(tp.signal("killaura.hitbox", 40)), aA, aM)
+	expect(t, "flood", h.apply(tp.signal("protocol.flood", 20, local())))
+	expect(t, "cursor", h.apply(tp.signal("protocol.cursor", 15, local())))
+	expect(t, "hitbox: S 115", h.apply(tp.signal("killaura.hitbox", 40)), aK)
+}
