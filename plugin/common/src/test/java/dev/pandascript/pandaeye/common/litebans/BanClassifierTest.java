@@ -234,6 +234,23 @@ class BanClassifierTest {
         assertEquals(expected, BanClassifier.matches(text, List.of(entry)));
     }
 
+    /** Reasons keep the colour codes staff type (LiteBans shows them coloured): a code before a word starts it. */
+    @ParameterizedTest(name = "{0} -> {1}")
+    @CsvSource(delimiter = '|', value = {
+            "&cHacking                              | CHEAT",
+            "&4&lBlacklisted &cModifications        | CHEAT",
+            "§cKillAura                             | CHEAT",
+            "&#ff5555Cheating                       | CHEAT",
+            "§x§f§f§5§5§5§5Cheating                 | CHEAT",
+            "Hacking &7(&cX-Ray&7)                  | NONE",
+            "&cHacking &8- &7alt of a banned player | NONE",
+            "&cBreach of trade rules                | NONE",
+            "&cDescription spam                     | NONE",
+    })
+    void colourCodesDoNotHideAWordStart(String reason, Label expected) {
+        assertEquals(expected, classifier.added(ban("ban", reason, STAFF, null)));
+    }
+
     @Test
     void aQuotedEntryWithALeadingSpaceStillMatchesAfterAWord() {
         BanClassifier spaced = new BanClassifier(new LiteBansSettings(true, LiteBansSettings.DEFAULT_CHEAT_REASONS,

@@ -9,8 +9,9 @@ import java.util.UUID;
  * cheat reason when one of {@code cheat-reasons} matches it and none of {@code ignore-reasons} does (ignore wins).
  * An entry of any of the three lists matches where it starts a word, case-insensitively: at the start of the reason
  * or after a character that is not a letter or digit, ending anywhere ({@code "hack"} matches "hacking" and
- * {@code "reach"} does not match "breach", so {@code "killaura"} is listed apart from {@code "aura"}); an entry
- * that starts with another character ({@code "#30d"}) matches anywhere.
+ * {@code "reach"} does not match "breach", so {@code "killaura"} is listed apart from {@code "aura"}); a colour code
+ * ({@code &c}, {@code §c}, {@code &#rrggbb}) counts as a separator, and an entry that starts with another character
+ * ({@code "#30d"}) matches anywhere.
  * <ul>
  *   <li>{@link Label#CHEAT}: a ban added with a cheat reason by staff (by the console only with
  *       {@code count-console}).</li>
@@ -74,10 +75,10 @@ public final class BanClassifier {
 
     /**
      * Whether one of {@code entries} (lowercase, as {@link LiteBansSettings} stores them) starts a word of
-     * {@code text}: some occurrence of it, case-insensitively, is at the start of the text or after a character that
-     * is not a letter or digit. Every occurrence is tried ("reach" matches "breach, reach"); the end is free. An entry
-     * that does not start with a letter or digit ({@code "#30d"}, a quoted {@code " alt"}) brings its own word start
-     * and matches anywhere.
+     * {@code text}: some occurrence of it, case-insensitively, is at the start of the text, after a character that is
+     * not a letter or digit or after a colour code ({@code "&cHacking"}). Every occurrence is tried ("reach" matches
+     * "breach, reach"); the end is free. An entry that does not start with a letter or digit ({@code "#30d"}, a quoted
+     * {@code " alt"}) brings its own word start and matches anywhere.
      */
     static boolean matches(String text, List<String> entries) {
         if (text == null || text.isEmpty()) {
@@ -87,11 +88,32 @@ public final class BanClassifier {
         for (String entry : entries) {
             boolean word = !entry.isEmpty() && Character.isLetterOrDigit(entry.codePointAt(0));
             for (int at = lower.indexOf(entry); at >= 0; at = lower.indexOf(entry, at + 1)) {
-                if (!word || at == 0 || !Character.isLetterOrDigit(lower.codePointBefore(at))) {
+                if (!word || at == 0 || !Character.isLetterOrDigit(lower.codePointBefore(at))
+                        || colourCodeBefore(lower, at)) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /**
+     * Whether a Minecraft colour or format code ends right before {@code at} in lowercase {@code text}: {@code &c},
+     * {@code §c} (also each pair of {@code §x§r§r§g§g§b§b}) or {@code &#rrggbb}, as staff type them into a reason.
+     */
+    private static boolean colourCodeBefore(String text, int at) {
+        if (at >= 2 && (text.charAt(at - 2) == '&' || text.charAt(at - 2) == '§')
+                && "0123456789abcdefklmnorx".indexOf(text.charAt(at - 1)) >= 0) {
+            return true;
+        }
+        if (at < 8 || !text.startsWith("&#", at - 8)) {
+            return false;
+        }
+        for (int i = at - 6; i < at; i++) {
+            if ("0123456789abcdef".indexOf(text.charAt(i)) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 }
