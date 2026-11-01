@@ -425,7 +425,14 @@ never judged.
 ### 2.14 latency.pingspoof - LATENCY_ABUSE
 
 Keep-alive samples exclude ids that were sent more than once within 30 s (plugin-injected keep-alives).
-Each keep-alive sample is paired with the median of pong samples within +-2 s of it. Excess when the
+A sample's send time is the arrival of its reply minus its RTT. Each keep-alive sample is paired with the
+median RTT of the pongs whose pings the server sent within +-2 s of the keep-alive, judged 2 s after its
+reply arrived. Pairing by send time compares round trips that crossed the same queues and links at the
+same moment: when delivery stops after the server sent its packets (a stalled proxy event loop, a network
+outage, a client frozen by a window drag), the replies of seconds of keep-alives and pings arrive
+together, and pairing by arrival (before November 2026) compared the oldest keep-alives of that backlog
+with the median of the whole backlog. Pongs are kept at most one per 20 ms of send time (256 kept, over
+5 s); a keep-alive whose window lost pongs to that limit is not judged. Excess when the
 keep-alive RTT > paired pong + 150 ms and > 1.6x paired pong. Violation when >= 3 of the last 4 paired
 keep-alives are in excess (needs >= 4 keep-alives); at most once per 60 s. Unmatched responses: 0 points
 in v1. Points 3, confidence 0.8, cap 18 (below ALERT alone).
